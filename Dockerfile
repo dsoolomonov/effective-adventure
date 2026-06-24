@@ -9,9 +9,7 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir .
 COPY app/ app/
 COPY static/ static/
-COPY data/ data/
+RUN mkdir -p data
 COPY db/ db/
-COPY sample_crude.csv .
-COPY .env .env
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
