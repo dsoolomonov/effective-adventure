@@ -1015,6 +1015,41 @@
     tbl.appendChild(tb);
     box.appendChild(card("Gasoline Supply & Demand Balance", tbl));
 
+    // ---- REGIONAL COUNTRY BREAKDOWN TABLE (when viewing a region) ----
+    if (data.is_region && data.region_countries && data.region_countries.length > 0) {
+      const rcTbl = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11px", marginBottom: "8px" } });
+      const rcHd = el("thead");
+      const rcHr = el("tr");
+      const flowCols = sndTable.map(r => r.flow);
+      const flowNames = sndTable.map(r => r.flow_name);
+      ["Country", ...flowNames, "Period"].forEach((h, i) => {
+        rcHr.appendChild(el("th", { style: { padding: "6px 4px", textAlign: i === 0 ? "left" : "right", color: C.amber, borderBottom: `2px solid ${C.border}`, fontSize: "10px", fontWeight: "600", whiteSpace: "nowrap" } }, h));
+      });
+      rcHd.appendChild(rcHr);
+      rcTbl.appendChild(rcHd);
+      const rcTb = el("tbody");
+      data.region_countries.forEach(c => {
+        const tr = el("tr", { style: { borderBottom: `1px solid ${C.border}20` } });
+        tr.appendChild(el("td", { style: { padding: "5px 4px", color: C.cyan, fontWeight: "600", fontSize: "11px", whiteSpace: "nowrap" } }, `${c.name} (${c.code})`));
+        let lastPeriod = "";
+        flowCols.forEach(f => {
+          const fd = c.flows[f];
+          if (fd) {
+            const v = fd.latest;
+            const vStr = Math.abs(v) >= 100000 ? (v / 1000).toFixed(1) + "K" : v.toLocaleString();
+            tr.appendChild(el("td", { style: { padding: "4px", textAlign: "right", color: C.text, fontSize: "10px" } }, vStr));
+            if (fd.latest_period) lastPeriod = fd.latest_period;
+          } else {
+            tr.appendChild(el("td", { style: { padding: "4px", textAlign: "right", color: C.muted, fontSize: "10px" } }, "—"));
+          }
+        });
+        tr.appendChild(el("td", { style: { padding: "4px", textAlign: "right", color: C.muted, fontSize: "10px" } }, lastPeriod));
+        rcTb.appendChild(tr);
+      });
+      rcTbl.appendChild(rcTb);
+      box.appendChild(card("Country Breakdown — " + (data.country_name || "Region"), rcTbl));
+    }
+
     // ---- TIME SERIES CHARTS ----
     let jChIdx = 0;
     const jNextId = () => `jodi-c-${jChIdx++}`;
@@ -1187,11 +1222,32 @@
 
   function populateCountrySelect(sel, countries, current) {
     sel.innerHTML = "";
+    const regionEntries = [];
+    const countryEntries = [];
     Object.entries(countries).forEach(([code, name]) => {
-      const opt = el("option", { value: code }, `${name} (${code})`);
-      if (code === current) opt.selected = true;
-      sel.appendChild(opt);
+      if (code.startsWith("R_")) regionEntries.push([code, name]);
+      else countryEntries.push([code, name]);
     });
+    if (regionEntries.length > 0) {
+      const grp = document.createElement("optgroup");
+      grp.label = "── Regions (Aggregated) ──";
+      regionEntries.forEach(([code, name]) => {
+        const opt = el("option", { value: code }, name);
+        if (code === current) opt.selected = true;
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    }
+    if (countryEntries.length > 0) {
+      const grp = document.createElement("optgroup");
+      grp.label = "── Individual Countries ──";
+      countryEntries.forEach(([code, name]) => {
+        const opt = el("option", { value: code }, `${name} (${code})`);
+        if (code === current) opt.selected = true;
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    }
   }
 
   // ========== FGE GLOBAL GASOLINE BALANCES ==========

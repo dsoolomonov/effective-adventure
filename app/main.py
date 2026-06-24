@@ -7745,6 +7745,48 @@ JODI_COUNTRY_NAMES = {
     "YE": "Yemen", "ZA": "South Africa",
 }
 
+JODI_REGIONS = {
+    "R_EUROPE": {
+        "name": "🌍 Europe",
+        "countries": ["AT", "BE", "BG", "BY", "CH", "CY", "CZ", "DE", "DK",
+                       "EE", "ES", "FI", "FR", "GB", "GR", "HR", "HU", "IE",
+                       "IS", "IT", "LT", "LU", "LV", "MD", "MK", "MT", "NL",
+                       "NO", "PL", "PT", "RO", "RS", "SE", "SI", "SK", "UA", "AL"],
+    },
+    "R_MIDDLE_EAST": {
+        "name": "🌍 Middle East",
+        "countries": ["AE", "BH", "IQ", "IR", "KW", "OM", "QA", "SA", "SY", "YE"],
+    },
+    "R_ASIA_PACIFIC": {
+        "name": "🌏 Asia Pacific",
+        "countries": ["AU", "BD", "BN", "CN", "HK", "ID", "IN", "JP", "KR",
+                       "MM", "MY", "NP", "NZ", "PG", "PH", "SG", "TH", "TW", "VN"],
+    },
+    "R_NORTH_AMERICA": {
+        "name": "🌎 North America",
+        "countries": ["CA", "MX", "US"],
+    },
+    "R_LATIN_AMERICA": {
+        "name": "🌎 Latin America & Caribbean",
+        "countries": ["AR", "BB", "BM", "BO", "BR", "BZ", "CL", "CO", "CR",
+                       "CU", "DO", "EC", "GD", "GT", "GY", "HN", "HT", "JM",
+                       "NI", "PA", "PE", "PY", "SR", "SV", "TT", "UY", "VE"],
+    },
+    "R_AFRICA": {
+        "name": "🌍 Africa",
+        "countries": ["AO", "DZ", "EG", "GA", "GM", "GQ", "LY", "MA", "MU",
+                       "NE", "NG", "SD", "SZ", "TN", "ZA"],
+    },
+    "R_FSU": {
+        "name": "🌍 FSU / Central Asia",
+        "countries": ["AM", "AZ", "GE", "KZ", "RU", "TJ"],
+    },
+    "R_TURKEY": {
+        "name": "🌍 Turkey",
+        "countries": ["TR"],
+    },
+}
+
 JODI_FLOW_NAMES = {
     "REFGROUT": "Refinery Output",
     "TOTIMPSB": "Imports",
@@ -7796,6 +7838,39 @@ def _load_jodi_country(country_code: str) -> dict:
             if flow not in result:
                 result[flow] = {"unit": unit, "entries": []}
             result[flow]["entries"].append((period, val))
+    return result
+
+
+def _load_jodi_region(region_code: str) -> dict:
+    """Aggregate JODI data for all countries in a region.
+    Returns same format as _load_jodi_country: {flow: {"unit": str, "entries": [(period, val)]}}
+    Values are summed across countries for each period.
+    """
+    region = JODI_REGIONS[region_code]
+    from collections import defaultdict
+    # {flow: {period: total_value}}
+    flow_periods: dict = defaultdict(lambda: defaultdict(float))
+    flow_units: dict = {}
+    flow_period_counts: dict = defaultdict(lambda: defaultdict(int))
+
+    for cc in region["countries"]:
+        cdata = _get_jodi_country(cc)
+        if not cdata:
+            continue
+        for flow, fd in cdata.items():
+            if flow not in flow_units:
+                flow_units[flow] = fd["unit"]
+            for period, val in fd["entries"]:
+                if val is not None:
+                    flow_periods[flow][period] += val
+                    flow_period_counts[flow][period] += 1
+
+    result: dict = {}
+    for flow in flow_periods:
+        sorted_entries = sorted(flow_periods[flow].items())
+        entries = [(p, round(v, 1)) for p, v in sorted_entries]
+        if entries:
+            result[flow] = {"unit": flow_units.get(flow, "KBD"), "entries": entries}
     return result
 
 
@@ -7933,16 +8008,20 @@ async def refresh_jodi_data():
 
 @app.get("/api/jodi_gasoline")
 async def get_jodi_gasoline(
-    country: str = Query("US", description="ISO2 country code"),
+    country: str = Query("US", description="ISO2 country code or region code (R_EUROPE, R_MIDDLE_EAST, etc.)"),
     start_year: int = Query(2015, description="Start year"),
     end_year: int = Query(2026, description="End year"),
 ):
-    """JODI gasoline S&D balance with multi-year overlay for any country."""
-    if country not in JODI_COUNTRY_NAMES:
-        raise HTTPException(status_code=400, detail=f"Unknown country: {country}")
+    """JODI gasoline S&D balance with multi-year overlay for any country or region."""
+    is_region = country in JODI_REGIONS
+    if not is_region and country not in JODI_COUNTRY_NAMES:
+        raise HTTPException(status_code=400, detail=f"Unknown country/region: {country}")
 
     try:
-        country_data = _get_jodi_country(country)
+        if is_region:
+            country_data = _load_jodi_region(country)
+        else:
+            country_data = _get_jodi_country(country)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"JODI data error: {e}")
 
@@ -8055,17 +8134,50 @@ async def get_jodi_gasoline(
             except (ValueError, IndexError):
                 pass
 
-    return {
+    # Build available list with regions at the top
+    avail = _jodi_countries_list() or {k: v for k, v in sorted(JODI_COUNTRY_NAMES.items(), key=lambda x: x[1])}
+    regions_avail = {code: info["name"] for code, info in JODI_REGIONS.items()}
+    combined_available = {**regions_avail, **avail}
+
+    display_name = JODI_REGIONS[country]["name"] if is_region else JODI_COUNTRY_NAMES.get(country, country)
+
+    result = {
         "country": country,
-        "country_name": JODI_COUNTRY_NAMES.get(country, country),
+        "country_name": display_name,
         "start_year": start_year,
         "end_year": end_year,
         "snd_table": snd_table,
         "seasonal_overlay": seasonal_overlay,
         "chart_series": chart_series,
         "available_years": sorted(all_years),
-        "available_countries": _jodi_countries_list() or {k: v for k, v in sorted(JODI_COUNTRY_NAMES.items(), key=lambda x: x[1])},
+        "available_countries": combined_available,
     }
+
+    if is_region:
+        region_info = JODI_REGIONS[country]
+        country_breakdown = []
+        for cc in sorted(region_info["countries"]):
+            cname = JODI_COUNTRY_NAMES.get(cc, cc)
+            cd = _get_jodi_country(cc)
+            row = {"code": cc, "name": cname, "flows": {}}
+            for flow in JODI_FLOW_ORDER:
+                fd = cd.get(flow)
+                if not fd:
+                    continue
+                clean = [(p, v) for p, v in fd["entries"] if v is not None
+                         and len(p) >= 7
+                         and start_year <= int(p[:4]) <= end_year]
+                if clean:
+                    row["flows"][flow] = {
+                        "latest": round(clean[-1][1], 1),
+                        "latest_period": clean[-1][0],
+                    }
+            if row["flows"]:
+                country_breakdown.append(row)
+        result["is_region"] = True
+        result["region_countries"] = country_breakdown
+
+    return result
 
 
 # =====================================================================
