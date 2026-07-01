@@ -7535,41 +7535,21 @@ async def get_eia_gasoline_balances(
 # EIA GASOLINE MONTHLY BALANCE TABLE — Spreadsheet-style balance (like crude example)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-GB_MONTHLY_ROWS = [
-    {"key": "production", "label": "Refinery & Blender Net Production", "src": "snd", "product": "EPM0F", "process": "YPR"},
-    {"key": "renewable_prod", "label": "Renewable/Oxygenate Net Production", "src": "snd", "product": "EPM0F", "process": "YNP"},
-    {"key": "imports_finished", "label": "Imports — Finished Gasoline", "src": "imp", "product": "EPM0F"},
-    {"key": "imports_blending", "label": "Imports — Blending Components", "src": "imp", "product": "EPOBG"},
-    {"key": "ethanol_input", "label": "Fuel Ethanol Net Production", "src": "snd", "product": "EPOOXE", "process": "YNP"},
-    {"key": "supply_adjust", "label": "Supply Adjustment", "src": "snd", "product": "EPM0F", "process": "VUA"},
-    {"key": "stock_change", "label": "Stock Change — Finished", "src": "snd", "product": "EPM0F", "process": "SCG"},
-    {"key": "stock_change_blend", "label": "Stock Change — Blending Comp.", "src": "snd", "product": "EPOBG", "process": "SCG"},
-    {"key": "stock_change_ethanol", "label": "Stock Change — Ethanol", "src": "snd", "product": "EPOOXE", "process": "SCG"},
-    {"key": "exports_finished", "label": "Exports — Finished Gasoline", "src": "exp", "product": "EPM0F"},
-    {"key": "exports_blending", "label": "Exports — Blending Components", "src": "exp", "product": "EPOBG"},
-    {"key": "demand", "label": "Product Supplied (Demand)", "src": "snd", "product": "EPM0F", "process": "VPP"},
-]
-
 GB_MONTHLY_STOCK_ROWS = [
-    {"key": "stocks_total", "label": "Total Motor Gasoline Stocks", "src": "snd", "product": "EPM0F", "process": "SAE", "unit": "MBBL"},
     {"key": "stocks_finished", "label": "Finished Motor Gasoline Stocks", "src": "snd", "product": "EPM0F", "process": "SAE", "unit": "MBBL"},
     {"key": "stocks_blending", "label": "Blending Components Stocks", "src": "snd", "product": "EPOBG", "process": "SAE", "unit": "MBBL"},
     {"key": "stocks_ethanol", "label": "Fuel Ethanol Stocks", "src": "snd", "product": "EPOOXE", "process": "SAE", "unit": "MBBL"},
 ]
 
 
-def _fetch_eia_monthly_gasoline(api_key: str, duo: str, start_ym: str, end_ym: str) -> dict:
-    """Fetch monthly gasoline data from multiple EIA endpoints and return
-    {(source, product, process): {period: value_kbd}} for MBBL/D values."""
-    import urllib.request
-    import json as _json
+def _fetch_eia_gasoline_area(api_key: str, duo: str, start_ym: str, end_ym: str) -> dict:
+    """Fetch monthly gasoline data for one area from EIA endpoints.
+    Returns {(source, product, process, units): {period: value}}."""
     from collections import defaultdict
-
     result: dict = defaultdict(dict)
 
     # 1) S&D endpoint — production, stock change, product supplied, etc.
-    snd_products = list({r["product"] for r in GB_MONTHLY_ROWS if r["src"] == "snd"}
-                        | {r["product"] for r in GB_MONTHLY_STOCK_ROWS if r["src"] == "snd"})
+    snd_products = ["EPM0F", "EPOBG", "EPOOXE"]
     prod_param = "".join(f"&facets[product][]={p}" for p in snd_products)
     offset = 0
     while True:
@@ -7595,188 +7575,200 @@ def _fetch_eia_monthly_gasoline(api_key: str, duo: str, start_ym: str, end_ym: s
                 fval = float(val)
             except (ValueError, TypeError):
                 continue
-            key = ("snd", prod, proc, units)
-            result[key][period] = fval
+            result[("snd", prod, proc, units)][period] = fval
         if len(data) < 5000:
             break
         offset += 5000
 
-    # 2) Imports endpoint
-    imp_products = list({r["product"] for r in GB_MONTHLY_ROWS if r["src"] == "imp"})
-    if imp_products:
-        prod_param = "".join(f"&facets[product][]={p}" for p in imp_products)
-        imp_duo = duo + "-Z00" if "-" not in duo else duo
+    # 2) Imports endpoint (finished + blending components)
+    imp_duo = duo + "-Z00" if "-" not in duo else duo
+    for imp_prod in ["EPM0F", "EPOBG"]:
         url = (
             f"https://api.eia.gov/v2/petroleum/move/imp/data/"
             f"?api_key={api_key}&frequency=monthly&data[0]=value"
-            f"&facets[duoarea][]={imp_duo}{prod_param}"
+            f"&facets[duoarea][]={imp_duo}&facets[product][]={imp_prod}"
             f"&start={start_ym}&end={end_ym}"
             f"&sort[0][column]=period&sort[0][direction]=asc"
             f"&length=5000"
         )
-        raw = _fetch_eia_v2(url)
-        for rec in raw.get("response", {}).get("data", []):
-            prod = rec.get("product", "")
-            units = rec.get("units", "")
-            val = rec.get("value")
-            period = rec.get("period", "")
-            if val is None:
-                continue
-            try:
-                fval = float(val)
-            except (ValueError, TypeError):
-                continue
-            key = ("imp", prod, "IM0", units)
-            result[key][period] = fval
+        try:
+            raw = _fetch_eia_v2(url)
+            for rec in raw.get("response", {}).get("data", []):
+                units = rec.get("units", "")
+                val = rec.get("value")
+                period = rec.get("period", "")
+                if val is None:
+                    continue
+                try:
+                    fval = float(val)
+                except (ValueError, TypeError):
+                    continue
+                result[("imp", imp_prod, "IM0", units)][period] = fval
+        except Exception:
+            pass
 
-    # 3) Exports endpoint
-    exp_products = list({r["product"] for r in GB_MONTHLY_ROWS if r["src"] == "exp"})
-    if exp_products:
-        prod_param = "".join(f"&facets[product][]={p}" for p in exp_products)
-        exp_duo = duo + "-Z00" if "-" not in duo else duo
+    # 3) Exports endpoint (finished + blending components)
+    exp_duo = duo + "-Z00" if "-" not in duo else duo
+    for exp_prod in ["EPM0F", "EPOBG"]:
         url = (
             f"https://api.eia.gov/v2/petroleum/move/exp/data/"
             f"?api_key={api_key}&frequency=monthly&data[0]=value"
-            f"&facets[duoarea][]={exp_duo}{prod_param}"
+            f"&facets[duoarea][]={exp_duo}&facets[product][]={exp_prod}"
             f"&start={start_ym}&end={end_ym}"
             f"&sort[0][column]=period&sort[0][direction]=asc"
             f"&length=5000"
         )
-        raw = _fetch_eia_v2(url)
-        for rec in raw.get("response", {}).get("data", []):
-            prod = rec.get("product", "")
-            units = rec.get("units", "")
-            val = rec.get("value")
-            period = rec.get("period", "")
-            if val is None:
-                continue
-            try:
-                fval = float(val)
-            except (ValueError, TypeError):
-                continue
-            key = ("exp", prod, "EEX", units)
-            result[key][period] = fval
+        try:
+            raw = _fetch_eia_v2(url)
+            for rec in raw.get("response", {}).get("data", []):
+                units = rec.get("units", "")
+                val = rec.get("value")
+                period = rec.get("period", "")
+                if val is None:
+                    continue
+                try:
+                    fval = float(val)
+                except (ValueError, TypeError):
+                    continue
+                result[("exp", exp_prod, "EEX", units)][period] = fval
+        except Exception:
+            pass
 
     return dict(result)
 
 
-@app.get("/api/eia_gasoline_monthly")
-async def get_eia_gasoline_monthly(
-    area: str = Query("US", description="Region: US, PADD1-5"),
-    start_year: int = Query(2024, description="Start year"),
-    end_year: int = Query(2026, description="End year"),
-):
-    """Monthly gasoline balance table — spreadsheet-style with monthly columns."""
-    api_key = os.environ.get("EIA_API_KEY", "7SzAygceNwO58RBgwVgV7dkk163Bk73xzFF36lq6")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="EIA_API_KEY not set")
-    if area not in GB_AREA_MAP:
-        raise HTTPException(status_code=400, detail=f"Invalid area: {list(GB_AREA_MAP.keys())}")
+def _build_gasoline_balance(raw: dict, periods: list, area_name: str) -> dict:
+    """Build gasoline balance from raw EIA data.
+    Uses finished motor gasoline (EPM0F) for the primary balance:
+      Supply = Production + Imports + Adjustment
+      Demand = Product Supplied + Exports + Stock Change
+    Then adds blending component & ethanol supplementary rows."""
 
-    duo = GB_AREA_MAP[area]["duo"]
-    start_ym = f"{start_year}-01"
-    end_ym = f"{end_year}-12"
+    def _gs(src: str, prod: str, proc: str, unit: str = "MBBL/D") -> dict:
+        return raw.get((src, prod, proc, unit), {})
 
-    try:
-        raw = _fetch_eia_monthly_gasoline(api_key, duo, start_ym, end_ym)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"EIA API error: {e}")
+    def _make_row(key: str, label: str, series: dict, **kwargs) -> dict:
+        return {"key": key, "label": label, "values": {p: series.get(p) for p in periods}, "unit": "kb/d", **kwargs}
 
-    # Collect all periods across all series
-    all_periods: set = set()
-    for series_data in raw.values():
-        all_periods.update(series_data.keys())
-    periods = sorted(all_periods)
+    # --- PRIMARY BALANCE (Finished Motor Gasoline — EPM0F) ---
+    production = _gs("snd", "EPM0F", "YPR")
+    imports_fin = _gs("imp", "EPM0F", "IM0")
+    adjustment = _gs("snd", "EPM0F", "VUA")
+    exports_fin = _gs("exp", "EPM0F", "EEX")
+    demand_ps = _gs("snd", "EPM0F", "VPP")
+    scg_fin = _gs("snd", "EPM0F", "SCG")
 
-    def _get_series(src: str, product: str, process: str, unit: str = "MBBL/D") -> dict:
-        key = (src, product, process, unit)
-        return raw.get(key, {})
+    balance_rows = [
+        _make_row("production", "Refinery & Blender Net Production", production),
+        _make_row("imports_finished", "Imports — Finished Gasoline", imports_fin),
+        _make_row("adjustment", "Supply Adjustment", adjustment),
+    ]
 
-    # Build balance rows
-    balance_rows = []
-    supply_rows_keys = ["production", "renewable_prod", "imports_finished", "imports_blending", "ethanol_input", "supply_adjust"]
-    demand_rows_keys = ["exports_finished", "exports_blending", "demand"]
-    stock_rows_keys = ["stock_change", "stock_change_blend", "stock_change_ethanol"]
-
-    for row_def in GB_MONTHLY_ROWS:
-        if row_def["src"] == "snd":
-            series = _get_series("snd", row_def["product"], row_def["process"])
-        elif row_def["src"] == "imp":
-            series = _get_series("imp", row_def["product"], "IM0")
-        elif row_def["src"] == "exp":
-            series = _get_series("exp", row_def["product"], "EEX")
-        else:
-            series = {}
-
-        values = {p: series.get(p) for p in periods}
-        balance_rows.append({
-            "key": row_def["key"],
-            "label": row_def["label"],
-            "values": values,
-            "unit": "kb/d",
-        })
-
-    # Compute Total Supply = production + renewable + imports_finished + imports_blending + ethanol + adjust
+    # Total Supply = Production + Imports + Adjustment
     total_supply = {}
     for p in periods:
-        total = 0.0
-        has_any = False
-        for rkey in supply_rows_keys:
-            row = next((r for r in balance_rows if r["key"] == rkey), None)
-            if row and row["values"].get(p) is not None:
-                total += row["values"][p]
-                has_any = True
-        total_supply[p] = round(total, 1) if has_any else None
-    balance_rows.insert(
-        len([r for r in balance_rows if r["key"] in supply_rows_keys]),
-        {"key": "total_supply", "label": "TOTAL SUPPLY", "values": total_supply, "unit": "kb/d", "is_total": True}
-    )
+        vals = [production.get(p), imports_fin.get(p), adjustment.get(p)]
+        clean = [v for v in vals if v is not None]
+        total_supply[p] = round(sum(clean), 1) if clean else None
+    balance_rows.append(_make_row("total_supply", "TOTAL SUPPLY", total_supply, is_total=True))
 
-    # Compute Total Demand = exports + demand + stock_change (all three)
+    # Demand-side rows
+    balance_rows.append(_make_row("exports_finished", "Exports — Finished Gasoline", exports_fin))
+    balance_rows.append(_make_row("demand", "Product Supplied (Demand)", demand_ps))
+    balance_rows.append(_make_row("stock_change", "Stock Change (Finished)", scg_fin))
+
+    # Total Demand = Exports + Product Supplied + Stock Change
     total_demand = {}
     for p in periods:
-        total = 0.0
-        has_any = False
-        for rkey in demand_rows_keys + stock_rows_keys:
-            row = next((r for r in balance_rows if r["key"] == rkey), None)
-            if row and row["values"].get(p) is not None:
-                total += row["values"][p]
-                has_any = True
-        total_demand[p] = round(total, 1) if has_any else None
-    balance_rows.append({"key": "total_demand", "label": "TOTAL DEMAND", "values": total_demand, "unit": "kb/d", "is_total": True})
+        vals = [exports_fin.get(p), demand_ps.get(p), scg_fin.get(p)]
+        clean = [v for v in vals if v is not None]
+        total_demand[p] = round(sum(clean), 1) if clean else None
+    balance_rows.append(_make_row("total_demand", "TOTAL DISPOSITION", total_demand, is_total=True))
 
-    # Compute Balance = Total Supply - Total Demand
-    balance_check = {}
+    # Balance = Supply - Disposition (should be ~0)
+    bal = {}
     for p in periods:
-        s = total_supply.get(p)
-        d = total_demand.get(p)
-        if s is not None and d is not None:
-            balance_check[p] = round(s - d, 1)
-        else:
-            balance_check[p] = None
-    balance_rows.append({"key": "balance", "label": "BALANCE (Supply − Demand)", "values": balance_check, "unit": "kb/d", "is_balance": True})
+        s, d = total_supply.get(p), total_demand.get(p)
+        bal[p] = round(s - d, 1) if s is not None and d is not None else None
+    balance_rows.append(_make_row("balance", "BALANCE (residual)", bal, is_balance=True))
 
-    # Stock levels (in MBBL)
+    # --- SUPPLEMENTARY: Blending Components ---
+    imports_bc = _gs("imp", "EPOBG", "IM0")
+    exports_bc = _gs("exp", "EPOBG", "EEX")
+    scg_bc = _gs("snd", "EPOBG", "SCG")
+    ethanol_prod = _gs("snd", "EPOOXE", "YNP")
+    scg_eth = _gs("snd", "EPOOXE", "SCG")
+
+    supp_rows = [
+        _make_row("imports_blending", "Blending Components — Imports", imports_bc, is_supplementary=True),
+        _make_row("exports_blending", "Blending Components — Exports", exports_bc, is_supplementary=True),
+        _make_row("scg_blending", "Blending Components — Stock Change", scg_bc, is_supplementary=True),
+        _make_row("ethanol_prod", "Fuel Ethanol — Net Production", ethanol_prod, is_supplementary=True),
+        _make_row("scg_ethanol", "Fuel Ethanol — Stock Change", scg_eth, is_supplementary=True),
+    ]
+
+    # Stock levels (MBBL → mmb)
     stock_rows = []
     for row_def in GB_MONTHLY_STOCK_ROWS:
-        series = _get_series("snd", row_def["product"], row_def["process"], row_def.get("unit", "MBBL"))
-        values = {p: series.get(p) for p in periods}
+        series = _gs("snd", row_def["product"], row_def["process"], row_def.get("unit", "MBBL"))
         stock_rows.append({
-            "key": row_def["key"],
-            "label": row_def["label"],
-            "values": values,
-            "unit": "mmb",
+            "key": row_def["key"], "label": row_def["label"],
+            "values": {p: series.get(p) for p in periods}, "unit": "mmb",
         })
 
     return {
-        "area": area,
-        "area_name": GB_AREA_MAP[area]["name"],
+        "balance_rows": balance_rows,
+        "supplementary_rows": supp_rows,
+        "stock_rows": stock_rows,
+    }
+
+
+@app.get("/api/eia_gasoline_monthly")
+async def get_eia_gasoline_monthly(
+    start_year: int = Query(2024, description="Start year"),
+    end_year: int = Query(2026, description="End year"),
+):
+    """Monthly gasoline balance table — US Total + all 5 PADDs."""
+    api_key = os.environ.get("EIA_API_KEY", "7SzAygceNwO58RBgwVgV7dkk163Bk73xzFF36lq6")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="EIA_API_KEY not set")
+
+    start_ym = f"{start_year}-01"
+    end_ym = f"{end_year}-12"
+
+    areas = [
+        ("US", "NUS", "U.S. Total"),
+        ("PADD1", "R10", "East Coast (PADD 1)"),
+        ("PADD2", "R20", "Midwest (PADD 2)"),
+        ("PADD3", "R30", "Gulf Coast (PADD 3)"),
+        ("PADD4", "R40", "Rocky Mountain (PADD 4)"),
+        ("PADD5", "R50", "West Coast (PADD 5)"),
+    ]
+
+    sections = []
+    for area_code, duo, area_name in areas:
+        try:
+            raw = _fetch_eia_gasoline_area(api_key, duo, start_ym, end_ym)
+        except Exception as e:
+            sections.append({"area": area_code, "area_name": area_name, "error": str(e)})
+            continue
+
+        # Collect periods
+        all_periods: set = set()
+        for series_data in raw.values():
+            all_periods.update(series_data.keys())
+        periods = sorted(all_periods)
+
+        result = _build_gasoline_balance(raw, periods, area_name)
+        result["area"] = area_code
+        result["area_name"] = area_name
+        result["periods"] = periods
+        sections.append(result)
+
+    return {
         "start_year": start_year,
         "end_year": end_year,
-        "periods": periods,
-        "balance_rows": balance_rows,
-        "stock_rows": stock_rows,
-        "available_areas": {k: v["name"] for k, v in GB_AREA_MAP.items()},
+        "sections": sections,
     }
 
 

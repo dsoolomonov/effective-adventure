@@ -936,7 +936,7 @@
       // Also reload monthly table
       monthlyBox.innerHTML = '<div style="color:#94a3b8;padding:20px;text-align:center;font-size:12px;">Loading monthly balance table...</div>';
       try {
-        const md = await fetchGBMonthly(gbCurrentArea, gbStartYear, gbEndYear);
+        const md = await fetchGBMonthly(gbStartYear, gbEndYear);
         renderGBMonthlyTable(monthlyBox, md);
       } catch (e) { monthlyBox.innerHTML = `<div style="color:${C.red};padding:20px;font-size:12px;">Monthly table: ${e.message}</div>`; }
     } }, "Load Data");
@@ -959,43 +959,21 @@
     // Also load monthly balance table
     monthlyBox.innerHTML = '<div style="color:#94a3b8;padding:20px;text-align:center;font-size:12px;">Loading monthly balance table...</div>';
     try {
-      const monthlyData = await fetchGBMonthly(gbCurrentArea, gbStartYear, gbEndYear);
+      const monthlyData = await fetchGBMonthly(gbStartYear, gbEndYear);
       renderGBMonthlyTable(monthlyBox, monthlyData);
     } catch (e) { monthlyBox.innerHTML = `<div style="color:${C.red};padding:20px;font-size:12px;">Monthly table: ${e.message}</div>`; }
   }
 
   // ========== GASOLINE MONTHLY BALANCE TABLE (Spreadsheet-style) ==========
-  async function fetchGBMonthly(area, sy, ey) {
-    const r = await fetch(`/api/eia_gasoline_monthly?area=${area}&start_year=${sy}&end_year=${ey}`);
+  async function fetchGBMonthly(sy, ey) {
+    const r = await fetch(`/api/eia_gasoline_monthly?start_year=${sy}&end_year=${ey}`);
     if (!r.ok) { const e = await r.json(); throw new Error(e.detail || r.statusText); }
     return await r.json();
   }
 
-  function renderGBMonthlyTable(box, data) {
-    box.innerHTML = "";
-    const periods = data.periods || [];
-    if (periods.length === 0) {
-      box.appendChild(el("div", { style: { color: C.muted, padding: "30px", textAlign: "center" } }, "No monthly data available."));
-      return;
-    }
-
-    // Format period labels: "Jan-24", "Feb-24", etc.
-    const monthAbbr = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const pLabels = periods.map(p => {
-      const [y, m] = p.split("-");
-      return monthAbbr[parseInt(m) - 1] + "-" + y.slice(2);
-    });
-
-    // --- BALANCE TABLE ---
-    box.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber, marginBottom: "4px" } },
-      `US GASOLINE BALANCE — ${data.area_name} (${data.start_year}–${data.end_year}) — kb/d`));
-    box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "14px" } },
-      "Source: EIA Monthly Petroleum Supply & Disposition | All values in thousand barrels per day"));
-
-    const tableWrap = el("div", { style: { overflowX: "auto", marginBottom: "16px" } });
-    const tbl = el("table", { style: { borderCollapse: "collapse", fontSize: "10px", whiteSpace: "nowrap" } });
-
-    // Header row
+  function _buildBalanceTable(periods, pLabels, rows, isSupp) {
+    const tableWrap = el("div", { style: { overflowX: "auto", marginBottom: "12px" } });
+    const tbl = el("table", { style: { borderCollapse: "collapse", fontSize: "10px", whiteSpace: "nowrap", width: "100%" } });
     const thead = el("thead");
     const hdr = el("tr");
     hdr.appendChild(el("th", { style: { position: "sticky", left: 0, background: C.bg, padding: "6px 8px", textAlign: "left", color: C.amber, borderBottom: `2px solid ${C.border}`, minWidth: "220px", zIndex: 2, fontSize: "10px" } }, ""));
@@ -1004,30 +982,29 @@
     });
     thead.appendChild(hdr);
     tbl.appendChild(thead);
-
     const tbody = el("tbody");
-    const rows = data.balance_rows || [];
     rows.forEach(row => {
       const tr = el("tr", { style: { borderBottom: `1px solid ${C.border}20` } });
       const isTotal = row.is_total || false;
       const isBalance = row.is_balance || false;
+      const isS = row.is_supplementary || false;
+      const labelColor = isTotal ? C.amber : isBalance ? C.green : isS ? C.muted : C.cyan;
       const labelStyle = {
         position: "sticky", left: 0, background: C.bg, padding: "4px 8px",
-        color: isTotal ? C.amber : isBalance ? C.green : C.cyan,
-        fontWeight: isTotal || isBalance ? "700" : "600",
-        fontSize: "10px", zIndex: 1,
+        color: labelColor, fontWeight: isTotal || isBalance ? "700" : "600",
+        fontSize: isS ? "9px" : "10px", zIndex: 1,
         borderTop: isTotal || isBalance ? `1px solid ${C.border}` : "none",
       };
       tr.appendChild(el("td", { style: labelStyle }, row.label));
       periods.forEach(p => {
         const v = row.values[p];
-        let vStr = "—";
+        let vStr = "\u2014";
         let color = C.muted;
         if (v !== null && v !== undefined) {
           vStr = Math.abs(v) >= 10000 ? (v / 1000).toFixed(1) + "K" : v.toLocaleString(undefined, { maximumFractionDigits: 0 });
-          color = isBalance ? (v > 0 ? C.green : v < 0 ? C.red : C.muted) : C.text;
+          color = isBalance ? (v > 0 ? C.green : v < 0 ? C.red : C.muted) : isS ? C.muted : C.text;
         }
-        tr.appendChild(el("td", { style: { padding: "3px 6px", textAlign: "right", color, fontSize: "10px",
+        tr.appendChild(el("td", { style: { padding: "3px 6px", textAlign: "right", color, fontSize: isS ? "9px" : "10px",
           borderTop: isTotal || isBalance ? `1px solid ${C.border}` : "none",
           fontWeight: isTotal || isBalance ? "700" : "400" } }, vStr));
       });
@@ -1035,84 +1012,108 @@
     });
     tbl.appendChild(tbody);
     tableWrap.appendChild(tbl);
-    box.appendChild(card("Gasoline S&D Balance — Monthly (kb/d)", tableWrap));
+    return tableWrap;
+  }
 
-    // --- STOCK LEVELS TABLE ---
-    const sRows = data.stock_rows || [];
-    if (sRows.length > 0) {
-      const stWrap = el("div", { style: { overflowX: "auto", marginBottom: "16px" } });
-      const stTbl = el("table", { style: { borderCollapse: "collapse", fontSize: "10px", whiteSpace: "nowrap" } });
-      const stHead = el("thead");
-      const stHr = el("tr");
-      stHr.appendChild(el("th", { style: { position: "sticky", left: 0, background: C.bg, padding: "6px 8px", textAlign: "left", color: C.amber, borderBottom: `2px solid ${C.border}`, minWidth: "220px", zIndex: 2, fontSize: "10px" } }, ""));
-      pLabels.forEach(lbl => {
-        stHr.appendChild(el("th", { style: { padding: "5px 6px", textAlign: "right", color: C.amber, borderBottom: `2px solid ${C.border}`, fontSize: "9px", minWidth: "58px" } }, lbl));
-      });
-      stHead.appendChild(stHr);
-      stTbl.appendChild(stHead);
-      const stBody = el("tbody");
-      sRows.forEach(row => {
-        const tr = el("tr", { style: { borderBottom: `1px solid ${C.border}20` } });
-        tr.appendChild(el("td", { style: { position: "sticky", left: 0, background: C.bg, padding: "4px 8px", color: C.cyan, fontWeight: "600", fontSize: "10px", zIndex: 1 } }, row.label));
-        periods.forEach(p => {
-          const v = row.values[p];
-          let vStr = "—";
-          if (v !== null && v !== undefined) {
-            vStr = (v / 1000).toFixed(1);  // Convert MBBL to mmb
-          }
-          tr.appendChild(el("td", { style: { padding: "3px 6px", textAlign: "right", color: C.text, fontSize: "10px" } }, vStr));
-        });
-        stBody.appendChild(tr);
-      });
-      stTbl.appendChild(stBody);
-      stWrap.appendChild(stTbl);
-      box.appendChild(card("Gasoline Stocks — Monthly (million barrels)", stWrap));
+  function renderGBMonthlyTable(box, data) {
+    box.innerHTML = "";
+    const sections = data.sections || [];
+    if (sections.length === 0) {
+      box.appendChild(el("div", { style: { color: C.muted, padding: "30px", textAlign: "center" } }, "No data available."));
+      return;
     }
 
-    // --- CHARTS ---
+    const monthAbbr = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     let gbmChIdx = 0;
     const gbmNextId = () => `gbm-c-${gbmChIdx++}`;
-    const chartConfigs = [
-      { title: "Production & Demand (kb/d)", keys: ["production", "demand"], colors: [C.cyan, C.red] },
-      { title: "Imports & Exports (kb/d)", keys: ["imports_finished", "imports_blending", "exports_finished", "exports_blending"], colors: [C.green, "#a3e635", C.red, "#f472b6"] },
-      { title: "Stock Changes (kb/d)", keys: ["stock_change", "stock_change_blend", "stock_change_ethanol"], colors: [C.amber, "#67e8f9", C.purple] },
-    ];
-
     const chartsToPlot = [];
-    const chartsGrid = el("div", { style: { display: "grid", gridTemplateColumns: "1fr", gap: "12px", marginBottom: "12px" } });
-    chartConfigs.forEach(cfg => {
-      const traces = [];
-      cfg.keys.forEach((k, i) => {
-        const row = rows.find(r => r.key === k);
-        if (!row) return;
-        const vals = periods.map(p => row.values[p]);
-        if (vals.every(v => v === null || v === undefined)) return;
-        traces.push({ x: periods, y: vals, name: row.label, color: cfg.colors[i] || C.text });
+
+    sections.forEach(sec => {
+      if (sec.error) {
+        box.appendChild(el("div", { style: { color: C.red, padding: "8px", fontSize: "11px" } }, `${sec.area_name}: ${sec.error}`));
+        return;
+      }
+      const periods = sec.periods || [];
+      if (periods.length === 0) return;
+      const pLabels = periods.map(p => {
+        const [y, m] = p.split("-");
+        return monthAbbr[parseInt(m) - 1] + "-" + y.slice(2);
       });
-      if (traces.length > 0) {
-        const cid = gbmNextId();
-        chartsToPlot.push({ id: cid, traces });
-        chartsGrid.appendChild(card(cfg.title, el("div", { id: cid, style: { width: "100%", height: "400px" } })));
+
+      // Balance table
+      const allRows = [...(sec.balance_rows || []), ...(sec.supplementary_rows || [])];
+      const balTbl = _buildBalanceTable(periods, pLabels, allRows, false);
+      box.appendChild(card(`${sec.area_name} — Gasoline Balance (kb/d)`, balTbl));
+
+      // Stock levels table
+      const sRows = sec.stock_rows || [];
+      if (sRows.length > 0) {
+        const stWrap = el("div", { style: { overflowX: "auto", marginBottom: "12px" } });
+        const stTbl = el("table", { style: { borderCollapse: "collapse", fontSize: "10px", whiteSpace: "nowrap", width: "100%" } });
+        const stHead = el("thead");
+        const stHr = el("tr");
+        stHr.appendChild(el("th", { style: { position: "sticky", left: 0, background: C.bg, padding: "6px 8px", textAlign: "left", color: C.amber, borderBottom: `2px solid ${C.border}`, minWidth: "220px", zIndex: 2, fontSize: "10px" } }, ""));
+        pLabels.forEach(lbl => {
+          stHr.appendChild(el("th", { style: { padding: "5px 6px", textAlign: "right", color: C.amber, borderBottom: `2px solid ${C.border}`, fontSize: "9px", minWidth: "58px" } }, lbl));
+        });
+        stHead.appendChild(stHr);
+        stTbl.appendChild(stHead);
+        const stBody = el("tbody");
+        sRows.forEach(row => {
+          const tr = el("tr", { style: { borderBottom: `1px solid ${C.border}20` } });
+          tr.appendChild(el("td", { style: { position: "sticky", left: 0, background: C.bg, padding: "4px 8px", color: C.cyan, fontWeight: "600", fontSize: "10px", zIndex: 1 } }, row.label));
+          periods.forEach(p => {
+            const v = row.values[p];
+            let vStr = "\u2014";
+            if (v !== null && v !== undefined) vStr = (v / 1000).toFixed(1);
+            tr.appendChild(el("td", { style: { padding: "3px 6px", textAlign: "right", color: C.text, fontSize: "10px" } }, vStr));
+          });
+          stBody.appendChild(tr);
+        });
+        stTbl.appendChild(stBody);
+        stWrap.appendChild(stTbl);
+        box.appendChild(card(`${sec.area_name} — Gasoline Stocks (mmb)`, stWrap));
+      }
+
+      // Charts (only for US Total)
+      if (sec.area === "US") {
+        const rows = sec.balance_rows || [];
+        const chartConfigs = [
+          { title: "US Production vs Demand (kb/d)", keys: ["production", "demand"], colors: [C.cyan, C.red] },
+          { title: "US Imports vs Exports (kb/d)", keys: ["imports_finished", "exports_finished"], colors: [C.green, C.red] },
+        ];
+        const chartsGrid = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" } });
+        chartConfigs.forEach(cfg => {
+          const traces = [];
+          cfg.keys.forEach((k, i) => {
+            const row = rows.find(r => r.key === k);
+            if (!row) return;
+            const vals = periods.map(p => row.values[p]);
+            if (vals.every(v => v === null || v === undefined)) return;
+            traces.push({ x: periods, y: vals, name: row.label, color: cfg.colors[i] || C.text });
+          });
+          if (traces.length > 0) {
+            const cid = gbmNextId();
+            chartsToPlot.push({ id: cid, traces });
+            chartsGrid.appendChild(card(cfg.title, el("div", { id: cid, style: { width: "100%", height: "350px" } })));
+          }
+        });
+        if (sRows.length > 0) {
+          const stockTraces = [];
+          const stockColors = [C.cyan, C.green, C.amber];
+          sRows.forEach((row, i) => {
+            const vals = periods.map(p => row.values[p] != null ? row.values[p] / 1000 : null);
+            if (!vals.every(v => v === null)) stockTraces.push({ x: periods, y: vals, name: row.label, color: stockColors[i] || C.text });
+          });
+          if (stockTraces.length > 0) {
+            const cid = gbmNextId();
+            chartsToPlot.push({ id: cid, traces: stockTraces, yTitle: "million barrels" });
+            chartsGrid.appendChild(card("US Gasoline Stocks (mmb)", el("div", { id: cid, style: { width: "100%", height: "350px" } })));
+          }
+        }
+        box.appendChild(chartsGrid);
       }
     });
-
-    // Stock levels chart
-    if (sRows.length > 0) {
-      const stockTraces = [];
-      const stockColors = [C.cyan, C.blue, C.green, C.amber];
-      sRows.forEach((row, i) => {
-        const vals = periods.map(p => row.values[p] !== null && row.values[p] !== undefined ? row.values[p] / 1000 : null);
-        if (!vals.every(v => v === null)) {
-          stockTraces.push({ x: periods, y: vals, name: row.label, color: stockColors[i] || C.text });
-        }
-      });
-      if (stockTraces.length > 0) {
-        const cid = gbmNextId();
-        chartsToPlot.push({ id: cid, traces: stockTraces, yTitle: "million barrels" });
-        chartsGrid.appendChild(card("Gasoline Stocks (million barrels)", el("div", { id: cid, style: { width: "100%", height: "400px" } })));
-      }
-    }
-    box.appendChild(chartsGrid);
 
     loadPlotly(() => {
       chartsToPlot.forEach(({ id, traces, yTitle }) => {
@@ -1120,7 +1121,7 @@
           x: t.x, y: t.y, name: t.name, type: "scatter",
           line: { color: t.color, width: 2.5 },
         }));
-        const layout = { ...plotLayout, height: 400, yaxis: { ...plotLayout.yaxis, title: yTitle || "kb/d" }, showlegend: true, legend: { font: { size: 10, color: C.text }, orientation: "h", y: -0.15 } };
+        const layout = { ...plotLayout, height: 350, yaxis: { ...plotLayout.yaxis, title: yTitle || "kb/d" }, showlegend: true, legend: { font: { size: 10, color: C.text }, orientation: "h", y: -0.15 } };
         Plotly.newPlot(id, pTraces, layout, { responsive: true });
       });
     });
