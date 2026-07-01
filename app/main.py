@@ -7723,17 +7723,77 @@ def _build_gasoline_balance(raw: dict, periods: list, area_name: str) -> dict:
     }
 
 
+def _add_projections(result: dict, periods: list, proj_months: list) -> dict:
+    """Add seasonal-average projections for future months.
+    proj_months: list of 'YYYY-MM' strings to project.
+    Uses average of same calendar month across available years."""
+    from collections import defaultdict
+
+    all_row_lists = ["balance_rows", "supplementary_rows", "stock_rows"]
+    extended_periods = sorted(set(periods) | set(proj_months))
+
+    for list_key in all_row_lists:
+        for row in result.get(list_key, []):
+            if row.get("is_total") or row.get("is_balance"):
+                continue
+            vals = row["values"]
+            # Group values by calendar month (01-12)
+            by_month: dict = defaultdict(list)
+            for p, v in vals.items():
+                if v is not None:
+                    mm = p.split("-")[1]
+                    by_month[mm].append(v)
+            # Compute average for each projection month
+            for pm in proj_months:
+                mm = pm.split("-")[1]
+                hist = by_month.get(mm, [])
+                if hist:
+                    vals[pm] = round(sum(hist) / len(hist), 1)
+
+    # Recompute totals and balance for projected months
+    for list_key in ["balance_rows"]:
+        rows = result.get(list_key, [])
+        supply_keys = ["production", "imports_finished", "adjustment"]
+        demand_keys = ["exports_finished", "demand", "stock_change"]
+
+        total_supply_row = next((r for r in rows if r["key"] == "total_supply"), None)
+        total_demand_row = next((r for r in rows if r["key"] == "total_demand"), None)
+        balance_row = next((r for r in rows if r["key"] == "balance"), None)
+
+        for pm in proj_months:
+            # Total Supply
+            if total_supply_row:
+                s_vals = [next((r for r in rows if r["key"] == k), None) for k in supply_keys]
+                s_clean = [r["values"].get(pm) for r in s_vals if r and r["values"].get(pm) is not None]
+                total_supply_row["values"][pm] = round(sum(s_clean), 1) if s_clean else None
+            # Total Demand
+            if total_demand_row:
+                d_vals = [next((r for r in rows if r["key"] == k), None) for k in demand_keys]
+                d_clean = [r["values"].get(pm) for r in d_vals if r and r["values"].get(pm) is not None]
+                total_demand_row["values"][pm] = round(sum(d_clean), 1) if d_clean else None
+            # Balance
+            if balance_row and total_supply_row and total_demand_row:
+                s = total_supply_row["values"].get(pm)
+                d = total_demand_row["values"].get(pm)
+                balance_row["values"][pm] = round(s - d, 1) if s is not None and d is not None else None
+
+    result["projected_periods"] = proj_months
+    return result
+
+
 @app.get("/api/eia_gasoline_monthly")
 async def get_eia_gasoline_monthly(
     start_year: int = Query(2024, description="Start year"),
     end_year: int = Query(2026, description="End year"),
 ):
-    """Monthly gasoline balance table — US Total + all 5 PADDs."""
+    """Monthly gasoline balance table — US Total + all 5 PADDs with projections."""
     api_key = os.environ.get("EIA_API_KEY", "7SzAygceNwO58RBgwVgV7dkk163Bk73xzFF36lq6")
     if not api_key:
         raise HTTPException(status_code=500, detail="EIA_API_KEY not set")
 
-    start_ym = f"{start_year}-01"
+    # Fetch historical data going back further for better seasonal averages
+    hist_start = max(2020, start_year - 3)
+    start_ym = f"{hist_start}-01"
     end_ym = f"{end_year}-12"
 
     areas = [
@@ -7760,9 +7820,36 @@ async def get_eia_gasoline_monthly(
         periods = sorted(all_periods)
 
         result = _build_gasoline_balance(raw, periods, area_name)
+
+        # Determine projection months: find last actual month, project forward
+        actual_periods = [p for p in periods if p >= f"{start_year}-01"]
+        if actual_periods:
+            last_actual = actual_periods[-1]
+            ly, lm = int(last_actual.split("-")[0]), int(last_actual.split("-")[1])
+            proj_months = []
+            # Project through Sep of the same year (or next if we're past Sep)
+            proj_end_month = 9  # September
+            proj_end_year = ly if lm < 10 else ly + 1
+            cy, cm = ly, lm + 1
+            if cm > 12:
+                cm = 1
+                cy += 1
+            while (cy < proj_end_year) or (cy == proj_end_year and cm <= proj_end_month):
+                proj_months.append(f"{cy}-{cm:02d}")
+                cm += 1
+                if cm > 12:
+                    cm = 1
+                    cy += 1
+            if proj_months:
+                result = _add_projections(result, periods, proj_months)
+                periods = sorted(set(periods) | set(proj_months))
+
+        # Filter to only show from start_year onward in the response
+        display_periods = [p for p in periods if p >= f"{start_year}-01"]
+
         result["area"] = area_code
         result["area_name"] = area_name
-        result["periods"] = periods
+        result["periods"] = display_periods
         sections.append(result)
 
     return {

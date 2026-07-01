@@ -971,7 +971,8 @@
     return await r.json();
   }
 
-  function _buildBalanceTable(periods, pLabels, rows, isSupp) {
+  function _buildBalanceTable(periods, pLabels, rows, isSupp, projPeriods) {
+    projPeriods = projPeriods || new Set();
     const tableWrap = el("div", { style: { overflowX: "auto", marginBottom: "12px" } });
     const tbl = el("table", { style: { borderCollapse: "collapse", fontSize: "10px", whiteSpace: "nowrap", width: "100%" } });
     const thead = el("thead");
@@ -1000,13 +1001,15 @@
         const v = row.values[p];
         let vStr = "\u2014";
         let color = C.muted;
+        const isProj = projPeriods.has(p);
         if (v !== null && v !== undefined) {
           vStr = Math.abs(v) >= 10000 ? (v / 1000).toFixed(1) + "K" : v.toLocaleString(undefined, { maximumFractionDigits: 0 });
-          color = isBalance ? (v > 0 ? C.green : v < 0 ? C.red : C.muted) : isS ? C.muted : C.text;
+          color = isProj ? C.purple : isBalance ? (v > 0 ? C.green : v < 0 ? C.red : C.muted) : isS ? C.muted : C.text;
         }
         tr.appendChild(el("td", { style: { padding: "3px 6px", textAlign: "right", color, fontSize: isS ? "9px" : "10px",
           borderTop: isTotal || isBalance ? `1px solid ${C.border}` : "none",
-          fontWeight: isTotal || isBalance ? "700" : "400" } }, vStr));
+          fontWeight: isTotal || isBalance ? "700" : "400",
+          fontStyle: isProj ? "italic" : "normal" } }, vStr));
       });
       tbody.appendChild(tr);
     });
@@ -1034,15 +1037,17 @@
         return;
       }
       const periods = sec.periods || [];
+      const projPeriods = new Set(sec.projected_periods || []);
       if (periods.length === 0) return;
       const pLabels = periods.map(p => {
         const [y, m] = p.split("-");
-        return monthAbbr[parseInt(m) - 1] + "-" + y.slice(2);
+        const lbl = monthAbbr[parseInt(m) - 1] + "-" + y.slice(2);
+        return projPeriods.has(p) ? lbl + "*" : lbl;
       });
 
-      // Balance table
+      // Balance table (projected values shown in italic/different color)
       const allRows = [...(sec.balance_rows || []), ...(sec.supplementary_rows || [])];
-      const balTbl = _buildBalanceTable(periods, pLabels, allRows, false);
+      const balTbl = _buildBalanceTable(periods, pLabels, allRows, false, projPeriods);
       box.appendChild(card(`${sec.area_name} — Gasoline Balance (kb/d)`, balTbl));
 
       // Stock levels table
@@ -1065,8 +1070,9 @@
           periods.forEach(p => {
             const v = row.values[p];
             let vStr = "\u2014";
+            const isProj = projPeriods.has(p);
             if (v !== null && v !== undefined) vStr = (v / 1000).toFixed(1);
-            tr.appendChild(el("td", { style: { padding: "3px 6px", textAlign: "right", color: C.text, fontSize: "10px" } }, vStr));
+            tr.appendChild(el("td", { style: { padding: "3px 6px", textAlign: "right", color: isProj ? C.purple : C.text, fontSize: "10px", fontStyle: isProj ? "italic" : "normal" } }, vStr));
           });
           stBody.appendChild(tr);
         });
@@ -1075,9 +1081,31 @@
         box.appendChild(card(`${sec.area_name} — Gasoline Stocks (mmb)`, stWrap));
       }
 
-      // Charts (only for US Total)
+      // Stock Change bar chart for EVERY area
+      const rows = sec.balance_rows || [];
+      const scgRow = rows.find(r => r.key === "stock_change");
+      if (scgRow) {
+        const actX = [], actY = [], actCol = [];
+        const projX = [], projY = [], projCol = [];
+        periods.forEach(p => {
+          const v = scgRow.values[p];
+          if (v === null || v === undefined) return;
+          if (projPeriods.has(p)) {
+            projX.push(p); projY.push(v); projCol.push(v >= 0 ? "#a78bfa" : "#c084fc");
+          } else {
+            actX.push(p); actY.push(v); actCol.push(v >= 0 ? C.green : C.red);
+          }
+        });
+        const cid = gbmNextId();
+        chartsToPlot.push({ id: cid, type: "bar", traces: [
+          { x: actX, y: actY, name: "Actual", marker: { color: actCol }, type: "bar" },
+          ...(projX.length > 0 ? [{ x: projX, y: projY, name: "Projected (avg)", marker: { color: projCol }, type: "bar", opacity: 0.6 }] : [])
+        ], yTitle: "kb/d" });
+        box.appendChild(card(`${sec.area_name} — Stock Change (kb/d)`, el("div", { id: cid, style: { width: "100%", height: "300px" } })));
+      }
+
+      // Additional charts for US: Production/Demand, Imports/Exports, Stocks
       if (sec.area === "US") {
-        const rows = sec.balance_rows || [];
         const chartConfigs = [
           { title: "US Production vs Demand (kb/d)", keys: ["production", "demand"], colors: [C.cyan, C.red] },
           { title: "US Imports vs Exports (kb/d)", keys: ["imports_finished", "exports_finished"], colors: [C.green, C.red] },
@@ -1088,9 +1116,15 @@
           cfg.keys.forEach((k, i) => {
             const row = rows.find(r => r.key === k);
             if (!row) return;
-            const vals = periods.map(p => row.values[p]);
-            if (vals.every(v => v === null || v === undefined)) return;
-            traces.push({ x: periods, y: vals, name: row.label, color: cfg.colors[i] || C.text });
+            // Split actual vs projected
+            const actPeriods = periods.filter(p => !projPeriods.has(p));
+            const projPeriodsArr = periods.filter(p => projPeriods.has(p));
+            const actVals = actPeriods.map(p => row.values[p]);
+            const projVals = projPeriodsArr.map(p => row.values[p]);
+            if (!actVals.every(v => v === null || v === undefined))
+              traces.push({ x: actPeriods, y: actVals, name: row.label, color: cfg.colors[i] || C.text });
+            if (projPeriodsArr.length > 0 && !projVals.every(v => v === null || v === undefined))
+              traces.push({ x: projPeriodsArr, y: projVals, name: row.label + " (proj)", color: cfg.colors[i] || C.text, dash: "dash" });
           });
           if (traces.length > 0) {
             const cid = gbmNextId();
@@ -1101,9 +1135,14 @@
         if (sRows.length > 0) {
           const stockTraces = [];
           const stockColors = [C.cyan, C.green, C.amber];
+          const actPeriods = periods.filter(p => !projPeriods.has(p));
+          const projPeriodsArr = periods.filter(p => projPeriods.has(p));
           sRows.forEach((row, i) => {
-            const vals = periods.map(p => row.values[p] != null ? row.values[p] / 1000 : null);
-            if (!vals.every(v => v === null)) stockTraces.push({ x: periods, y: vals, name: row.label, color: stockColors[i] || C.text });
+            const actVals = actPeriods.map(p => row.values[p] != null ? row.values[p] / 1000 : null);
+            const projVals = projPeriodsArr.map(p => row.values[p] != null ? row.values[p] / 1000 : null);
+            if (!actVals.every(v => v === null)) stockTraces.push({ x: actPeriods, y: actVals, name: row.label, color: stockColors[i] || C.text });
+            if (projPeriodsArr.length > 0 && !projVals.every(v => v === null))
+              stockTraces.push({ x: projPeriodsArr, y: projVals, name: row.label + " (proj)", color: stockColors[i] || C.text, dash: "dash" });
           });
           if (stockTraces.length > 0) {
             const cid = gbmNextId();
@@ -1115,14 +1154,25 @@
       }
     });
 
+    // Add projection legend
+    box.appendChild(el("div", { style: { fontSize: "10px", color: C.muted, padding: "8px 0", textAlign: "center" } },
+      "* Projected months — based on seasonal average of same calendar month across available historical years. Purple/italic = projected values."));
+
     loadPlotly(() => {
-      chartsToPlot.forEach(({ id, traces, yTitle }) => {
-        const pTraces = traces.map(t => ({
-          x: t.x, y: t.y, name: t.name, type: "scatter",
-          line: { color: t.color, width: 2.5 },
-        }));
-        const layout = { ...plotLayout, height: 350, yaxis: { ...plotLayout.yaxis, title: yTitle || "kb/d" }, showlegend: true, legend: { font: { size: 10, color: C.text }, orientation: "h", y: -0.15 } };
-        Plotly.newPlot(id, pTraces, layout, { responsive: true });
+      chartsToPlot.forEach(({ id, traces, yTitle, type }) => {
+        if (type === "bar") {
+          const layout = { ...plotLayout, height: 300, barmode: "group",
+            yaxis: { ...plotLayout.yaxis, title: yTitle || "kb/d", zeroline: true, zerolinecolor: C.border },
+            showlegend: true, legend: { font: { size: 10, color: C.text }, orientation: "h", y: -0.2 } };
+          Plotly.newPlot(id, traces, layout, { responsive: true });
+        } else {
+          const pTraces = traces.map(t => ({
+            x: t.x, y: t.y, name: t.name, type: "scatter",
+            line: { color: t.color, width: 2.5, dash: t.dash || "solid" },
+          }));
+          const layout = { ...plotLayout, height: 350, yaxis: { ...plotLayout.yaxis, title: yTitle || "kb/d" }, showlegend: true, legend: { font: { size: 10, color: C.text }, orientation: "h", y: -0.15 } };
+          Plotly.newPlot(id, pTraces, layout, { responsive: true });
+        }
       });
     });
   }
