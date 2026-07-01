@@ -933,6 +933,12 @@
         gbData = await fetchGB(gbCurrentArea, gbStartYear, gbEndYear);
         renderGBContent(contentBox, gbData);
       } catch (e) { contentBox.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; }
+      // Also reload monthly table
+      monthlyBox.innerHTML = '<div style="color:#94a3b8;padding:20px;text-align:center;font-size:12px;">Loading monthly balance table...</div>';
+      try {
+        const md = await fetchGBMonthly(gbCurrentArea, gbStartYear, gbEndYear);
+        renderGBMonthlyTable(monthlyBox, md);
+      } catch (e) { monthlyBox.innerHTML = `<div style="color:${C.red};padding:20px;font-size:12px;">Monthly table: ${e.message}</div>`; }
     } }, "Load Data");
     controls.appendChild(loadBtn);
     box.appendChild(controls);
@@ -940,12 +946,184 @@
     const contentBox = el("div");
     box.appendChild(contentBox);
 
-    // Auto-load US data
+    // Monthly balance table container
+    const monthlyBox = el("div");
+    box.appendChild(monthlyBox);
+
+    // Auto-load US data + monthly table
     contentBox.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading gasoline balances for U.S. Total (' + gbStartYear + '–' + gbEndYear + ')...</div>';
     try {
       gbData = await fetchGB(gbCurrentArea, gbStartYear, gbEndYear);
       renderGBContent(contentBox, gbData);
     } catch (e) { contentBox.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; }
+    // Also load monthly balance table
+    monthlyBox.innerHTML = '<div style="color:#94a3b8;padding:20px;text-align:center;font-size:12px;">Loading monthly balance table...</div>';
+    try {
+      const monthlyData = await fetchGBMonthly(gbCurrentArea, gbStartYear, gbEndYear);
+      renderGBMonthlyTable(monthlyBox, monthlyData);
+    } catch (e) { monthlyBox.innerHTML = `<div style="color:${C.red};padding:20px;font-size:12px;">Monthly table: ${e.message}</div>`; }
+  }
+
+  // ========== GASOLINE MONTHLY BALANCE TABLE (Spreadsheet-style) ==========
+  async function fetchGBMonthly(area, sy, ey) {
+    const r = await fetch(`/api/eia_gasoline_monthly?area=${area}&start_year=${sy}&end_year=${ey}`);
+    if (!r.ok) { const e = await r.json(); throw new Error(e.detail || r.statusText); }
+    return await r.json();
+  }
+
+  function renderGBMonthlyTable(box, data) {
+    box.innerHTML = "";
+    const periods = data.periods || [];
+    if (periods.length === 0) {
+      box.appendChild(el("div", { style: { color: C.muted, padding: "30px", textAlign: "center" } }, "No monthly data available."));
+      return;
+    }
+
+    // Format period labels: "Jan-24", "Feb-24", etc.
+    const monthAbbr = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const pLabels = periods.map(p => {
+      const [y, m] = p.split("-");
+      return monthAbbr[parseInt(m) - 1] + "-" + y.slice(2);
+    });
+
+    // --- BALANCE TABLE ---
+    box.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber, marginBottom: "4px" } },
+      `US GASOLINE BALANCE — ${data.area_name} (${data.start_year}–${data.end_year}) — kb/d`));
+    box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "14px" } },
+      "Source: EIA Monthly Petroleum Supply & Disposition | All values in thousand barrels per day"));
+
+    const tableWrap = el("div", { style: { overflowX: "auto", marginBottom: "16px" } });
+    const tbl = el("table", { style: { borderCollapse: "collapse", fontSize: "10px", whiteSpace: "nowrap" } });
+
+    // Header row
+    const thead = el("thead");
+    const hdr = el("tr");
+    hdr.appendChild(el("th", { style: { position: "sticky", left: 0, background: C.bg, padding: "6px 8px", textAlign: "left", color: C.amber, borderBottom: `2px solid ${C.border}`, minWidth: "220px", zIndex: 2, fontSize: "10px" } }, ""));
+    pLabels.forEach(lbl => {
+      hdr.appendChild(el("th", { style: { padding: "5px 6px", textAlign: "right", color: C.amber, borderBottom: `2px solid ${C.border}`, fontSize: "9px", minWidth: "58px" } }, lbl));
+    });
+    thead.appendChild(hdr);
+    tbl.appendChild(thead);
+
+    const tbody = el("tbody");
+    const rows = data.balance_rows || [];
+    rows.forEach(row => {
+      const tr = el("tr", { style: { borderBottom: `1px solid ${C.border}20` } });
+      const isTotal = row.is_total || false;
+      const isBalance = row.is_balance || false;
+      const labelStyle = {
+        position: "sticky", left: 0, background: C.bg, padding: "4px 8px",
+        color: isTotal ? C.amber : isBalance ? C.green : C.cyan,
+        fontWeight: isTotal || isBalance ? "700" : "600",
+        fontSize: "10px", zIndex: 1,
+        borderTop: isTotal || isBalance ? `1px solid ${C.border}` : "none",
+      };
+      tr.appendChild(el("td", { style: labelStyle }, row.label));
+      periods.forEach(p => {
+        const v = row.values[p];
+        let vStr = "—";
+        let color = C.muted;
+        if (v !== null && v !== undefined) {
+          vStr = Math.abs(v) >= 10000 ? (v / 1000).toFixed(1) + "K" : v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+          color = isBalance ? (v > 0 ? C.green : v < 0 ? C.red : C.muted) : C.text;
+        }
+        tr.appendChild(el("td", { style: { padding: "3px 6px", textAlign: "right", color, fontSize: "10px",
+          borderTop: isTotal || isBalance ? `1px solid ${C.border}` : "none",
+          fontWeight: isTotal || isBalance ? "700" : "400" } }, vStr));
+      });
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    tableWrap.appendChild(tbl);
+    box.appendChild(card("Gasoline S&D Balance — Monthly (kb/d)", tableWrap));
+
+    // --- STOCK LEVELS TABLE ---
+    const sRows = data.stock_rows || [];
+    if (sRows.length > 0) {
+      const stWrap = el("div", { style: { overflowX: "auto", marginBottom: "16px" } });
+      const stTbl = el("table", { style: { borderCollapse: "collapse", fontSize: "10px", whiteSpace: "nowrap" } });
+      const stHead = el("thead");
+      const stHr = el("tr");
+      stHr.appendChild(el("th", { style: { position: "sticky", left: 0, background: C.bg, padding: "6px 8px", textAlign: "left", color: C.amber, borderBottom: `2px solid ${C.border}`, minWidth: "220px", zIndex: 2, fontSize: "10px" } }, ""));
+      pLabels.forEach(lbl => {
+        stHr.appendChild(el("th", { style: { padding: "5px 6px", textAlign: "right", color: C.amber, borderBottom: `2px solid ${C.border}`, fontSize: "9px", minWidth: "58px" } }, lbl));
+      });
+      stHead.appendChild(stHr);
+      stTbl.appendChild(stHead);
+      const stBody = el("tbody");
+      sRows.forEach(row => {
+        const tr = el("tr", { style: { borderBottom: `1px solid ${C.border}20` } });
+        tr.appendChild(el("td", { style: { position: "sticky", left: 0, background: C.bg, padding: "4px 8px", color: C.cyan, fontWeight: "600", fontSize: "10px", zIndex: 1 } }, row.label));
+        periods.forEach(p => {
+          const v = row.values[p];
+          let vStr = "—";
+          if (v !== null && v !== undefined) {
+            vStr = (v / 1000).toFixed(1);  // Convert MBBL to mmb
+          }
+          tr.appendChild(el("td", { style: { padding: "3px 6px", textAlign: "right", color: C.text, fontSize: "10px" } }, vStr));
+        });
+        stBody.appendChild(tr);
+      });
+      stTbl.appendChild(stBody);
+      stWrap.appendChild(stTbl);
+      box.appendChild(card("Gasoline Stocks — Monthly (million barrels)", stWrap));
+    }
+
+    // --- CHARTS ---
+    let gbmChIdx = 0;
+    const gbmNextId = () => `gbm-c-${gbmChIdx++}`;
+    const chartConfigs = [
+      { title: "Production & Demand (kb/d)", keys: ["production", "demand"], colors: [C.cyan, C.red] },
+      { title: "Imports & Exports (kb/d)", keys: ["imports_finished", "imports_blending", "exports_finished", "exports_blending"], colors: [C.green, "#a3e635", C.red, "#f472b6"] },
+      { title: "Stock Changes (kb/d)", keys: ["stock_change", "stock_change_blend", "stock_change_ethanol"], colors: [C.amber, "#67e8f9", C.purple] },
+    ];
+
+    const chartsToPlot = [];
+    const chartsGrid = el("div", { style: { display: "grid", gridTemplateColumns: "1fr", gap: "12px", marginBottom: "12px" } });
+    chartConfigs.forEach(cfg => {
+      const traces = [];
+      cfg.keys.forEach((k, i) => {
+        const row = rows.find(r => r.key === k);
+        if (!row) return;
+        const vals = periods.map(p => row.values[p]);
+        if (vals.every(v => v === null || v === undefined)) return;
+        traces.push({ x: periods, y: vals, name: row.label, color: cfg.colors[i] || C.text });
+      });
+      if (traces.length > 0) {
+        const cid = gbmNextId();
+        chartsToPlot.push({ id: cid, traces });
+        chartsGrid.appendChild(card(cfg.title, el("div", { id: cid, style: { width: "100%", height: "400px" } })));
+      }
+    });
+
+    // Stock levels chart
+    if (sRows.length > 0) {
+      const stockTraces = [];
+      const stockColors = [C.cyan, C.blue, C.green, C.amber];
+      sRows.forEach((row, i) => {
+        const vals = periods.map(p => row.values[p] !== null && row.values[p] !== undefined ? row.values[p] / 1000 : null);
+        if (!vals.every(v => v === null)) {
+          stockTraces.push({ x: periods, y: vals, name: row.label, color: stockColors[i] || C.text });
+        }
+      });
+      if (stockTraces.length > 0) {
+        const cid = gbmNextId();
+        chartsToPlot.push({ id: cid, traces: stockTraces, yTitle: "million barrels" });
+        chartsGrid.appendChild(card("Gasoline Stocks (million barrels)", el("div", { id: cid, style: { width: "100%", height: "400px" } })));
+      }
+    }
+    box.appendChild(chartsGrid);
+
+    loadPlotly(() => {
+      chartsToPlot.forEach(({ id, traces, yTitle }) => {
+        const pTraces = traces.map(t => ({
+          x: t.x, y: t.y, name: t.name, type: "scatter",
+          line: { color: t.color, width: 2.5 },
+        }));
+        const layout = { ...plotLayout, height: 400, yaxis: { ...plotLayout.yaxis, title: yTitle || "kb/d" }, showlegend: true, legend: { font: { size: 10, color: C.text }, orientation: "h", y: -0.15 } };
+        Plotly.newPlot(id, pTraces, layout, { responsive: true });
+      });
+    });
   }
 
   // ========== JODI GASOLINE (Global S&D + Multi-Year Overlay) ==========
