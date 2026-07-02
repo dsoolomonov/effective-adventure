@@ -3373,6 +3373,253 @@
           });
         }
       }
+
+      // ===== REFINERY EXPLORER =====
+      container.appendChild(sectionTitle(`🏭 Refinery Explorer — ${countryLabel}`));
+      const refExplorer = el("div", { style: { marginBottom: "24px" } });
+      container.appendChild(refExplorer);
+
+      const refLoadBtn = el("button", { style: { background: "linear-gradient(135deg, #60a5fa, #3b82f6)", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 24px", fontWeight: "700", fontSize: "12px", cursor: "pointer", marginBottom: "16px" } }, "LOAD REFINERY LIST");
+      refExplorer.appendChild(refLoadBtn);
+
+      const refSearch = el("input", { type: "text", placeholder: "Search refineries...", style: { background: "#1e293b", color: "#e2e8f0", border: "1px solid #334155", borderRadius: "6px", padding: "8px 12px", fontSize: "12px", width: "250px", marginLeft: "12px", display: "none" } });
+      refExplorer.appendChild(refSearch);
+
+      const refListArea = el("div", {});
+      refExplorer.appendChild(refListArea);
+
+      const refDetailArea = el("div", { style: { marginTop: "16px" } });
+      container.appendChild(refDetailArea);
+
+      refLoadBtn.onclick = async () => {
+        refLoadBtn.textContent = "Loading...";
+        refLoadBtn.disabled = true;
+        try {
+          const resp = await fetch(`/api/iir/refineries?country=${encodeURIComponent(country)}`);
+          if (!resp.ok) throw new Error(await resp.text());
+          const rData = await resp.json();
+          refLoadBtn.style.display = "none";
+          refSearch.style.display = "inline-block";
+          _renderRefineryList(refListArea, refDetailArea, rData, country);
+        } catch(e) {
+          refListArea.innerHTML = '<div style="color:#ef4444;padding:12px;">Error: ' + e.message + '</div>';
+        }
+        refLoadBtn.textContent = "LOAD REFINERY LIST";
+        refLoadBtn.disabled = false;
+      };
+
+      refSearch.oninput = () => {
+        const q = refSearch.value.toLowerCase();
+        const rows = refListArea.querySelectorAll("tr[data-refinery]");
+        rows.forEach(row => {
+          const name = (row.getAttribute("data-refinery") || "").toLowerCase();
+          const state = (row.getAttribute("data-state") || "").toLowerCase();
+          row.style.display = (name.includes(q) || state.includes(q)) ? "" : "none";
+        });
+      };
+    }
+
+    function _renderRefineryList(listArea, detailArea, rData, country) {
+      listArea.innerHTML = "";
+      const refs = rData.refineries || [];
+
+      const summary = el("div", { style: { fontSize: "12px", color: "#94a3b8", marginBottom: "12px" } }, `${refs.length} refineries found in ${rData.country || country}. Click a refinery to view its full history.`);
+      listArea.appendChild(summary);
+
+      const tbl = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11px" } });
+      const hdr = el("tr", {});
+      ["", "Refinery", "State", "Status", "Currently Offline", "Ongoing", "Future", "Past (2yr)", "Total", "Unit Types"].forEach(h => {
+        hdr.appendChild(el("th", { style: { padding: "8px 6px", background: "#1e293b", color: "#94a3b8", textAlign: h === "Currently Offline" ? "right" : "left", borderBottom: "2px solid #334155", fontWeight: "700", whiteSpace: "nowrap", position: "sticky", top: "0", zIndex: "1" } }, h));
+      });
+      tbl.appendChild(hdr);
+
+      refs.forEach(r => {
+        const tr = el("tr", { "data-refinery": r.plantName, "data-state": r.state, style: { borderBottom: "1px solid #1e293b", cursor: "pointer", transition: "background 0.15s" } });
+        tr.onmouseenter = () => { tr.style.background = "#1e293b"; };
+        tr.onmouseleave = () => { tr.style.background = ""; };
+
+        const isOffline = r.ongoingEvents > 0;
+        const statusDot = el("td", { style: { padding: "6px 4px", textAlign: "center" } });
+        statusDot.innerHTML = isOffline ? '<span style="color:#ef4444;font-size:14px;">●</span>' : '<span style="color:#22c55e;font-size:14px;">●</span>';
+        tr.appendChild(statusDot);
+
+        const cell = (v, opts) => { tr.appendChild(el("td", { style: { padding: "6px 6px", color: "#e2e8f0", ...opts } }, String(v))); };
+        cell(r.plantName, { fontWeight: "700", color: "#f59e0b" });
+        cell(r.state);
+        cell(isOffline ? "OFFLINE" : "ONLINE", { color: isOffline ? "#ef4444" : "#22c55e", fontWeight: "700", fontSize: "10px" });
+        cell(isOffline ? (r.ongoingOffline / 1000).toFixed(1) + " kbd" : "-", { textAlign: "right", color: isOffline ? "#ef4444" : "#64748b", fontWeight: isOffline ? "700" : "400" });
+        cell(r.ongoingEvents, { textAlign: "center", color: r.ongoingEvents > 0 ? "#ef4444" : "#64748b" });
+        cell(r.futureEvents, { textAlign: "center", color: r.futureEvents > 0 ? "#f59e0b" : "#64748b" });
+        cell(r.pastEvents, { textAlign: "center", color: r.pastEvents > 0 ? "#22c55e" : "#64748b" });
+        cell(r.totalEvents, { textAlign: "center", fontWeight: "600" });
+        cell((r.unitTypes || []).join(", "), { color: "#94a3b8", fontSize: "10px", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+
+        tr.onclick = () => {
+          _loadRefineryDetail(detailArea, r.plantName, country);
+          detailArea.scrollIntoView({ behavior: "smooth", block: "start" });
+        };
+        tbl.appendChild(tr);
+      });
+
+      const wrapper = el("div", { style: { maxHeight: "500px", overflowY: "auto", border: "1px solid #1e293b", borderRadius: "8px" } });
+      wrapper.appendChild(tbl);
+      listArea.appendChild(wrapper);
+    }
+
+    async function _loadRefineryDetail(detailArea, plantName, country) {
+      detailArea.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;">Loading ' + plantName + ' history...</div>';
+      try {
+        const resp = await fetch(`/api/iir/refinery_detail?plant_name=${encodeURIComponent(plantName)}&country=${encodeURIComponent(country)}`);
+        if (!resp.ok) throw new Error(await resp.text());
+        const d = await resp.json();
+        _renderRefineryDetail(detailArea, d);
+      } catch(e) {
+        detailArea.innerHTML = '<div style="color:#ef4444;padding:20px;">Error loading refinery: ' + e.message + '</div>';
+      }
+    }
+
+    function _renderRefineryDetail(detailArea, d) {
+      detailArea.innerHTML = "";
+      const C2 = C;
+
+      // Header
+      const hdr = el("div", { style: { display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px", flexWrap: "wrap" } });
+      hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: "#f59e0b" } }, d.plantName));
+      const statusColor = d.currentStatus === "Offline" ? "#ef4444" : d.currentStatus === "Upcoming" ? "#f59e0b" : "#22c55e";
+      hdr.appendChild(el("span", { style: { background: statusColor + "22", color: statusColor, border: "1px solid " + statusColor + "66", borderRadius: "6px", padding: "4px 12px", fontSize: "11px", fontWeight: "700" } }, d.currentStatus.toUpperCase()));
+      if (d.state) hdr.appendChild(el("span", { style: { fontSize: "12px", color: "#94a3b8" } }, d.state + (d.region ? " / " + d.region : "")));
+      const closeBtn = el("button", { style: { marginLeft: "auto", background: "#334155", color: "#e2e8f0", border: "none", borderRadius: "6px", padding: "6px 14px", fontSize: "11px", cursor: "pointer" } }, "CLOSE");
+      closeBtn.onclick = () => { detailArea.innerHTML = ""; };
+      hdr.appendChild(closeBtn);
+      detailArea.appendChild(hdr);
+
+      // Summary cards
+      const cardRow = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "10px", marginBottom: "20px" } });
+      function miniCard(label, val, color) {
+        const c = el("div", { style: { background: "#0f172a", borderRadius: "8px", border: "1px solid #1e293b", padding: "12px", textAlign: "center" } });
+        c.appendChild(el("div", { style: { fontSize: "10px", color: "#94a3b8", textTransform: "uppercase", fontWeight: "600", marginBottom: "6px" } }, label));
+        c.appendChild(el("div", { style: { fontSize: "22px", fontWeight: "800", color: color } }, String(val)));
+        return c;
+      }
+      cardRow.appendChild(miniCard("Currently Offline", d.currentOfflineBpd > 0 ? (d.currentOfflineBpd / 1000).toFixed(1) + " kbd" : "-", "#ef4444"));
+      cardRow.appendChild(miniCard("Ongoing Events", d.ongoingEvents.length, "#ef4444"));
+      cardRow.appendChild(miniCard("Future Planned", d.futureEvents.length, "#f59e0b"));
+      cardRow.appendChild(miniCard("Past Events", d.pastEvents.length, "#22c55e"));
+      cardRow.appendChild(miniCard("Total Events", d.totalEvents, "#60a5fa"));
+      detailArea.appendChild(cardRow);
+
+      // Ongoing events detail
+      if (d.ongoingEvents.length > 0) {
+        detailArea.appendChild(el("div", { style: { fontSize: "14px", fontWeight: "700", color: "#ef4444", margin: "16px 0 8px 0" } }, "Currently Offline Units"));
+        const otbl = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11px", marginBottom: "16px" } });
+        const ohdr = el("tr", {});
+        ["Unit", "Unit Type", "Offline (kbd)", "Start", "End", "Days", "Type", "Confirmation", "Notes"].forEach(h => {
+          ohdr.appendChild(el("th", { style: { padding: "6px 6px", background: "#1e293b", color: "#94a3b8", textAlign: "left", borderBottom: "2px solid #ef444444", fontWeight: "700" } }, h));
+        });
+        otbl.appendChild(ohdr);
+        d.ongoingEvents.forEach(ev => {
+          const tr = el("tr", { style: { borderBottom: "1px solid #1e293b" } });
+          const cell = (v, opts) => { tr.appendChild(el("td", { style: { padding: "5px 6px", color: "#e2e8f0", ...opts } }, String(v))); };
+          cell(ev.unitName);
+          cell(ev.unitTypeDesc, { color: "#94a3b8" });
+          cell(ev.capacityOffline > 0 ? (ev.capacityOffline / 1000).toFixed(1) : "-", { textAlign: "right", color: "#ef4444", fontWeight: "700" });
+          cell(ev.startDate);
+          cell(ev.endDate);
+          cell(ev.duration || "-");
+          cell(ev.eventType, { color: ev.eventType === "Unplanned" ? "#ef4444" : "#22c55e" });
+          cell(ev.confirmation, { color: ev.confirmation === "Confirmed" ? "#22c55e" : "#f59e0b", fontSize: "10px" });
+          cell(ev.comments ? ev.comments.slice(0, 80) + (ev.comments.length > 80 ? "..." : "") : "-", { color: "#64748b", fontSize: "10px" });
+          otbl.appendChild(tr);
+        });
+        detailArea.appendChild(otbl);
+      }
+
+      // Historical offline capacity chart
+      if (d.timeline && d.timeline.length > 0) {
+        detailArea.appendChild(el("div", { style: { fontSize: "14px", fontWeight: "700", color: "#60a5fa", margin: "16px 0 8px 0" } }, "Historical Offline Capacity"));
+        const chartId = "iir-ref-timeline-" + Date.now();
+        const chartDiv = el("div", { id: chartId, style: { width: "100%", height: "400px", marginBottom: "20px" } });
+        detailArea.appendChild(chartDiv);
+
+        loadPlotly(() => {
+          const months = d.timeline.map(t => t.month);
+          const vals = d.timeline.map(t => t.offlineBpd / 1000);
+          const evCounts = d.timeline.map(t => t.events);
+          const colors = vals.map(v => v > 0 ? "#ef4444" : "#22c55e");
+          Plotly.newPlot(chartId, [{
+            x: months,
+            y: vals,
+            type: "bar",
+            marker: { color: colors },
+            text: vals.map((v, i) => v.toFixed(1) + " kbd (" + evCounts[i] + " events)"),
+            hovertemplate: "%{x}<br>%{y:.1f} kbd offline<br>%{text}<extra></extra>"
+          }], {
+            title: { text: d.plantName + " — Monthly Avg Offline Capacity (kbd)", font: { color: "#f59e0b", size: 14 } },
+            paper_bgcolor: "#0f172a", plot_bgcolor: "#0f172a",
+            xaxis: { color: "#94a3b8", tickangle: -45, tickfont: { size: 10 }, gridcolor: "#1e293b" },
+            yaxis: { color: "#94a3b8", title: { text: "Avg Offline (kbd)", font: { size: 11 } }, gridcolor: "#1e293b" },
+            margin: { t: 50, b: 80, l: 60, r: 20 }
+          }, { responsive: true });
+        });
+      }
+
+      // Unit type breakdown chart
+      if (d.unitSummary && d.unitSummary.length > 0) {
+        detailArea.appendChild(el("div", { style: { fontSize: "14px", fontWeight: "700", color: "#a78bfa", margin: "16px 0 8px 0" } }, "Events by Unit Type"));
+        const ucId = "iir-ref-units-" + Date.now();
+        const ucDiv = el("div", { id: ucId, style: { width: "100%", height: "350px", marginBottom: "20px" } });
+        detailArea.appendChild(ucDiv);
+
+        loadPlotly(() => {
+          const unitColors = ["#ef4444", "#f59e0b", "#22c55e", "#60a5fa", "#a78bfa", "#ec4899", "#14b8a6", "#f97316"];
+          Plotly.newPlot(ucId, [{
+            labels: d.unitSummary.map(u => u.unitType),
+            values: d.unitSummary.map(u => u.events),
+            type: "pie",
+            marker: { colors: unitColors },
+            textinfo: "label+value",
+            textfont: { size: 11, color: "#e2e8f0" },
+            hovertemplate: "%{label}<br>%{value} events<br>Max capacity: %{customdata} b/d<extra></extra>",
+            customdata: d.unitSummary.map(u => (u.maxCapacity || 0).toLocaleString()),
+          }], {
+            title: { text: d.plantName + " — Events by Unit Type", font: { color: "#a78bfa", size: 14 } },
+            paper_bgcolor: "#0f172a", plot_bgcolor: "#0f172a",
+            legend: { font: { color: "#94a3b8", size: 10 } },
+            margin: { t: 50, b: 20, l: 20, r: 20 }
+          }, { responsive: true });
+        });
+      }
+
+      // Full event history table
+      detailArea.appendChild(el("div", { style: { fontSize: "14px", fontWeight: "700", color: "#f59e0b", margin: "16px 0 8px 0" } }, "Full Event History (" + d.totalEvents + " events)"));
+      const htbl = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11px", marginBottom: "20px" } });
+      const hhdr = el("tr", {});
+      ["Status", "Unit", "Unit Type", "Offline (kbd)", "Start", "End", "Days", "Type", "Confirmation", "Notes"].forEach(h => {
+        hhdr.appendChild(el("th", { style: { padding: "7px 6px", background: "#1e293b", color: "#94a3b8", textAlign: "left", borderBottom: "2px solid #334155", fontWeight: "700", whiteSpace: "nowrap", position: "sticky", top: "0", zIndex: "1" } }, h));
+      });
+      htbl.appendChild(hhdr);
+
+      (d.allEvents || []).forEach(ev => {
+        const tr = el("tr", { style: { borderBottom: "1px solid #1e293b" } });
+        const statusColors = { "Ongoing": "#ef4444", "Future": "#f59e0b", "Past": "#22c55e" };
+        const sc = statusColors[ev.eventStatus] || "#64748b";
+        const cell = (v, opts) => { tr.appendChild(el("td", { style: { padding: "5px 6px", color: "#e2e8f0", ...opts } }, String(v))); };
+        cell(ev.eventStatus, { color: sc, fontWeight: "700", fontSize: "10px" });
+        cell(ev.unitName);
+        cell(ev.unitTypeDesc, { color: "#94a3b8", fontSize: "10px" });
+        cell(ev.capacityOffline > 0 ? (ev.capacityOffline / 1000).toFixed(1) : "-", { textAlign: "right", color: "#60a5fa", fontWeight: "600" });
+        cell(ev.startDate);
+        cell(ev.endDate);
+        cell(ev.duration || "-");
+        cell(ev.eventType, { color: ev.eventType === "Unplanned" ? "#ef4444" : "#22c55e" });
+        cell(ev.confirmation || "-", { color: ev.confirmation === "Confirmed" ? "#22c55e" : "#f59e0b", fontSize: "10px" });
+        cell(ev.comments ? ev.comments.slice(0, 100) + (ev.comments.length > 100 ? "..." : "") : "-", { color: "#64748b", fontSize: "10px" });
+        htbl.appendChild(tr);
+      });
+
+      const hwrap = el("div", { style: { maxHeight: "400px", overflowY: "auto", border: "1px solid #1e293b", borderRadius: "8px" } });
+      hwrap.appendChild(htbl);
+      detailArea.appendChild(hwrap);
     }
 
     // Auto-load on tab open

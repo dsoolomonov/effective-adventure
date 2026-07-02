@@ -11615,6 +11615,236 @@ async def iir_seasonal(country: str = Query("U.S.A.")):
     return {"seasonal": seasonal, "country": country}
 
 
+@app.get("/api/iir/refineries")
+async def iir_refineries(country: str = Query("U.S.A.")):
+    """List all refineries for a country with status summary (ongoing/future/past event counts)."""
+    from collections import defaultdict
+    from datetime import datetime as _dt, timedelta
+
+    plant_info: dict = defaultdict(lambda: {
+        "state": "", "region": "", "total_capacity": 0,
+        "ongoing_offline": 0, "ongoing_events": 0,
+        "future_events": 0, "past_events": 0,
+        "unit_types": set(), "last_event_end": "",
+    })
+
+    # Fetch ongoing, future, past (last 2 years)
+    two_years_ago = (_dt.now() - timedelta(days=730)).strftime("%Y-%m-%d")
+    fetches = [
+        ("Ongoing", {}),
+        ("Future", {}),
+        ("Past", {"eventStartDateMin": two_years_ago}),
+    ]
+    for status, extra in fetches:
+        params = {"eventKind": "T", "eventStatusDesc": status}
+        if country:
+            params["physicalAddressCountryName"] = country
+        params.update(extra)
+        try:
+            events = _iir_dedup_events(
+                _iir_fetch_all_pages("offlineevents/summary", params, max_pages=30)
+            )
+        except Exception:
+            events = []
+
+        for e in events:
+            pn = e.get("plantName", "Unknown")
+            cap = e.get("offlineCapacity", {}).get("capacityOffline", 0) or 0
+            unit_cap = e.get("offlineCapacity", {}).get("unitCapacity", 0) or 0
+            info = plant_info[pn]
+            info["state"] = info["state"] or e.get("plantPhysicalAddress", {}).get("stateName", "")
+            info["region"] = info["region"] or e.get("tradingRegionName", "")
+            if unit_cap > info["total_capacity"]:
+                info["total_capacity"] = unit_cap
+            info["unit_types"].add(e.get("unitTypeDesc", ""))
+            end_date = (e.get("associatedEntityEndDate") or "")[:10]
+            if end_date > info["last_event_end"]:
+                info["last_event_end"] = end_date
+
+            if status == "Ongoing":
+                info["ongoing_offline"] += cap
+                info["ongoing_events"] += 1
+            elif status == "Future":
+                info["future_events"] += 1
+            else:
+                info["past_events"] += 1
+
+    # Build sorted list
+    refineries = []
+    for pn, info in sorted(plant_info.items(), key=lambda x: x[0]):
+        refineries.append({
+            "plantName": pn,
+            "state": info["state"],
+            "region": info["region"],
+            "ongoingOffline": round(info["ongoing_offline"], 0),
+            "ongoingEvents": info["ongoing_events"],
+            "futureEvents": info["future_events"],
+            "pastEvents": info["past_events"],
+            "totalEvents": info["ongoing_events"] + info["future_events"] + info["past_events"],
+            "unitTypes": sorted(info["unit_types"] - {""}),
+            "lastEventEnd": info["last_event_end"],
+        })
+
+    # Sort: ongoing first (by offline desc), then by total events
+    refineries.sort(key=lambda r: (-r["ongoingOffline"], -r["totalEvents"]))
+
+    return {
+        "country": country,
+        "totalRefineries": len(refineries),
+        "refineries": refineries,
+    }
+
+
+@app.get("/api/iir/refinery_detail")
+async def iir_refinery_detail(
+    plant_name: str = Query(...),
+    country: str = Query("U.S.A."),
+):
+    """Get full history of IIR events for a specific refinery, plus current status."""
+    from collections import defaultdict
+    from datetime import datetime as _dt, timedelta
+
+    all_events = []
+
+    # Fetch ongoing, future, and past (up to 5 years back) for this plant
+    five_years_ago = (_dt.now() - timedelta(days=5 * 365)).strftime("%Y-%m-%d")
+    fetches = [
+        ("Ongoing", {}),
+        ("Future", {}),
+        ("Past", {"eventStartDateMin": five_years_ago}),
+    ]
+    for status, extra in fetches:
+        params = {
+            "eventKind": "T",
+            "eventStatusDesc": status,
+            "plantName": plant_name,
+        }
+        if country:
+            params["physicalAddressCountryName"] = country
+        params.update(extra)
+        try:
+            events = _iir_fetch_all_pages("offlineevents/summary", params, max_pages=30)
+        except Exception:
+            events = []
+
+        for e in events:
+            cap_obj = e.get("offlineCapacity", {})
+            all_events.append({
+                "eventId": e.get("eventId"),
+                "plantName": e.get("plantName", ""),
+                "unitName": e.get("unitName", ""),
+                "unitTypeDesc": e.get("unitTypeDesc", ""),
+                "capacityOffline": cap_obj.get("capacityOffline", 0) or 0,
+                "unitCapacity": cap_obj.get("unitCapacity", 0) or 0,
+                "startDate": (e.get("associatedEntityStartDate") or e.get("eventStartDate") or "")[:10],
+                "endDate": (e.get("associatedEntityEndDate") or e.get("eventEndDate") or "")[:10],
+                "eventType": e.get("eventType", ""),
+                "eventStatus": status,
+                "confirmation": e.get("eventConfirmationStatus", ""),
+                "duration": e.get("eventDuration", 0),
+                "comments": e.get("eventComments", ""),
+                "state": e.get("plantPhysicalAddress", {}).get("stateName", ""),
+                "region": e.get("tradingRegionName", ""),
+            })
+
+    # Deduplicate by unitName + startDate + endDate
+    seen = {}
+    deduped = []
+    for ev in all_events:
+        key = (ev["unitName"], ev["unitTypeDesc"], ev["startDate"], ev["endDate"])
+        if key not in seen:
+            seen[key] = ev
+            deduped.append(ev)
+        else:
+            if ev["capacityOffline"] > seen[key]["capacityOffline"]:
+                seen[key].update(ev)
+
+    # Sort by start date descending (most recent first)
+    deduped.sort(key=lambda e: e["startDate"], reverse=True)
+
+    # Current status: ongoing events
+    ongoing = [e for e in deduped if e["eventStatus"] == "Ongoing"]
+    future = [e for e in deduped if e["eventStatus"] == "Future"]
+    past = [e for e in deduped if e["eventStatus"] == "Past"]
+
+    current_offline = sum(e["capacityOffline"] for e in ongoing)
+    state = deduped[0]["state"] if deduped else ""
+    region = deduped[0]["region"] if deduped else ""
+
+    # Build monthly offline capacity timeline for chart
+    monthly_offline: dict = defaultdict(float)
+    monthly_events: dict = defaultdict(int)
+    for ev in deduped:
+        if not ev["startDate"] or not ev["endDate"]:
+            continue
+        try:
+            start = _dt.strptime(ev["startDate"], "%Y-%m-%d")
+            end = _dt.strptime(ev["endDate"], "%Y-%m-%d")
+        except ValueError:
+            continue
+        cap = ev["capacityOffline"]
+        if cap <= 0:
+            continue
+        # Walk months
+        cursor = _dt(start.year, start.month, 1)
+        end_month = _dt(end.year, end.month, 1)
+        max_end = _dt(start.year + 2, start.month, 1)  # safety cap
+        if end_month > max_end:
+            end_month = max_end
+        while cursor <= end_month:
+            month_key = cursor.strftime("%Y-%m")
+            if cursor.month == 12:
+                month_end = _dt(cursor.year + 1, 1, 1)
+            else:
+                month_end = _dt(cursor.year, cursor.month + 1, 1)
+            days_in_month = (month_end - _dt(cursor.year, cursor.month, 1)).days
+            overlap_start = max(start, cursor)
+            overlap_end = min(end, month_end - timedelta(days=1))
+            overlap_days = max(0, (overlap_end - overlap_start).days + 1)
+            if overlap_days > 0:
+                monthly_offline[month_key] += cap * overlap_days / days_in_month
+                monthly_events[month_key] += 1
+            if cursor.month == 12:
+                cursor = _dt(cursor.year + 1, 1, 1)
+            else:
+                cursor = _dt(cursor.year, cursor.month + 1, 1)
+
+    sorted_months = sorted(monthly_offline.keys())
+    timeline = [
+        {"month": m, "offlineBpd": round(monthly_offline[m], 0), "events": monthly_events[m]}
+        for m in sorted_months
+    ]
+
+    # Unit types summary
+    unit_summary: dict = defaultdict(lambda: {"events": 0, "total_offline_days": 0, "max_capacity": 0})
+    for ev in deduped:
+        ut = ev["unitTypeDesc"] or "Unknown"
+        unit_summary[ut]["events"] += 1
+        unit_summary[ut]["total_offline_days"] += ev["duration"] or 0
+        if ev["capacityOffline"] > unit_summary[ut]["max_capacity"]:
+            unit_summary[ut]["max_capacity"] = ev["capacityOffline"]
+    units_list = [
+        {"unitType": k, "events": v["events"], "totalOfflineDays": v["total_offline_days"], "maxCapacity": v["max_capacity"]}
+        for k, v in sorted(unit_summary.items(), key=lambda x: -x[1]["events"])
+    ]
+
+    return {
+        "plantName": plant_name,
+        "country": country,
+        "state": state,
+        "region": region,
+        "currentStatus": "Offline" if ongoing else ("Upcoming" if future else "Online"),
+        "currentOfflineBpd": round(current_offline, 0),
+        "ongoingEvents": ongoing,
+        "futureEvents": future,
+        "pastEvents": past,
+        "allEvents": deduped,
+        "totalEvents": len(deduped),
+        "timeline": timeline,
+        "unitSummary": units_list,
+    }
+
+
 # --- LEM (Light Ends Market) ---
 @app.get("/api/lem/data")
 async def lem_data():
