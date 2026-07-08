@@ -2127,7 +2127,8 @@
       if (d.prose) {
         const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         const html = esc(d.prose)
-          .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#fbbf24">$1</strong>')
+          .replace(/^#{1,4}\s*(.+)$/gm, '<span style="display:block;color:#38bdf8;font-weight:800;font-size:11.5px;letter-spacing:1.4px;text-transform:uppercase;margin:14px 0 4px;border-bottom:1px solid #1a2338;padding-bottom:4px;">$1</span>')
+          .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#7dd3fc">$1</strong>')
           .replace(/\n/g, "<br>");
         const pb = el("div", { style: { fontSize: "12.5px", lineHeight: "1.65", color: C.text, background: C.bg, border: `1px solid ${C.border}`, borderRadius: "8px", padding: "14px 16px", marginBottom: "16px" } });
         pb.innerHTML = html; card.appendChild(pb);
