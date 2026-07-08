@@ -2818,6 +2818,152 @@ async def pricing_data_endpoint(group: str = Query(...)):
     raise HTTPException(status_code=404, detail=f"No pricing group '{group}'")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ═══  MARKET INTELLIGENCE  (cross-source commentary + trajectory)
+# ═══════════════════════════════════════════════════════════════════════════════
+def _iir_outage_summary():
+    """Best-effort snapshot of currently-offline refining capacity from IIR.
+    Returns None if the IIR data/endpoint isn't reachable offline."""
+    try:
+        import app.market_intel as _mi  # noqa
+    except Exception:
+        pass
+    try:
+        cache = globals().get("_IIR_OUTAGE_CACHE")
+        if cache is not None:
+            return cache
+    except Exception:
+        pass
+    return None
+
+
+def _build_market_context():
+    import app.market_intel as mi
+    pricing = _load_pricing_raw()
+    margins = _load_margins_raw()
+    ctx = mi.build_context(cot_multi_data, pricing, margins)
+    outages = _iir_outage_summary()
+    if outages:
+        ctx["outages"] = outages
+    return ctx
+
+
+@app.get("/api/market/context")
+async def market_context():
+    """Full cross-source market snapshot (positioning, pricing, cracks, swaps, margins)."""
+    return _build_market_context()
+
+
+@app.get("/api/market/briefing")
+async def market_briefing(product: str = Query("crude"), region: str = Query("US"),
+                          use_llm: bool = Query(True)):
+    """Generate a product/region market briefing from the cross-source snapshot."""
+    import app.market_intel as mi
+    ctx = _build_market_context()
+    base = mi.generate_briefing(ctx, product, region)
+    if base.get("available") and use_llm:
+        base = mi.llm_polish_briefing(ctx, product, region, base)
+        if not base.get("llm"):
+            base["llm_note"] = mi._llm_error() or ("No LLM key configured" if not mi._llm_available() else None)
+    return base
+
+
+@app.get("/api/market/briefings")
+async def market_briefings_all(use_llm: bool = Query(False)):
+    """Generate the full grid of briefings (all products × regions)."""
+    import app.market_intel as mi
+    ctx = _build_market_context()
+    regions = ["US", "UK", "DUBAI", "SING"]
+    out = []
+    for p in mi.PRODUCTS:
+        for rg in regions:
+            b = mi.generate_briefing(ctx, p, rg)
+            if b.get("available") and use_llm:
+                b = mi.llm_polish_briefing(ctx, p, rg, b)
+            out.append(b)
+    return {"generated": ctx.get("generated"), "briefings": out, "llm_enabled": mi._llm_available()}
+
+
+@app.get("/api/market/crossmarket")
+async def market_crossmarket():
+    """Combined intelligence view: current state + directional trajectory per
+    product, fusing positioning, pricing, term structure, cracks and margins,
+    plus a flows/outages → product-impact linkage."""
+    import app.market_intel as mi
+    ctx = _build_market_context()
+
+    def _score_product(prod):
+        """Directional score in [-100,100] from crack pctile/trend, curve, positioning, margin."""
+        score = 0.0
+        drivers = []
+        if prod == "crude":
+            fl = ctx["flat"].get("Brent") or ctx["flat"].get("WTI")
+            cv = ctx["curve"].get("Brent") or ctx["curve"].get("WTI")
+            ct = ctx["cot"].get("brent") or ctx["cot"].get("wti")
+            if cv:
+                s = 25 if cv["shape"] == "backwardation" else -25 if cv["shape"] == "contango" else 0
+                score += s
+                drivers.append(f"Curve {cv['shape']} (M1-M2 {cv['m1_m2']:+.2f})")
+            if fl:
+                s = max(-20, min(20, fl["wow"] * 6))
+                score += s
+                drivers.append(f"Flat {fl['trend']} ({fl['wow']:+.2f} w/w)")
+            if ct:
+                # crowded longs are a headwind; light positioning is a tailwind
+                s = -(ct["pctile"] - 50) * 0.4
+                score += s
+                drivers.append(f"MM {ct['pctile']:.0f}th pctile ({ct['stance']})")
+        else:
+            crack_lab = {"distillate": "GO-Brent 1", "gasoline": "RBOB-Brent 1"}.get(prod)
+            crack = ctx["cracks"].get(crack_lab)
+            if prod == "distillate":
+                crack = crack or ctx["cracks"].get("HO-WTI 1")
+            if prod == "gasoline":
+                crack = crack or ctx["cracks"].get("RBOB-WTI 1")
+            if crack:
+                s = max(-25, min(25, crack["wow"] * 8))
+                score += s
+                drivers.append(f"{crack['label']} {crack['wow']:+.2f} w/w")
+                s2 = (crack["pctile"] - 50) * 0.3
+                score += s2
+                drivers.append(f"Crack {crack['pctile']:.0f}th pctile")
+            reg_margin = "US Gulf Coast" if prod == "gasoline" else "North-West Europe"
+            mgs = [m for m in ctx.get("margins", []) if m["region"] == reg_margin]
+            if mgs:
+                mg = max(mgs, key=lambda m: m["seasonal_pctile"] or 0)
+                s = ((mg["seasonal_pctile"] or 50) - 50) * 0.4
+                score += s
+                drivers.append(f"{mg['name']} {mg['seasonal_pctile']:.0f}th seasonal pctile")
+        score = max(-100, min(100, score))
+        bias = "BULLISH" if score > 20 else "BEARISH" if score < -20 else "NEUTRAL"
+        return {"product": prod, "score": round(score, 1), "bias": bias, "drivers": drivers}
+
+    trajectory = [_score_product(p) for p in ["crude", "distillate", "gasoline"]]
+
+    # Flow/outage → product linkage (qualitative, data-aware)
+    linkage = [
+        {"signal": "Refinery outage / run cut (IIR, Genscape)",
+         "impact": "Reduces product supply → widens the affected crack (bullish gasoline/distillate) "
+                   "and cuts crude runs (bearish prompt crude/differentials for the feed grade)."},
+        {"signal": "Crude import surge into a region (Kpler)",
+         "impact": "Signals higher forward runs → more product supply → bearish local cracks with a lag; "
+                   "bullish crude differentials near-term."},
+        {"signal": "JODI stock draw in a region",
+         "impact": "Confirms tightening balance → supportive for that product's crack and time spreads."},
+        {"signal": "Term-structure flip (curve)",
+         "impact": "Backwardation ↑ = prompt tightness (bullish); contango ↑ = prompt length (bearish)."},
+    ]
+
+    return {
+        "generated": ctx.get("generated"),
+        "flat": ctx["flat"], "curve": ctx["curve"], "cot": ctx["cot"],
+        "cracks": ctx["cracks"], "swaps": ctx["swaps"], "margins": ctx["margins"],
+        "trajectory": trajectory,
+        "linkage": linkage,
+        "outages": ctx.get("outages"),
+    }
+
+
 _COT_MULTI_LABELS = {
     "brent": "ICE Brent Crude",
     "wti": "NYMEX WTI Crude",

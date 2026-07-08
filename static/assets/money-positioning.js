@@ -2060,6 +2060,196 @@
     load();
   }
 
+  // ========== MARKET COMMENTARY (AI-style briefings) ==========
+  async function renderMarketCommentary(box) {
+    box.innerHTML = "";
+    const PRODUCTS = [["crude", "Crude"], ["distillate", "Distillate"], ["gasoline", "Gasoline"], ["freight", "Freight"]];
+    const REGIONS = [["US", "US"], ["UK", "UK / Europe"], ["DUBAI", "Dubai"], ["SING", "Singapore"]];
+    let product = "crude", region = "US", useLLM = true;
+
+    box.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.amber, marginBottom: "3px" } }, "🧭 MARKET COMMENTARY — Daily Product Briefings"));
+    box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "14px" } },
+      "AI-style cross-barrel briefings generated from live positioning, pricing, cracks, swaps & refinery margins. Not investment advice."));
+
+    // Selectors
+    const bar = el("div", { style: { display: "flex", gap: "18px", flexWrap: "wrap", alignItems: "flex-end", marginBottom: "14px" } });
+    box.appendChild(bar);
+
+    function pillGroup(labelTxt, opts, getVal, setVal) {
+      const wrap = el("div", {});
+      wrap.appendChild(el("div", { style: { fontSize: "10px", color: C.muted, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.5px" } }, labelTxt));
+      const row = el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } });
+      const bs = [];
+      opts.forEach(([v, lbl]) => {
+        const b = el("button", { style: pillStyle(getVal() === v), onClick: () => { setVal(v); bs.forEach((bb, i) => Object.assign(bb.style, pillStyle(getVal() === opts[i][0]))); draw(); } });
+        b.textContent = lbl; bs.push(b); row.appendChild(b);
+      });
+      wrap.appendChild(row); return wrap;
+    }
+    function pillStyle(on) {
+      return { padding: "6px 13px", border: on ? `2px solid ${C.amber}` : "1px solid #334155", background: on ? C.amber + "22" : C.card, color: on ? C.amber : C.text, borderRadius: "6px", cursor: "pointer", fontSize: "11px", fontWeight: "600" };
+    }
+    bar.appendChild(pillGroup("Product", PRODUCTS, () => product, v => product = v));
+    bar.appendChild(pillGroup("Region", REGIONS, () => region, v => region = v));
+
+    const out = el("div", {});
+    box.appendChild(out);
+
+    async function draw() {
+      out.innerHTML = '<div style="color:#94a3b8;padding:30px;text-align:center;">Generating briefing…</div>';
+      let d;
+      try { const r = await fetch(`/api/market/briefing?product=${product}&region=${region}&use_llm=${useLLM}`); d = await r.json(); }
+      catch (e) { out.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; return; }
+      out.innerHTML = "";
+      if (!d.available) { out.innerHTML = `<div style="color:${C.muted};padding:20px;">${d.message || "No data for this combination."}</div>`; return; }
+
+      const card = el("div", { style: { background: C.card, border: "1px solid #1e293b", borderRadius: "10px", padding: "18px 20px" } });
+      card.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "800", color: C.text } }, d.title));
+      const badge = el("span", { style: { fontSize: "9px", fontWeight: "700", color: d.llm ? "#000" : C.muted, background: d.llm ? C.green : "transparent", border: d.llm ? "none" : `1px solid ${C.border}`, borderRadius: "4px", padding: "2px 7px", marginLeft: "8px" } }, d.llm ? "AI-WRITTEN" : "RULE-BASED");
+      card.lastChild.appendChild(badge);
+      card.appendChild(el("div", { style: { fontSize: "10px", color: C.muted, margin: "3px 0 14px", fontStyle: "italic" } }, d.disclaimer));
+
+      // Headline metric chips
+      if (d.headline_metrics && d.headline_metrics.length) {
+        const chips = el("div", { style: { display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "16px" } });
+        d.headline_metrics.forEach(m => {
+          const c = el("div", { style: { background: C.bg, border: "1px solid #1e293b", borderRadius: "8px", padding: "8px 12px", minWidth: "110px" } });
+          c.appendChild(el("div", { style: { fontSize: "9px", color: C.muted, textTransform: "uppercase" } }, m.label));
+          c.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.text } }, m.value));
+          c.appendChild(el("div", { style: { fontSize: "10px", color: C.cyan } }, m.chg));
+          chips.appendChild(c);
+        });
+        card.appendChild(chips);
+      }
+
+      // LLM prose (if present) shown first
+      if (d.prose) {
+        const pb = el("div", { style: { whiteSpace: "pre-wrap", fontSize: "12.5px", lineHeight: "1.6", color: C.text, background: C.bg, border: `1px solid ${C.border}`, borderRadius: "8px", padding: "14px 16px", marginBottom: "16px" } });
+        pb.textContent = d.prose; card.appendChild(pb);
+      }
+
+      function section(title, color) {
+        card.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "800", color: color, textTransform: "uppercase", letterSpacing: "0.5px", margin: "16px 0 8px", borderBottom: `1px solid ${C.border}`, paddingBottom: "4px" } }, title));
+      }
+
+      section("TL;DR", C.amber);
+      (d.tldr || []).forEach(t => {
+        card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.55", color: C.text, marginBottom: "7px" } }, "• " + t));
+      });
+
+      section("Market State", C.cyan);
+      card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.6", color: C.text, marginBottom: "6px" } }, d.market_state || ""));
+
+      section("Physical Update", C.purple);
+      (d.physical || []).forEach((t, i) => {
+        card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.55", color: C.text, marginBottom: "7px" } },
+          [el("span", { style: { color: C.purple, fontWeight: "700" } }, `Theme ${i + 1}: `), document.createTextNode(t)]));
+      });
+
+      section("What to Watch", C.green);
+      (d.watch || []).forEach((t, i) => {
+        card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.55", color: C.text, marginBottom: "7px" } },
+          [el("span", { style: { color: C.green, fontWeight: "700" } }, `(${i + 1}) `), document.createTextNode(t)]));
+      });
+
+      out.appendChild(card);
+    }
+    draw();
+  }
+
+  // ========== CROSS-MARKET INTELLIGENCE ==========
+  async function renderCrossMarket(box) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading cross-market intelligence…</div>';
+    let d;
+    try { const r = await fetch("/api/market/crossmarket"); d = await r.json(); }
+    catch (e) { box.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; return; }
+    box.innerHTML = "";
+
+    box.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.amber, marginBottom: "3px" } }, "🧠 CROSS-MARKET INTELLIGENCE"));
+    box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "16px" } },
+      `Fuses positioning · pricing · term structure · cracks · margins into a directional read per product. Generated ${(d.generated || "").slice(0, 16).replace("T", " ")} UTC.`));
+
+    // Trajectory cards
+    const traj = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "12px", marginBottom: "20px" } });
+    const biasColor = b => b === "BULLISH" ? C.green : b === "BEARISH" ? C.red : C.muted;
+    (d.trajectory || []).forEach(t => {
+      const c = el("div", { style: { background: C.card, border: `1px solid #1e293b`, borderLeft: `4px solid ${biasColor(t.bias)}`, borderRadius: "8px", padding: "14px 16px" } });
+      const hr = el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" } });
+      hr.appendChild(el("div", { style: { fontSize: "14px", fontWeight: "800", color: C.text, textTransform: "capitalize" } }, t.product));
+      hr.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "800", color: biasColor(t.bias) } }, t.bias));
+      c.appendChild(hr);
+      // score bar centred at 0
+      const track = el("div", { style: { position: "relative", height: "8px", background: "#1e293b", borderRadius: "4px", margin: "6px 0 10px" } });
+      const pct = Math.max(-100, Math.min(100, t.score));
+      const half = Math.abs(pct) / 2;
+      const fill = el("div", { style: { position: "absolute", top: "0", height: "8px", borderRadius: "4px", background: biasColor(t.bias), left: pct >= 0 ? "50%" : (50 - half) + "%", width: half + "%" } });
+      track.appendChild(fill);
+      track.appendChild(el("div", { style: { position: "absolute", left: "50%", top: "-2px", width: "1px", height: "12px", background: C.muted } }));
+      c.appendChild(track);
+      c.appendChild(el("div", { style: { fontSize: "10px", color: C.muted, marginBottom: "6px" } }, `Score ${t.score >= 0 ? "+" : ""}${t.score}`));
+      (t.drivers || []).forEach(dr => c.appendChild(el("div", { style: { fontSize: "11px", color: C.text, marginBottom: "3px" } }, "› " + dr)));
+      traj.appendChild(c);
+    });
+    box.appendChild(traj);
+
+    // Snapshot tables: flat + curve + positioning
+    function tableCard(title, headers, rows) {
+      const c = el("div", { style: { background: C.card, border: "1px solid #1e293b", borderRadius: "8px", padding: "12px 14px", marginBottom: "14px" } });
+      c.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "800", color: C.cyan, marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" } }, title));
+      const tbl = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11.5px" } });
+      const thr = el("tr", {});
+      headers.forEach((h, i) => thr.appendChild(el("th", { style: { textAlign: i === 0 ? "left" : "right", color: C.muted, padding: "4px 8px", borderBottom: `1px solid ${C.border}`, fontWeight: "600" } }, h)));
+      tbl.appendChild(thr);
+      rows.forEach(r => {
+        const tr = el("tr", {});
+        r.forEach((cell, i) => {
+          const isNum = i > 0;
+          const val = typeof cell === "object" ? cell.v : cell;
+          const col = typeof cell === "object" ? cell.c : C.text;
+          tr.appendChild(el("td", { style: { textAlign: isNum ? "right" : "left", color: col, padding: "4px 8px", borderBottom: "1px solid #131c2b", fontWeight: i === 0 ? "600" : "500" } }, val));
+        });
+        tbl.appendChild(tr);
+      });
+      c.appendChild(tbl); return c;
+    }
+    const sgn = (x, dp = 2) => (x >= 0 ? "+" : "") + Number(x).toFixed(dp);
+    const chgC = x => x > 0 ? C.green : x < 0 ? C.red : C.muted;
+
+    // Flat + curve merged
+    const flatRows = Object.entries(d.flat || {}).map(([k, v]) => {
+      const cv = (d.curve || {})[k];
+      return [k, `$${v.last.toFixed(2)}`, { v: sgn(v.wow), c: chgC(v.wow) }, `${v.pctile}th`,
+        cv ? { v: cv.shape, c: cv.shape === "backwardation" ? C.green : cv.shape === "contango" ? C.red : C.muted } : "—",
+        cv ? { v: sgn(cv.m1_m2), c: chgC(cv.m1_m2) } : "—"];
+    });
+    box.appendChild(tableCard("Flat Price & Term Structure", ["Benchmark", "Last", "Δ w/w", "Hist %ile", "Curve", "M1-M2"], flatRows));
+
+    // Positioning
+    const cotRows = Object.entries(d.cot || {}).map(([k, v]) => [k.toUpperCase(), v.mm_net.toLocaleString(), { v: sgn(v.wow, 0), c: chgC(v.wow) }, `${v.pctile}th`, { v: sgn(v.z), c: chgC(v.z) }, v.stance]);
+    if (cotRows.length) box.appendChild(tableCard("Managed-Money Positioning (COT)", ["Contract", "Net", "Δ w/w", "%ile", "z", "Stance"], cotRows));
+
+    // Cracks + swaps
+    const crackRows = Object.entries(d.cracks || {}).map(([k, v]) => [k, v.last.toFixed(2), { v: sgn(v.wow), c: chgC(v.wow) }, `${v.pctile}th`, v.trend]);
+    if (crackRows.length) box.appendChild(tableCard("Crack Spreads", ["Crack", "Last", "Δ w/w", "%ile", "Trend"], crackRows));
+    const swapRows = Object.entries(d.swaps || {}).map(([k, v]) => [k, v.last.toFixed(2), { v: sgn(v.wow), c: chgC(v.wow) }, `${v.pos_in_range}%`, v.trend]);
+    if (swapRows.length) box.appendChild(tableCard("OTC Swaps (balmo / M0)", ["Swap", "Last", "Δ w/w", "Range pos", "Trend"], swapRows));
+
+    // Margins
+    const mgRows = (d.margins || []).map(m => [`${m.name} (${m.region})`, `$${m.last.toFixed(2)}`, { v: sgn(m.wow), c: chgC(m.wow) }, `${m.seasonal_pctile}th`, m.season]);
+    if (mgRows.length) box.appendChild(tableCard("Refinery Margins", ["Margin", "Last", "Δ w/w", "Seasonal %ile", "Season"], mgRows));
+
+    // Linkage
+    const lc = el("div", { style: { background: C.card, border: "1px solid #1e293b", borderRadius: "8px", padding: "12px 14px" } });
+    lc.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "800", color: C.purple, marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" } }, "Flows / Outages → Product Impact"));
+    (d.linkage || []).forEach(l => {
+      const row = el("div", { style: { marginBottom: "8px" } });
+      row.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "700", color: C.amber } }, l.signal));
+      row.appendChild(el("div", { style: { fontSize: "11.5px", color: C.text, lineHeight: "1.5" } }, l.impact));
+      lc.appendChild(row);
+    });
+    box.appendChild(lc);
+  }
+
   async function renderFGE(box) {
     box.innerHTML = "";
 
@@ -6161,7 +6351,8 @@
       { id: "gb", label: "⛽ Gasoline Balances" },
       { id: "jodi", label: "🌍 JODI Gasoline" },
       { id: "kpler", label: "🚢 Kpler Flows" },
-      { id: "fge", label: "🌐 FGE Gasoline" },
+      { id: "mktcomm", label: "🧭 Market Commentary" },
+      { id: "xmkt", label: "🧠 Cross-Market" },
       { id: "gspe", label: "🏭 Genscape Refinery" },
       { id: "gseu", label: "🇪🇺 Genscape Europe" },
       { id: "iir", label: "🔧 IIR Turnarounds" },
@@ -6204,7 +6395,8 @@
       if (id === "gb" && !panes.gb._loaded) { panes.gb._loaded = true; renderGBal(panes.gb); }
       if (id === "jodi" && !panes.jodi._loaded) { panes.jodi._loaded = true; renderJODI(panes.jodi); }
       if (id === "kpler" && !panes.kpler._loaded) { panes.kpler._loaded = true; renderKpler(panes.kpler); }
-      if (id === "fge" && !panes.fge._loaded) { panes.fge._loaded = true; renderFGE(panes.fge); }
+      if (id === "mktcomm" && !panes.mktcomm._loaded) { panes.mktcomm._loaded = true; renderMarketCommentary(panes.mktcomm); }
+      if (id === "xmkt" && !panes.xmkt._loaded) { panes.xmkt._loaded = true; renderCrossMarket(panes.xmkt); }
       if (id === "gspe" && !panes.gspe._loaded) { panes.gspe._loaded = true; renderGenscape(panes.gspe); }
       if (id === "gseu" && !panes.gseu._loaded) { panes.gseu._loaded = true; renderGspeEurope(panes.gseu); }
       if (id === "iir" && !panes.iir._loaded) { panes.iir._loaded = true; renderIIR(panes.iir); }
