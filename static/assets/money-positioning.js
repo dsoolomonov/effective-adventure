@@ -173,22 +173,26 @@
   async function renderCOTMultiInline(box) {
     let allData = {}, summaryData = {};
     try {
-      const [brent, wti, gasoil] = await Promise.all([
+      const [brent, wti, gasoil, rbob] = await Promise.all([
         fetch("/api/cot_multi/data?commodity=brent").then(r => r.ok ? r.json() : null),
         fetch("/api/cot_multi/data?commodity=wti").then(r => r.ok ? r.json() : null),
         fetch("/api/cot_multi/data?commodity=gasoil").then(r => r.ok ? r.json() : null),
+        fetch("/api/cot_multi/data?commodity=rbob").then(r => r.ok ? r.json() : null),
       ]);
       if (brent) allData.brent = brent.data;
       if (wti) allData.wti = wti.data;
       if (gasoil) allData.gasoil = gasoil.data;
-      const [sBrent, sWti, sGasoil] = await Promise.all([
+      if (rbob) allData.rbob = rbob.data;
+      const [sBrent, sWti, sGasoil, sRbob] = await Promise.all([
         fetch("/api/cot_multi/summary?commodity=brent").then(r => r.ok ? r.json() : null),
         fetch("/api/cot_multi/summary?commodity=wti").then(r => r.ok ? r.json() : null),
         fetch("/api/cot_multi/summary?commodity=gasoil").then(r => r.ok ? r.json() : null),
+        fetch("/api/cot_multi/summary?commodity=rbob").then(r => r.ok ? r.json() : null),
       ]);
       if (sBrent) summaryData.brent = sBrent;
       if (sWti) summaryData.wti = sWti;
       if (sGasoil) summaryData.gasoil = sGasoil;
+      if (sRbob) summaryData.rbob = sRbob;
     } catch(e) { return; }
 
     if (!Object.keys(allData).length) return;
@@ -201,14 +205,14 @@
       container.innerHTML = "";
       const data = allData[currentCommodity] || [];
       const summary = summaryData[currentCommodity] || {};
-      const labels = { brent: "ICE Brent Crude", wti: "NYMEX WTI Crude", gasoil: "ICE Gasoil" };
+      const labels = { brent: "ICE Brent Crude", wti: "NYMEX WTI Crude", gasoil: "ICE Gasoil", rbob: "NYMEX RBOB Gasoline" };
 
       // Section header
       container.appendChild(el("div", { style: { borderTop: `1px solid #334155`, paddingTop: "20px", marginTop: "10px" } }));
       const hdr = el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" } });
       hdr.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.amber } }, `📉 MULTI-COMMODITY COT — ${labels[currentCommodity]}`));
       const selRow = el("div", { style: { display: "flex", gap: "6px" } });
-      ["brent", "wti", "gasoil"].forEach(k => {
+      Object.keys(labels).filter(k => allData[k]).forEach(k => {
         const btn = el("button", {
           style: { padding: "6px 14px", border: k === currentCommodity ? `2px solid ${C.amber}` : "1px solid #334155", background: k === currentCommodity ? C.amber + "22" : C.card, color: k === currentCommodity ? C.amber : C.text, borderRadius: "6px", cursor: "pointer", fontSize: "11px", fontWeight: "600" },
           onClick: () => { currentCommodity = k; renderMulti(); }
@@ -500,6 +504,122 @@
     }
 
     box.appendChild(el("div", { style: { fontSize: "10px", color: C.muted, textAlign: "right", marginTop: "8px" } }, `Generated: ${data.generated_at || ""}`));
+  }
+
+  // ========== PRICING (flat prices, cracks, OTC swaps) ==========
+  async function renderPricing(box) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading pricing…</div>';
+    let meta;
+    try { const r = await fetch("/api/pricing/groups"); if (!r.ok) throw new Error(await r.text()); meta = await r.json(); }
+    catch (e) { box.innerHTML = `<div style="color:${C.red};padding:20px;">Failed to load pricing: ${e.message}</div>`; return; }
+    await new Promise(res => loadPlotly(res));
+    box.innerHTML = "";
+
+    const groups = meta.groups || [];
+    if (!groups.length) { box.innerHTML = `<div style="color:${C.muted};padding:20px;">No pricing data.</div>`; return; }
+
+    // Header
+    box.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.amber, marginBottom: "3px" } }, "🏷️ PRICING — Futures, Cracks & OTC Swaps"));
+    box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "12px" } },
+      `Bloomberg daily settlements · ${groups.reduce((a, g) => a + g.n_series, 0)} series across ${groups.length} books`));
+
+    // Sub-tab selector (portfolio-style)
+    const selRow = el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "14px" } });
+    box.appendChild(selRow);
+    const body = el("div", {});
+    box.appendChild(body);
+
+    let current = groups[0].sheet;
+    const cache = {};
+
+    // Range control
+    let rangeYears = 3;
+
+    async function drawGroup() {
+      body.innerHTML = '<div style="color:#94a3b8;padding:30px;text-align:center;">Loading…</div>';
+      let gd = cache[current];
+      if (!gd) {
+        try { const r = await fetch(`/api/pricing/data?group=${encodeURIComponent(current)}`); gd = await r.json(); cache[current] = gd; }
+        catch (e) { body.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; return; }
+      }
+      body.innerHTML = "";
+      body.appendChild(el("div", { style: { fontSize: "13px", fontWeight: "700", color: C.text, marginBottom: "2px" } }, gd.title));
+
+      // Range toggle
+      const rc = el("div", { style: { display: "flex", gap: "6px", margin: "8px 0 14px" } });
+      [["1Y", 1], ["3Y", 3], ["5Y", 5], ["All", 99]].forEach(([lbl, yr]) => {
+        const b = el("button", {
+          style: { padding: "4px 12px", border: yr === rangeYears ? `2px solid ${C.amber}` : "1px solid #334155", background: yr === rangeYears ? C.amber + "22" : C.card, color: yr === rangeYears ? C.amber : C.text, borderRadius: "6px", cursor: "pointer", fontSize: "11px", fontWeight: "600" },
+          onClick: () => { rangeYears = yr; drawGroup(); }
+        });
+        b.textContent = lbl; rc.appendChild(b);
+      });
+      body.appendChild(rc);
+
+      const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - rangeYears);
+      const cutStr = rangeYears >= 99 ? "0000-00-00" : cutoff.toISOString().slice(0, 10);
+
+      const grid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "12px" } });
+      body.appendChild(grid);
+
+      const plots = [];
+      gd.series.forEach((s, i) => {
+        // slice by range
+        let xs = s.dates, ys = s.values;
+        if (rangeYears < 99) {
+          const st = xs.findIndex(d => d >= cutStr);
+          if (st > 0) { xs = xs.slice(st); ys = ys.slice(st); }
+        }
+        if (!xs.length) return;
+        const last = ys[ys.length - 1];
+        const prev = ys.length > 1 ? ys[ys.length - 2] : last;
+        const chg = last - prev;
+        const chgC = chg >= 0 ? C.green : C.red;
+        const isDiff = /-|crk|spd|arb|hogo|net/i.test(s.label);
+        const cardEl = el("div", { style: { background: C.card, border: "1px solid #1e293b", borderRadius: "8px", padding: "10px" } });
+        const th = el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "4px" } });
+        th.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "700", color: C.text } }, s.label));
+        th.appendChild(el("div", { style: { fontSize: "11px", fontWeight: "700", color: chgC } }, `${last.toFixed(2)} (${chg >= 0 ? "+" : ""}${chg.toFixed(2)})`));
+        cardEl.appendChild(th);
+        cardEl.appendChild(el("div", { style: { fontSize: "9px", color: C.muted, marginBottom: "4px" } }, s.ticker));
+        const pd = el("div", { id: `pr-${current.replace(/\s/g, "")}-${i}`, style: { width: "100%", height: "180px" } });
+        cardEl.appendChild(pd);
+        grid.appendChild(cardEl);
+        plots.push({ id: pd.id, xs, ys, isDiff });
+      });
+
+      requestAnimationFrame(() => {
+        const lay = {
+          paper_bgcolor: "transparent", plot_bgcolor: "transparent",
+          font: { color: C.text, size: 9 }, margin: { l: 44, r: 8, t: 6, b: 26 },
+          xaxis: { gridcolor: "#1e293b", linecolor: "#334155", tickfont: { size: 8 } },
+          yaxis: { gridcolor: "#1e293b", linecolor: "#334155", tickfont: { size: 8 }, zeroline: true, zerolinecolor: "#334155" },
+          showlegend: false, hovermode: "x unified",
+        };
+        const cfg = { responsive: true, displayModeBar: false };
+        plots.forEach(p => {
+          Plotly.newPlot(p.id, [{
+            x: p.xs, y: p.ys, type: "scatter", mode: "lines",
+            line: { color: p.isDiff ? C.purple : C.cyan, width: 1.3 },
+            fill: p.isDiff ? "tozeroy" : "none", fillcolor: C.purple + "14",
+          }], lay, cfg);
+        });
+      });
+    }
+
+    groups.forEach(g => {
+      const b = el("button", {
+        style: { padding: "7px 14px", border: "1px solid #334155", background: C.card, color: C.text, borderRadius: "6px", cursor: "pointer", fontSize: "11px", fontWeight: "600" },
+        onClick: () => { current = g.sheet; [...selRow.children].forEach((c, idx) => { const on = groups[idx].sheet === current; c.style.border = on ? `2px solid ${C.amber}` : "1px solid #334155"; c.style.background = on ? C.amber + "22" : C.card; c.style.color = on ? C.amber : C.text; }); drawGroup(); }
+      });
+      b.textContent = `${g.sheet} (${g.n_series})`;
+      selRow.appendChild(b);
+    });
+    // activate first
+    selRow.children[0].style.border = `2px solid ${C.amber}`;
+    selRow.children[0].style.background = C.amber + "22";
+    selRow.children[0].style.color = C.amber;
+    drawGroup();
   }
 
   // ========== GASOLINE STOCKS EIA ==========
@@ -5866,7 +5986,7 @@
   }
 
 
-  // ========== REFINERY MARGINS (Kevin's seasonal %rank method) ==========
+  // ========== REFINERY MARGINS (seasonal %rank method) ==========
   async function renderMargins(box) {
     box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading refinery margins…</div>';
     let data;
@@ -5900,7 +6020,7 @@
     box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "4px" } },
       `Weekly cracking/hydroskimming/coking margins ($/bbl) · ${data.start_date} → ${data.as_of} · ${data.n_weeks} weeks · 4 regions`));
     box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "14px" } },
-      `Kevin's method: ${data.season_definition}. Seasonal %Rank compares the latest margin only against the same grade-season history. Signal: BUY < 10th pctile, SELL > 90th pctile.`));
+      `Method: ${data.season_definition}. Seasonal %Rank compares the latest margin only against the same grade-season history. Signal: BUY < 10th pctile, SELL > 90th pctile.`));
 
     // Signal summary
     const buys = data.margins.filter(m => m.signal === "BUY").length;
@@ -6037,7 +6157,7 @@
     const tabRow = el("div", { style: { display: "flex", gap: "0", background: C.bg, overflowX: "auto" } });
     const tabs = [
       { id: "mp", label: "💰 Money Positioning" },
-      { id: "ca", label: "🔄 Contract Roll" },
+      { id: "pricing", label: "🏷️ Pricing" },
       { id: "gb", label: "⛽ Gasoline Balances" },
       { id: "jodi", label: "🌍 JODI Gasoline" },
       { id: "kpler", label: "🚢 Kpler Flows" },
@@ -6080,7 +6200,7 @@
         panes[t.id].style.display = t.id === id ? "block" : "none";
       });
       if (id === "mp" && !panes.mp._loaded) { panes.mp._loaded = true; renderMP(panes.mp); }
-      if (id === "ca" && !panes.ca._loaded) { panes.ca._loaded = true; renderCA(panes.ca); }
+      if (id === "pricing" && !panes.pricing._loaded) { panes.pricing._loaded = true; renderPricing(panes.pricing); }
       if (id === "gb" && !panes.gb._loaded) { panes.gb._loaded = true; renderGBal(panes.gb); }
       if (id === "jodi" && !panes.jodi._loaded) { panes.jodi._loaded = true; renderJODI(panes.jodi); }
       if (id === "kpler" && !panes.kpler._loaded) { panes.kpler._loaded = true; renderKpler(panes.kpler); }

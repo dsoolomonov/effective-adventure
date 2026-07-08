@@ -2776,10 +2776,53 @@ async def cot_ai_insight():
 
 cot_multi_data: dict = {}  # {"brent": [...], "wti": [...], "gasoil": [...]}
 
+# ── Pricing data (prices workbook) ─────────────────────────────────────────
+_PRICING_CACHE = None
+
+
+def _load_pricing_raw():
+    """Load the parsed pricing workbook (all price/crack/swap series)."""
+    global _PRICING_CACHE
+    if _PRICING_CACHE is not None:
+        return _PRICING_CACHE
+    path = os.path.join(os.path.dirname(__file__), "pricing_data.json")
+    with open(path) as f:
+        _PRICING_CACHE = _json.load(f)
+    return _PRICING_CACHE
+
+
+@app.get("/api/pricing/groups")
+async def pricing_groups():
+    """List available pricing sheets/groups with their series (metadata only)."""
+    data = _load_pricing_raw()
+    out = []
+    for g in data.get("groups", []):
+        out.append({
+            "sheet": g["sheet"],
+            "title": g["title"],
+            "n_series": len(g["series"]),
+            "series": [{"label": s["label"], "ticker": s["ticker"], "n": len(s["dates"]),
+                        "last_date": s["dates"][-1] if s["dates"] else None,
+                        "last_value": s["values"][-1] if s["values"] else None} for s in g["series"]],
+        })
+    return {"groups": out, "generated": data.get("generated")}
+
+
+@app.get("/api/pricing/data")
+async def pricing_data_endpoint(group: str = Query(...)):
+    """Return full time series for every series within a single pricing group."""
+    data = _load_pricing_raw()
+    for g in data.get("groups", []):
+        if g["sheet"].lower() == group.lower():
+            return {"sheet": g["sheet"], "title": g["title"], "series": g["series"]}
+    raise HTTPException(status_code=404, detail=f"No pricing group '{group}'")
+
+
 _COT_MULTI_LABELS = {
     "brent": "ICE Brent Crude",
     "wti": "NYMEX WTI Crude",
     "gasoil": "ICE Gasoil",
+    "rbob": "NYMEX RBOB Gasoline",
 }
 
 
@@ -2789,6 +2832,14 @@ async def load_cot_multi_data():
     data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
     if not os.path.isdir(data_dir):
         data_dir = "/app/data"
+    # Prefer the combined COT workbook (WTI/Brent/Gasoil/RBOB in one file)
+    combined = os.path.join(os.path.dirname(__file__), "cot_latest.xlsx")
+    if os.path.isfile(combined):
+        try:
+            _load_cot_latest_all(combined)
+            return
+        except Exception as exc:
+            print(f"[STARTUP] Failed combined COT load: {exc}")
     _cot_multi_files = {
         "brent": os.path.join(data_dir, "brentCOT.xlsx"),
         "wti": os.path.join(data_dir, "wticot.xlsx"),
@@ -2827,11 +2878,124 @@ def _load_cot_multi(key: str, path: str):
     cot_multi_data[key] = data
 
 
+# --- Combined COT workbook loader (WTI/Brent/Gasoil/RBOB in one file) ---
+_COT_LATEST_SHEETS = {"wti": "WTI", "brent": "Brent", "gasoil": "Gasoil", "rbob": "RBOB"}
+# Front-month price ticker in pricing_data.json used to attach a price column
+_COT_PRICE_TICKER = {"wti": "CL1", "brent": "CO1", "gasoil": "QS1", "rbob": "XB1"}
+
+
+def _cot_latest_colname(grp, typ):
+    """Normalize a (group, type) header pair from the combined COT workbook
+    into the canonical 'Group|Type' name the endpoints expect."""
+    grp = (str(grp).strip() if grp is not None else "-")
+    typ = (str(typ).strip() if typ is not None else "-")
+    if grp == "Total Commercial Trade":
+        grp = "Total Commercial Traders"
+    if typ == "Total Open" or typ.startswith("Total Open"):
+        typ = "Total Open Interest"
+    elif typ.startswith("Net as %"):
+        typ = "Net as % of Open Interest"
+    return f"{grp}|{typ}"
+
+
+def _price_series_from_pricing(ticker):
+    """Return a date->price dict for a front-month ticker from pricing_data.json."""
+    try:
+        pdata = _load_pricing_raw()
+    except Exception:
+        return None
+    for g in pdata.get("groups", []):
+        for s in g.get("series", []):
+            if s.get("ticker") == ticker or s.get("label") == ticker:
+                return dict(zip(s["dates"], s["values"]))
+    return None
+
+
+def _load_cot_latest_all(path):
+    """Parse the combined COT workbook (sheets WTI/Brent/Gasoil/RBOB) into
+    cot_multi_data, attaching a front-month price column from pricing data."""
+    for key, sheet in _COT_LATEST_SHEETS.items():
+        try:
+            raw = pd.read_excel(path, sheet_name=sheet, header=None)
+        except Exception as exc:
+            print(f"[STARTUP] COT latest: no sheet {sheet}: {exc}")
+            continue
+        cols = ["date"]
+        for c in range(1, raw.shape[1]):
+            cols.append(_cot_latest_colname(raw.iloc[1, c], raw.iloc[2, c]))
+        data = raw.iloc[4:].copy()
+        data.columns = cols[: raw.shape[1]]
+        data["date"] = pd.to_datetime(data["date"], errors="coerce")
+        data = data.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+        for c in data.columns:
+            if c != "date":
+                data[c] = pd.to_numeric(data[c], errors="coerce")
+        # Attach price from pricing data (as-of nearest prior trading day)
+        pmap = _price_series_from_pricing(_COT_PRICE_TICKER.get(key, ""))
+        if pmap:
+            pser = pd.Series(pmap)
+            pser.index = pd.to_datetime(pser.index)
+            pser = pser.sort_index()
+            pdf = pd.DataFrame({"date": pser.index, "price": pser.values})
+            data = pd.merge_asof(data, pdf, on="date", direction="backward")
+        else:
+            data["price"] = np.nan
+        cot_multi_data[key] = data
+        print(f"[STARTUP] Loaded combined COT: {key} ({len(data)} rows)")
+    _populate_single_cot_from_multi("brent")
+
+
+def _populate_single_cot_from_multi(key):
+    """Build the single-dataset cot_data['categories'] (used by the OIES Money
+    Positioning analysis and /api/cot/* endpoints) from one commodity's COT."""
+    if key not in cot_multi_data:
+        return
+    df = cot_multi_data[key]
+    groups = ["Managed Money", "Producer/Merchant", "Swap Dealer", "Other Reportables",
+              "Total Large Traders", "Total Commercial Traders", "Non Reportables"]
+    categories = {}
+    for grp in groups:
+        rows = []
+        for _, row in df.iterrows():
+            rec = {"date": row["date"].strftime("%Y-%m-%d")}
+            lg = row.get(f"{grp}|Long")
+            sh = row.get(f"{grp}|Short")
+            sp = row.get(f"{grp}|Spread")
+            nt = row.get(f"{grp}|Net")
+            rec["long"] = float(lg) if pd.notna(lg) else None
+            rec["short"] = float(sh) if pd.notna(sh) else None
+            rec["spreading"] = float(sp) if pd.notna(sp) else None
+            if pd.notna(nt):
+                rec["net"] = float(nt)
+            elif rec["long"] is not None and rec["short"] is not None:
+                rec["net"] = rec["long"] - rec["short"]
+            else:
+                rec["net"] = None
+            rows.append(rec)
+        categories[grp] = {
+            "data": rows,
+            "row_count": len(rows),
+            "has_spreading": any(r.get("spreading") is not None for r in rows),
+            "headers": ["date", "long", "short", "spreading", "net"],
+        }
+    cot_data.clear()
+    cot_data["categories"] = categories
+    cot_data["filename"] = "COT+latest.xlsx"
+    cot_data["uploaded_at"] = datetime.utcnow().isoformat()
+    # Attach price series (front-month) for CO1/CO2-style price panels
+    try:
+        pser = {row["date"].strftime("%Y-%m-%d"): (float(row["price"]) if pd.notna(row.get("price")) else None)
+                for _, row in df.iterrows()}
+        cot_data["price_series"] = pser
+    except Exception:
+        pass
+
+
 @app.get("/api/cot_multi/commodities")
 async def cot_multi_commodities():
     """List available multi-commodity COT datasets."""
     result = []
-    for key in ["brent", "wti", "gasoil"]:
+    for key in ["brent", "wti", "gasoil", "rbob"]:
         if key in cot_multi_data:
             df = cot_multi_data[key]
             result.append({
@@ -12004,7 +12168,7 @@ async def kpler_sync_status():
 
 
 # ============================================================
-# Refinery Margins (Kevin's seasonal %rank method)
+# Refinery Margins (seasonal %rank method)
 # ============================================================
 _MARGINS_CACHE = None
 
@@ -12020,7 +12184,7 @@ def _load_margins_raw():
 
 
 def _season_for(month: int) -> str:
-    """Kevin's season classification: SUMMER = Mar-Aug (3-8), WINTER = Sep-Feb."""
+    """Season classification: SUMMER = Mar-Aug (3-8), WINTER = Sep-Feb."""
     return "WINTER" if (month < 3 or month > 8) else "SUMMER"
 
 
@@ -12045,7 +12209,7 @@ def _pct_rank(sorted_vals, x):
 
 @app.get("/api/margins")
 async def get_margins():
-    """Refinery margins with Kevin's seasonal percentile-rank analysis.
+    """Refinery margins with seasonal percentile-rank analysis.
 
     For each margin: latest value, current season, 4wk/13wk moving averages,
     trend, %rank (all-time), %rank (seasonal), winter/summer medians, BUY/SELL
@@ -12149,7 +12313,7 @@ async def get_margins():
         "n_weeks": len(dates),
         "start_date": dates[0],
         "regions": regions_order,
-        "season_definition": "SUMMER = Mar-Aug, WINTER = Sep-Feb (Kevin's grade seasonality)",
+        "season_definition": "SUMMER = Mar-Aug, WINTER = Sep-Feb (grade seasonality)",
         "margins": results,
     }
 
