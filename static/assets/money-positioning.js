@@ -6,10 +6,11 @@
   "use strict";
 
   const C = {
-    bg: "#0a0e17", card: "#111827", border: "#1e293b",
-    text: "#e2e8f0", muted: "#94a3b8",
+    bg: "#05070e", card: "#0b101c", border: "#1a2338",
+    text: "#e8edf8", muted: "#7e8ba8",
     green: "#10b981", red: "#ef4444", blue: "#3b82f6",
-    amber: "#f59e0b", purple: "#8b5cf6", cyan: "#06b6d4",
+    amber: "#38bdf8", purple: "#8b5cf6", cyan: "#22d3ee",
+    accent: "#38bdf8", gold: "#f5b90f",
   };
 
   let plotlyReady = false;
@@ -37,8 +38,8 @@
   function fmt(n) { return n == null ? "N/A" : typeof n === "number" ? n.toLocaleString() : String(n); }
 
   function card(title, content, extra) {
-    const d = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: "8px", padding: "16px", marginBottom: "12px", ...(extra || {}) } });
-    if (title) d.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "700", color: C.amber, marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.5px" } }, title));
+    const d = el("div", { style: { background: "linear-gradient(180deg, #0d1322 0%, #0a0f1b 100%)", border: `1px solid ${C.border}`, borderRadius: "12px", padding: "18px", marginBottom: "14px", boxShadow: "0 4px 24px rgba(0,0,0,0.35)", ...(extra || {}) } });
+    if (title) d.appendChild(el("div", { style: { fontSize: "11.5px", fontWeight: "700", color: C.amber, marginBottom: "12px", textTransform: "uppercase", letterSpacing: "1.2px" } }, title));
     if (typeof content === "string") d.appendChild(el("div", { style: { color: C.text, fontSize: "13px", lineHeight: "1.6" } }, content)); else if (content) d.appendChild(content);
     return d;
   }
@@ -6341,63 +6342,114 @@
     if (injected) return;
     injected = true;
 
-    // Overlay
-    const overlay = el("div", { id: "mp-overlay", style: { position: "fixed", inset: "0", background: C.bg, zIndex: "100000", display: "none", flexDirection: "column", overflow: "hidden" } });
+    // Global theme styles
+    const gstyle = document.createElement("style");
+    gstyle.textContent = `
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+      #mp-overlay, #mp-overlay * { font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; }
+      #mp-overlay ::-webkit-scrollbar { width: 9px; height: 9px; }
+      #mp-overlay ::-webkit-scrollbar-track { background: #070b14; }
+      #mp-overlay ::-webkit-scrollbar-thumb { background: #1c2740; border-radius: 5px; }
+      #mp-overlay ::-webkit-scrollbar-thumb:hover { background: #2a3a5c; }
+      .mp-nav-item { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:9px 14px 9px 16px;
+        background:transparent; border:none; border-left:3px solid transparent; color:#7e8ba8; cursor:pointer;
+        font-size:12.5px; font-weight:600; letter-spacing:0.2px; transition: all .15s ease; border-radius:0 8px 8px 0; }
+      .mp-nav-item:hover { background:rgba(56,189,248,0.06); color:#cdd8ec; }
+      .mp-nav-item.active { background:linear-gradient(90deg, rgba(56,189,248,0.14), rgba(56,189,248,0.02));
+        border-left:3px solid #38bdf8; color:#38bdf8; }
+      .mp-nav-group { font-size:9.5px; font-weight:800; letter-spacing:2px; color:#4a5670; padding:16px 16px 6px; text-transform:uppercase; }
+      @keyframes mp-live { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
+    `;
+    document.head.appendChild(gstyle);
 
-    // Top bar
-    const topBar = el("div", { style: { background: "#111827", borderBottom: `1px solid ${C.border}`, padding: "0", display: "flex", flexDirection: "column", flexShrink: "0" } });
-    const titleRow = el("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px" } });
-    titleRow.appendChild(el("span", { style: { fontSize: "14px", fontWeight: "700", color: C.amber, letterSpacing: "0.5px" } }, "📊 ANALYSIS — POSITIONING · GASOLINE · JODI GLOBAL · STOCKS · DECISION"));
-    titleRow.appendChild(el("button", { style: { background: "none", border: "1px solid " + C.border, color: C.muted, cursor: "pointer", fontSize: "13px", padding: "4px 14px", borderRadius: "4px" }, onClick: () => { overlay.style.display = "none"; } }, "✕ Close"));
-    topBar.appendChild(titleRow);
+    // Overlay = main app shell (sidebar + content)
+    const overlay = el("div", { id: "mp-overlay", style: { position: "fixed", inset: "0", background: `radial-gradient(1200px 700px at 80% -10%, rgba(56,189,248,0.07), transparent), ${C.bg}`, zIndex: "100000", display: "flex", flexDirection: "column", overflow: "hidden" } });
 
-    // Tabs
-    const tabRow = el("div", { style: { display: "flex", gap: "0", background: C.bg, overflowX: "auto" } });
-    const tabs = [
-      { id: "mp", label: "💰 Money Positioning" },
-      { id: "pricing", label: "🏷️ Pricing" },
-      { id: "gb", label: "⛽ Gasoline Balances" },
-      { id: "jodi", label: "🌍 JODI Gasoline" },
-      { id: "kpler", label: "🚢 Kpler Flows" },
-      { id: "mktcomm", label: "🧭 Market Commentary" },
-      { id: "xmkt", label: "🧠 Cross-Market" },
-      { id: "gspe", label: "🏭 Genscape Refinery" },
-      { id: "gseu", label: "🇪🇺 Genscape Europe" },
-      { id: "iir", label: "🔧 IIR Turnarounds" },
-      { id: "cbm", label: "🛢️ Crude Balances & Margins" },
-      { id: "margins", label: "📈 Refinery Margins" },
-      { id: "lgb", label: "⛽ Local Gasoline Balances" },
-      { id: "gs", label: "📊 Gasoline Stocks" },
-      { id: "ktf", label: "🏭 Kpler Refinery Flows" },
-      { id: "kinv", label: "🛢️ Kpler Inventories" },
-      { id: "ksql", label: "🔄 Kpler SQL Sync" },
-    ];
-    const btns = {}, panes = {};
-    tabs.forEach((t, i) => {
-      const b = el("button", { style: { padding: "10px 20px", background: i === 0 ? C.card : "transparent", border: "none", borderBottom: i === 0 ? `2px solid ${C.amber}` : "2px solid transparent", color: i === 0 ? C.amber : C.muted, cursor: "pointer", fontSize: "12px", fontWeight: "600" }, onClick: () => switchTab(t.id) });
-      b.textContent = t.label;
-      btns[t.id] = b;
-      tabRow.appendChild(b);
-    });
-    topBar.appendChild(tabRow);
+    // ── Top header bar ──
+    const topBar = el("div", { style: { background: "rgba(9,13,24,0.92)", backdropFilter: "blur(8px)", borderBottom: `1px solid ${C.border}`, padding: "0 22px", display: "flex", alignItems: "center", justifyContent: "space-between", height: "54px", flexShrink: "0" } });
+    const brand = el("div", { style: { display: "flex", alignItems: "center", gap: "12px" } });
+    brand.appendChild(el("div", { style: { width: "30px", height: "30px", borderRadius: "8px", background: "linear-gradient(135deg,#38bdf8,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", boxShadow: "0 0 18px rgba(56,189,248,0.45)" } }, "🛢"));
+    const brandTxt = el("div", {});
+    brandTxt.appendChild(el("div", { style: { fontSize: "14.5px", fontWeight: "800", color: C.text, letterSpacing: "1.5px" } }, "BARREL TERMINAL"));
+    brandTxt.appendChild(el("div", { style: { fontSize: "9px", fontWeight: "600", color: C.muted, letterSpacing: "2.5px" } }, "CRUDE & PRODUCTS MARKET INTELLIGENCE"));
+    brand.appendChild(brandTxt);
+    topBar.appendChild(brand);
+    const hdrRight = el("div", { style: { display: "flex", alignItems: "center", gap: "16px" } });
+    const liveDot = el("span", { style: { display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: C.green, animation: "mp-live 1.6s ease-in-out infinite", marginRight: "6px" } });
+    const liveWrap = el("span", { style: { fontSize: "10.5px", fontWeight: "700", color: C.green, letterSpacing: "1.5px" } });
+    liveWrap.appendChild(liveDot); liveWrap.appendChild(document.createTextNode("LIVE"));
+    hdrRight.appendChild(liveWrap);
+    const clock = el("span", { style: { fontSize: "12px", fontWeight: "600", color: C.muted, fontVariantNumeric: "tabular-nums" } });
+    const tick = () => { clock.textContent = new Date().toISOString().slice(0, 16).replace("T", "  ") + " UTC"; };
+    tick(); setInterval(tick, 15000);
+    hdrRight.appendChild(clock);
+    topBar.appendChild(hdrRight);
     overlay.appendChild(topBar);
 
+    // ── Body: sidebar + content ──
+    const body = el("div", { style: { flex: "1", display: "flex", overflow: "hidden" } });
+
+    const navGroups = [
+      { name: "Intelligence", items: [
+        { id: "mktcomm", label: "Market Commentary", icon: "🧭" },
+        { id: "xmkt", label: "Cross-Market", icon: "🧠" },
+      ]},
+      { name: "Positioning & Pricing", items: [
+        { id: "mp", label: "Money Positioning", icon: "💰" },
+        { id: "pricing", label: "Pricing", icon: "🏷️" },
+        { id: "margins", label: "Refinery Margins", icon: "📈" },
+      ]},
+      { name: "Balances & Stocks", items: [
+        { id: "gb", label: "Gasoline Balances", icon: "⛽" },
+        { id: "jodi", label: "JODI Global", icon: "🌍" },
+        { id: "cbm", label: "Crude Bal & Margins", icon: "🛢️" },
+        { id: "lgb", label: "Local Gasoline Bal", icon: "⛽" },
+        { id: "gs", label: "Gasoline Stocks", icon: "📊" },
+      ]},
+      { name: "Refineries", items: [
+        { id: "gspe", label: "Genscape Refinery", icon: "🏭" },
+        { id: "gseu", label: "Genscape Europe", icon: "🇪🇺" },
+        { id: "iir", label: "IIR Turnarounds", icon: "🔧" },
+      ]},
+      { name: "Flows & Data", items: [
+        { id: "kpler", label: "Kpler Flows", icon: "🚢" },
+        { id: "ktf", label: "Kpler Refinery Flows", icon: "🏭" },
+        { id: "kinv", label: "Kpler Inventories", icon: "🛢️" },
+        { id: "ksql", label: "Kpler SQL Sync", icon: "🔄" },
+      ]},
+    ];
+    const tabs = navGroups.flatMap(g => g.items);
+    const firstTab = "mktcomm";
+
+    const sidebar = el("div", { style: { width: "228px", flexShrink: "0", background: "rgba(8,12,22,0.85)", borderRight: `1px solid ${C.border}`, overflowY: "auto", paddingBottom: "20px" } });
+    const btns = {}, panes = {};
+    navGroups.forEach(g => {
+      sidebar.appendChild(el("div", { class: "mp-nav-group" }, g.name));
+      g.items.forEach(t => {
+        const b = el("button", { class: "mp-nav-item" + (t.id === firstTab ? " active" : ""), onClick: () => switchTab(t.id) },
+          [el("span", { style: { fontSize: "14px", width: "18px", textAlign: "center" } }, t.icon), el("span", {}, t.label)]);
+        btns[t.id] = b;
+        sidebar.appendChild(b);
+      });
+    });
+    body.appendChild(sidebar);
+
     // Content
-    const content = el("div", { style: { flex: "1", overflowY: "auto", padding: "20px" } });
+    const content = el("div", { style: { flex: "1", overflowY: "auto", padding: "22px 26px" } });
     tabs.forEach(t => {
-      const p = el("div", { style: { display: t.id === "mp" ? "block" : "none", maxWidth: "1400px", margin: "0 auto" } });
+      const p = el("div", { style: { display: t.id === firstTab ? "block" : "none", maxWidth: "1400px", margin: "0 auto" } });
       panes[t.id] = p;
       content.appendChild(p);
     });
-    overlay.appendChild(content);
+    body.appendChild(content);
+    overlay.appendChild(body);
 
     function switchTab(id) {
       tabs.forEach(t => {
-        btns[t.id].style.background = t.id === id ? C.card : "transparent";
-        btns[t.id].style.borderBottom = t.id === id ? `2px solid ${C.amber}` : "2px solid transparent";
-        btns[t.id].style.color = t.id === id ? C.amber : C.muted;
+        btns[t.id].classList.toggle("active", t.id === id);
         panes[t.id].style.display = t.id === id ? "block" : "none";
       });
+      content.scrollTop = 0;
       if (id === "mp" && !panes.mp._loaded) { panes.mp._loaded = true; renderMP(panes.mp); }
       if (id === "pricing" && !panes.pricing._loaded) { panes.pricing._loaded = true; renderPricing(panes.pricing); }
       if (id === "gb" && !panes.gb._loaded) { panes.gb._loaded = true; renderGBal(panes.gb); }
@@ -6419,29 +6471,9 @@
 
     document.body.appendChild(overlay);
 
-    // Toggle button
-    const btn = el("button", {
-      id: "mp-btn",
-      style: {
-        position: "fixed", bottom: "20px", right: "20px", zIndex: "100001",
-        background: `linear-gradient(135deg, ${C.amber}, #d97706)`,
-        color: "#000", border: "none", borderRadius: "50px",
-        padding: "14px 24px", cursor: "pointer", fontWeight: "700",
-        fontSize: "13px", boxShadow: "0 4px 20px rgba(245,158,11,0.4)",
-        display: "flex", alignItems: "center", gap: "8px",
-        animation: "mp-pulse 2s ease-in-out infinite",
-      },
-      onClick: () => {
-        overlay.style.display = "flex";
-        if (!panes.mp._loaded) { panes.mp._loaded = true; renderMP(panes.mp); }
-      }
-    }, "📊 New Analysis Panels");
-
-    // Pulse animation
-    const style = document.createElement("style");
-    style.textContent = `@keyframes mp-pulse { 0%, 100% { box-shadow: 0 4px 20px rgba(245,158,11,0.4); } 50% { box-shadow: 0 4px 30px rgba(245,158,11,0.7); } }`;
-    document.head.appendChild(style);
-    document.body.appendChild(btn);
+    // Launch directly into the terminal on the first tab
+    panes[firstTab]._loaded = true;
+    renderMarketCommentary(panes[firstTab]);
   }
 
   function init() {
