@@ -2122,35 +2122,43 @@
         card.appendChild(chips);
       }
 
-      // LLM prose (if present) shown first
+      // LLM prose (if present) shown first — render minimal markdown (**bold**)
       if (d.prose) {
-        const pb = el("div", { style: { whiteSpace: "pre-wrap", fontSize: "12.5px", lineHeight: "1.6", color: C.text, background: C.bg, border: `1px solid ${C.border}`, borderRadius: "8px", padding: "14px 16px", marginBottom: "16px" } });
-        pb.textContent = d.prose; card.appendChild(pb);
+        const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const html = esc(d.prose)
+          .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#fbbf24">$1</strong>')
+          .replace(/\n/g, "<br>");
+        const pb = el("div", { style: { fontSize: "12.5px", lineHeight: "1.65", color: C.text, background: C.bg, border: `1px solid ${C.border}`, borderRadius: "8px", padding: "14px 16px", marginBottom: "16px" } });
+        pb.innerHTML = html; card.appendChild(pb);
       }
 
       function section(title, color) {
         card.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "800", color: color, textTransform: "uppercase", letterSpacing: "0.5px", margin: "16px 0 8px", borderBottom: `1px solid ${C.border}`, paddingBottom: "4px" } }, title));
       }
 
-      section("TL;DR", C.amber);
-      (d.tldr || []).forEach(t => {
-        card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.55", color: C.text, marginBottom: "7px" } }, "• " + t));
-      });
+      // When AI prose is present it already contains TL;DR / Market State / Physical / Watch,
+      // so only render the structured rule-based sections in the fallback case.
+      if (!d.prose) {
+        section("TL;DR", C.amber);
+        (d.tldr || []).forEach(t => {
+          card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.55", color: C.text, marginBottom: "7px" } }, "• " + t));
+        });
 
-      section("Market State", C.cyan);
-      card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.6", color: C.text, marginBottom: "6px" } }, d.market_state || ""));
+        section("Market State", C.cyan);
+        card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.6", color: C.text, marginBottom: "6px" } }, d.market_state || ""));
 
-      section("Physical Update", C.purple);
-      (d.physical || []).forEach((t, i) => {
-        card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.55", color: C.text, marginBottom: "7px" } },
-          [el("span", { style: { color: C.purple, fontWeight: "700" } }, `Theme ${i + 1}: `), document.createTextNode(t)]));
-      });
+        section("Physical Update", C.purple);
+        (d.physical || []).forEach((t, i) => {
+          card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.55", color: C.text, marginBottom: "7px" } },
+            [el("span", { style: { color: C.purple, fontWeight: "700" } }, `Theme ${i + 1}: `), document.createTextNode(t)]));
+        });
 
-      section("What to Watch", C.green);
-      (d.watch || []).forEach((t, i) => {
-        card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.55", color: C.text, marginBottom: "7px" } },
-          [el("span", { style: { color: C.green, fontWeight: "700" } }, `(${i + 1}) `), document.createTextNode(t)]));
-      });
+        section("What to Watch", C.green);
+        (d.watch || []).forEach((t, i) => {
+          card.appendChild(el("div", { style: { fontSize: "12.5px", lineHeight: "1.55", color: C.text, marginBottom: "7px" } },
+            [el("span", { style: { color: C.green, fontWeight: "700" } }, `(${i + 1}) `), document.createTextNode(t)]));
+        });
+      }
 
       out.appendChild(card);
     }
