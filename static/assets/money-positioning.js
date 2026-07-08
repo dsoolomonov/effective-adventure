@@ -5866,6 +5866,159 @@
   }
 
 
+  // ========== REFINERY MARGINS (Kevin's seasonal %rank method) ==========
+  async function renderMargins(box) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading refinery margins…</div>';
+    let data;
+    try {
+      const r = await fetch("/api/margins");
+      data = await r.json();
+      if (data.error) throw new Error(data.error);
+    } catch (e) {
+      box.innerHTML = `<div style="color:#ef4444;padding:30px;">Failed to load margins: ${e.message}</div>`;
+      return;
+    }
+    await new Promise(res => loadPlotly(res));
+    box.innerHTML = "";
+
+    const rankColor = (r) => {
+      if (r == null) return C.muted;
+      if (r >= 90) return C.red;
+      if (r <= 10) return C.green;
+      if (r >= 75) return "#fb923c";
+      if (r <= 25) return "#4ade80";
+      return C.text;
+    };
+    const sigColor = (s) => s === "BUY" ? C.green : s === "SELL" ? C.red : C.muted;
+    const seasonBadge = (s) => s === "WINTER"
+      ? el("span", { style: { color: C.cyan, fontSize: "10px", fontWeight: "700" } }, "❄ WINTER")
+      : el("span", { style: { color: C.amber, fontSize: "10px", fontWeight: "700" } }, "☀ SUMMER");
+
+    // Header
+    box.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.amber, marginBottom: "3px" } },
+      "📈 REFINERY MARGINS — Seasonal %Rank Model"));
+    box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "4px" } },
+      `Weekly cracking/hydroskimming/coking margins ($/bbl) · ${data.start_date} → ${data.as_of} · ${data.n_weeks} weeks · 4 regions`));
+    box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "14px" } },
+      `Kevin's method: ${data.season_definition}. Seasonal %Rank compares the latest margin only against the same grade-season history. Signal: BUY < 10th pctile, SELL > 90th pctile.`));
+
+    // Signal summary
+    const buys = data.margins.filter(m => m.signal === "BUY").length;
+    const sells = data.margins.filter(m => m.signal === "SELL").length;
+    const neutrals = data.margins.filter(m => m.signal === "NEUTRAL").length;
+    box.appendChild(card("Signal Summary", statRow([
+      ["Total Margins", data.margins.length, C.text],
+      ["🟢 BUY (cheap)", buys, C.green],
+      ["🔴 SELL (rich)", sells, C.red],
+      ["⚪ Neutral", neutrals, C.muted],
+      ["Current Season", data.margins[0] ? data.margins[0].season : "-", C.amber],
+    ])));
+
+    // Dashboard table
+    const tbl = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "12px" } });
+    const thead = el("thead");
+    const hr = el("tr", { style: { borderBottom: `2px solid ${C.border}` } });
+    ["Region", "Margin", "Latest $/bbl", "Season", "%Rank Seasonal", "%Rank All-Time", "Signal", "Trend", "Z-Score", "Winter Med", "Summer Med"].forEach((h, i) => {
+      hr.appendChild(el("th", { style: { textAlign: i < 2 ? "left" : "right", padding: "8px 10px", color: C.amber, fontSize: "10px", textTransform: "uppercase", whiteSpace: "nowrap" } }, h));
+    });
+    thead.appendChild(hr);
+    tbl.appendChild(thead);
+    const tbody = el("tbody");
+    let lastRegion = null;
+    data.margins.forEach(m => {
+      const tr = el("tr", { style: { borderBottom: `1px solid ${C.border}`, cursor: "pointer" }, onClick: () => showDetail(m.key) });
+      tr.addEventListener("mouseenter", () => tr.style.background = "#1e293b");
+      tr.addEventListener("mouseleave", () => tr.style.background = "transparent");
+      const regCell = el("td", { style: { padding: "7px 10px", color: C.muted, fontSize: "11px", whiteSpace: "nowrap" } }, m.region === lastRegion ? "" : m.region);
+      lastRegion = m.region;
+      tr.appendChild(regCell);
+      tr.appendChild(el("td", { style: { padding: "7px 10px", color: C.text, fontWeight: "600", whiteSpace: "nowrap" } }, m.name));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: C.text, fontWeight: "700" } }, m.latest.toFixed(2)));
+      const sc = el("td", { style: { padding: "7px 10px", textAlign: "right" } }); sc.appendChild(seasonBadge(m.season)); tr.appendChild(sc);
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: rankColor(m.rank_seasonal), fontWeight: "700" } }, m.rank_seasonal == null ? "—" : m.rank_seasonal + "%"));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: rankColor(m.rank_all) } }, m.rank_all == null ? "—" : m.rank_all + "%"));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: sigColor(m.signal), fontWeight: "800" } }, m.signal));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: m.trend === "RISING" ? C.green : C.red } }, m.trend === "RISING" ? "▲ RISING" : "▼ FALLING"));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: Math.abs(m.zscore || 0) >= 2 ? C.amber : C.text } }, m.zscore == null ? "—" : m.zscore.toFixed(2)));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: C.muted } }, m.winter_median == null ? "—" : m.winter_median.toFixed(1)));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: C.muted } }, m.summer_median == null ? "—" : m.summer_median.toFixed(1)));
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    box.appendChild(card("Margins Dashboard — click a row for detail charts", tbl));
+
+    // Detail area
+    const detail = el("div", { id: "margins-detail" });
+    box.appendChild(detail);
+
+    function showDetail(key) {
+      const m = data.margins.find(x => x.key === key);
+      if (!m) return;
+      detail.innerHTML = "";
+      detail.appendChild(el("div", { style: { fontSize: "14px", fontWeight: "800", color: C.amber, margin: "10px 0 6px" } },
+        `${m.region} — ${m.name}`));
+
+      // Stats row
+      detail.appendChild(card(null, statRow([
+        ["Latest", m.latest.toFixed(2) + " $/bbl", C.text],
+        ["Seasonal %Rank", (m.rank_seasonal ?? "—") + "%", rankColor(m.rank_seasonal)],
+        ["Signal", m.signal, sigColor(m.signal)],
+        ["4wk MA", m.ma4.toFixed(2), C.text],
+        ["13wk MA", m.ma13.toFixed(2), C.text],
+        ["52wk MA", m.ma52.toFixed(2), C.text],
+      ])));
+      detail.appendChild(card(null, statRow([
+        ["Min", m.stats.min.toFixed(2), C.red],
+        ["Median", m.stats.median.toFixed(2), C.text],
+        ["Avg", m.stats.avg.toFixed(2), C.text],
+        ["Max", m.stats.max.toFixed(2), C.green],
+        ["Std Dev", m.stats.stdev.toFixed(2), C.muted],
+        ["Z-Score", (m.zscore ?? "—"), C.amber],
+      ])));
+
+      // Chart 1: time series + MAs
+      const c1 = el("div", { id: "mg-ts", style: { width: "100%", height: "420px" } });
+      detail.appendChild(card("Margin History with Moving Averages ($/bbl)", c1));
+      const dts = m.series_dates, vs = m.series_values;
+      const roll = (n) => vs.map((_, i) => {
+        const s = Math.max(0, i - n + 1); const seg = vs.slice(s, i + 1);
+        return seg.reduce((a, b) => a + b, 0) / seg.length;
+      });
+      Plotly.newPlot("mg-ts", [
+        { x: dts, y: vs, name: "Weekly Margin", line: { color: C.cyan, width: 1.5 } },
+        { x: dts, y: roll(4), name: "4-Week MA", line: { color: C.amber, width: 2 } },
+        { x: dts, y: roll(13), name: "13-Week MA", line: { color: C.purple, width: 2 } },
+      ], { ...plotLayout, height: 420,
+        yaxis: { ...plotLayout.yaxis, title: { text: "$/bbl", font: { size: 12 } } },
+        shapes: [
+          { type: "line", x0: dts[0], x1: dts[dts.length - 1], y0: m.winter_median, y1: m.winter_median, line: { color: C.blue, width: 1, dash: "dot" } },
+          { type: "line", x0: dts[0], x1: dts[dts.length - 1], y0: m.summer_median, y1: m.summer_median, line: { color: "#f97316", width: 1, dash: "dot" } },
+        ],
+      }, { responsive: true });
+
+      // Chart 2: seasonal distribution (winter vs summer) with current marker
+      const c2 = el("div", { id: "mg-dist", style: { width: "100%", height: "380px" } });
+      detail.appendChild(card(`Seasonal Distribution — where the latest margin sits (current season: ${m.season})`, c2));
+      const winterVals = [], summerVals = [];
+      m.series_values.forEach((v, i) => { (m.series_seasons[i] === "WINTER" ? winterVals : summerVals).push(v); });
+      Plotly.newPlot("mg-dist", [
+        { x: winterVals, type: "histogram", name: "❄ Winter (Sep–Feb)", opacity: 0.6, marker: { color: C.blue }, nbinsx: 40 },
+        { x: summerVals, type: "histogram", name: "☀ Summer (Mar–Aug)", opacity: 0.6, marker: { color: "#f97316" }, nbinsx: 40 },
+      ], { ...plotLayout, height: 380, barmode: "overlay",
+        xaxis: { ...plotLayout.xaxis, title: { text: "Margin $/bbl", font: { size: 12 } } },
+        yaxis: { ...plotLayout.yaxis, title: { text: "Weeks (count)", font: { size: 12 } } },
+        shapes: [{ type: "line", x0: m.latest, x1: m.latest, y0: 0, y1: 1, yref: "paper", line: { color: C.green, width: 2.5 } }],
+        annotations: [{ x: m.latest, y: 1, yref: "paper", text: `Latest ${m.latest.toFixed(1)}`, showarrow: false, font: { color: C.green, size: 11 }, bgcolor: "rgba(0,0,0,0.5)" }],
+      }, { responsive: true });
+
+      detail.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    // Auto-open first margin
+    if (data.margins.length) showDetail(data.margins[0].key);
+  }
+
+
   function inject() {
     if (injected) return;
     injected = true;
@@ -5893,6 +6046,7 @@
       { id: "gseu", label: "🇪🇺 Genscape Europe" },
       { id: "iir", label: "🔧 IIR Turnarounds" },
       { id: "cbm", label: "🛢️ Crude Balances & Margins" },
+      { id: "margins", label: "📈 Refinery Margins" },
       { id: "lgb", label: "⛽ Local Gasoline Balances" },
       { id: "gs", label: "📊 Gasoline Stocks" },
       { id: "ktf", label: "🏭 Kpler Refinery Flows" },
@@ -5935,6 +6089,7 @@
       if (id === "gseu" && !panes.gseu._loaded) { panes.gseu._loaded = true; renderGspeEurope(panes.gseu); }
       if (id === "iir" && !panes.iir._loaded) { panes.iir._loaded = true; renderIIR(panes.iir); }
       if (id === "cbm" && !panes.cbm._loaded) { panes.cbm._loaded = true; renderCBM(panes.cbm); }
+      if (id === "margins" && !panes.margins._loaded) { panes.margins._loaded = true; renderMargins(panes.margins); }
       if (id === "lgb" && !panes.lgb._loaded) { panes.lgb._loaded = true; renderLEM(panes.lgb); }
       if (id === "gs" && !panes.gs._loaded) { panes.gs._loaded = true; renderGS(panes.gs); }
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }

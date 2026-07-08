@@ -12003,6 +12003,157 @@ async def kpler_sync_status():
         return {"configured": True, "error": str(e)[:300]}
 
 
+# ============================================================
+# Refinery Margins (Kevin's seasonal %rank method)
+# ============================================================
+_MARGINS_CACHE = None
+
+def _load_margins_raw():
+    """Load parsed weekly refinery margins from the committed JSON file."""
+    global _MARGINS_CACHE
+    if _MARGINS_CACHE is not None:
+        return _MARGINS_CACHE
+    path = os.path.join(os.path.dirname(__file__), "margins_data.json")
+    with open(path) as f:
+        _MARGINS_CACHE = _json.load(f)
+    return _MARGINS_CACHE
+
+
+def _season_for(month: int) -> str:
+    """Kevin's season classification: SUMMER = Mar-Aug (3-8), WINTER = Sep-Feb."""
+    return "WINTER" if (month < 3 or month > 8) else "SUMMER"
+
+
+def _pct_rank(sorted_vals, x):
+    """Percentile rank of x within sorted_vals (0-100), like Excel PERCENTRANK.INC."""
+    n = len(sorted_vals)
+    if n == 0:
+        return None
+    if n == 1:
+        return 50.0
+    # count strictly below and equal
+    below = 0
+    equal = 0
+    for v in sorted_vals:
+        if v < x:
+            below += 1
+        elif v == x:
+            equal += 1
+    # Excel-style: (below + 0.5*equal) / n
+    return round((below + 0.5 * equal) / n * 100, 1)
+
+
+@app.get("/api/margins")
+async def get_margins():
+    """Refinery margins with Kevin's seasonal percentile-rank analysis.
+
+    For each margin: latest value, current season, 4wk/13wk moving averages,
+    trend, %rank (all-time), %rank (seasonal), winter/summer medians, BUY/SELL
+    signal (seasonal %rank <10 = BUY, >90 = SELL), plus the full weekly time
+    series with season tags for charting.
+    """
+    raw = _load_margins_raw()
+    dates = raw["dates"]
+    months = [int(d[5:7]) for d in dates]
+    seasons = [_season_for(m) for m in months]
+
+    results = []
+    regions_order = []
+    for m in raw["margins"]:
+        vals = m["values"]
+        # Build cleaned (date_idx, value) pairs
+        clean = [(i, v) for i, v in enumerate(vals) if v is not None]
+        if len(clean) < 5:
+            continue
+        idxs = [i for i, _ in clean]
+        cvals = [v for _, v in clean]
+        latest_idx = idxs[-1]
+        latest = cvals[-1]
+        latest_season = seasons[latest_idx]
+
+        # Moving averages (over cleaned series)
+        def _ma(n):
+            if len(cvals) < n:
+                seg = cvals
+            else:
+                seg = cvals[-n:]
+            return round(float(np.mean(seg)), 3)
+        ma4 = _ma(4)
+        ma13 = _ma(13)
+        ma52 = _ma(52)
+        trend = "RISING" if ma4 >= ma13 else "FALLING"
+
+        # %rank all-time
+        rank_all = _pct_rank(sorted(cvals), latest)
+
+        # %rank seasonal (only vs same-season history)
+        season_vals = [cvals[k] for k in range(len(clean)) if seasons[idxs[k]] == latest_season]
+        rank_seasonal = _pct_rank(sorted(season_vals), latest)
+
+        # winter/summer medians
+        winter_vals = [cvals[k] for k in range(len(clean)) if seasons[idxs[k]] == "WINTER"]
+        summer_vals = [cvals[k] for k in range(len(clean)) if seasons[idxs[k]] == "SUMMER"]
+        winter_med = round(float(np.median(winter_vals)), 3) if winter_vals else None
+        summer_med = round(float(np.median(summer_vals)), 3) if summer_vals else None
+
+        # signal from seasonal rank
+        if rank_seasonal is not None and rank_seasonal < 10:
+            signal = "BUY"
+        elif rank_seasonal is not None and rank_seasonal > 90:
+            signal = "SELL"
+        else:
+            signal = "NEUTRAL"
+
+        # min/max/avg
+        stats = {
+            "min": round(min(cvals), 3),
+            "max": round(max(cvals), 3),
+            "avg": round(float(np.mean(cvals)), 3),
+            "median": round(float(np.median(cvals)), 3),
+            "stdev": round(float(np.std(cvals)), 3),
+        }
+        # z-score of latest
+        zscore = round((latest - stats["avg"]) / stats["stdev"], 2) if stats["stdev"] else None
+
+        # Full series for charts (only cleaned points)
+        series_dates = [dates[i] for i in idxs]
+
+        if m["region"] not in regions_order:
+            regions_order.append(m["region"])
+
+        results.append({
+            "key": m["key"],
+            "region": m["region"],
+            "name": m["name"],
+            "latest": round(latest, 3),
+            "latest_date": dates[latest_idx],
+            "season": latest_season,
+            "ma4": ma4,
+            "ma13": ma13,
+            "ma52": ma52,
+            "trend": trend,
+            "rank_all": rank_all,
+            "rank_seasonal": rank_seasonal,
+            "winter_median": winter_med,
+            "summer_median": summer_med,
+            "signal": signal,
+            "zscore": zscore,
+            "stats": stats,
+            "series_dates": series_dates,
+            "series_values": [round(v, 3) for v in cvals],
+            "series_seasons": [seasons[i] for i in idxs],
+        })
+
+    return {
+        "as_of": dates[-1],
+        "n_weeks": len(dates),
+        "start_date": dates[0],
+        "regions": regions_order,
+        "season_definition": "SUMMER = Mar-Aug, WINTER = Sep-Feb (Kevin's grade seasonality)",
+        "margins": results,
+    }
+
+
 # --- Serve Frontend Static Files ---
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
