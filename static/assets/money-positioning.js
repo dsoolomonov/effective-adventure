@@ -2268,11 +2268,13 @@
         hh.appendChild(el("div", { style: { fontSize: "11px", fontWeight: "800", color: shpC } }, shp));
         cell.appendChild(hh);
         cell.appendChild(el("div", { style: { fontSize: "10.5px", color: C.muted, marginBottom: "6px" } },
-          `M1 ${cv.m1} · M1–M2 `, el("b", { style: { color: shpC } }, sgn(cv.m1_m2)), ` · front→back ${sgn(cv.front_back)} · ${cv.units || ""}`));
+          [document.createTextNode(`M1 ${cv.m1} · M1–M2 `),
+           el("b", { style: { color: shpC } }, sgn(cv.m1_m2)),
+           document.createTextNode(` · front→back ${sgn(cv.front_back)} · ${cv.units || ""}`)]));
         const chartDiv = el("div", { style: { height: "180px" } });
         cell.appendChild(chartDiv);
         grid.appendChild(cell);
-        setTimeout(() => {
+        loadPlotly(() => {
           const xs = cv.tenors.map(t => t.tenor);
           const ys = cv.tenors.map(t => t.last);
           Plotly.newPlot(chartDiv, [{
@@ -2285,7 +2287,7 @@
             yaxis: { ...plotLayout.yaxis },
             showlegend: false,
           }, { responsive: true, displayModeBar: false });
-        }, 30);
+        });
       });
       box.appendChild(grid);
     }
