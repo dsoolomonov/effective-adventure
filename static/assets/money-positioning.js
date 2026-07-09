@@ -2202,6 +2202,98 @@
     });
     box.appendChild(traj);
 
+    const sgn = (x, dp = 2) => (x >= 0 ? "+" : "") + Number(x).toFixed(dp);
+    const chgC = x => x > 0 ? C.green : x < 0 ? C.red : C.muted;
+    const biasCol = b => b === "BULLISH" ? C.green : b === "BEARISH" ? C.red : C.muted;
+    const mdBold = s => (s || "").replace(/\*\*(.+?)\*\*/g, "<b style='color:#e2e8f0'>$1</b>");
+
+    // ===== DESK TRADE RECOMMENDATIONS =====
+    box.appendChild(el("div", { style: { fontSize: "14px", fontWeight: "800", color: C.amber, margin: "8px 0 4px" } }, "🎯 DESK TRADE RECOMMENDATIONS"));
+    box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "12px" } },
+      "Per-market actionable ideas fusing term structure (M1/M2), crack curves, positioning, margins & market intel. Conviction ★1–5. Not investment advice."));
+
+    const deskGrid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: "14px", marginBottom: "22px" } });
+    (d.desk || []).forEach(r => {
+      const card = el("div", { style: { background: C.card, border: "1px solid #1e293b", borderLeft: `4px solid ${biasCol(r.bias)}`, borderRadius: "10px", padding: "14px 16px" } });
+      // header
+      const hd = el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "8px", marginBottom: "6px" } });
+      hd.appendChild(el("div", { style: { fontSize: "13.5px", fontWeight: "800", color: C.text } }, r.market));
+      hd.appendChild(el("div", { style: { fontSize: "13px", color: "#fbbf24", letterSpacing: "1px", whiteSpace: "nowrap" } }, r.stars));
+      card.appendChild(hd);
+      // bias + direction pills
+      const pills = el("div", { style: { display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" } });
+      pills.appendChild(el("span", { style: { fontSize: "10.5px", fontWeight: "800", color: "#000", background: biasCol(r.bias), borderRadius: "4px", padding: "2px 8px" } }, r.bias));
+      pills.appendChild(el("span", { style: { fontSize: "10.5px", fontWeight: "700", color: C.cyan, border: `1px solid ${C.cyan}`, borderRadius: "4px", padding: "2px 8px" } }, r.direction));
+      card.appendChild(pills);
+      // the trade
+      const trade = el("div", { style: { fontSize: "12.5px", fontWeight: "700", color: "#e2e8f0", background: "#0b1220", border: "1px solid #1e293b", borderRadius: "6px", padding: "8px 10px", marginBottom: "8px" } });
+      trade.innerHTML = "▶ " + (r.trade || "");
+      card.appendChild(trade);
+      // metrics chips
+      if (r.metrics) {
+        const chips = el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" } });
+        Object.entries(r.metrics).forEach(([k, v]) => {
+          chips.appendChild(el("span", { style: { fontSize: "10px", color: C.muted, background: "#0f1826", borderRadius: "4px", padding: "2px 7px" } },
+            `${k.replace(/_/g, " ")}: `, el("b", { style: { color: C.text } }, String(v))));
+        });
+        card.appendChild(chips);
+      }
+      // rationale
+      (r.rationale || []).forEach(rz => {
+        const li = el("div", { style: { fontSize: "11.5px", color: C.text, lineHeight: "1.5", marginBottom: "4px" } });
+        li.innerHTML = "• " + mdBold(rz);
+        card.appendChild(li);
+      });
+      // risk + invalidation
+      if (r.risk) { const rk = el("div", { style: { fontSize: "11px", color: "#fca5a5", marginTop: "6px", lineHeight: "1.45" } }); rk.innerHTML = "<b>Risk:</b> " + r.risk; card.appendChild(rk); }
+      if (r.invalidation) { const iv = el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "3px", lineHeight: "1.45" } }); iv.innerHTML = "<b>Invalidation:</b> " + r.invalidation; card.appendChild(iv); }
+      deskGrid.appendChild(card);
+    });
+    if ((d.desk || []).length) box.appendChild(deskGrid);
+
+    // ===== TERM STRUCTURE & CRACK CURVES (charts) =====
+    const curves = d.curves || {};
+    function curveSection(title, group, colorMap) {
+      const keys = Object.keys(group || {});
+      if (!keys.length) return;
+      box.appendChild(el("div", { style: { fontSize: "13px", fontWeight: "800", color: C.cyan, margin: "6px 0 10px", textTransform: "uppercase", letterSpacing: "0.5px" } }, title));
+      const grid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "14px", marginBottom: "20px" } });
+      keys.forEach((k, gi) => {
+        const cv = group[k];
+        const cell = el("div", { style: { background: C.card, border: "1px solid #1e293b", borderRadius: "8px", padding: "10px 12px" } });
+        const shp = cv.shape;
+        const shpC = shp === "backwardation" ? C.green : shp === "contango" ? C.red : C.muted;
+        const hh = el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "2px" } });
+        hh.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "700", color: C.text } }, cv.display || k));
+        hh.appendChild(el("div", { style: { fontSize: "11px", fontWeight: "800", color: shpC } }, shp));
+        cell.appendChild(hh);
+        cell.appendChild(el("div", { style: { fontSize: "10.5px", color: C.muted, marginBottom: "6px" } },
+          `M1 ${cv.m1} · M1–M2 `, el("b", { style: { color: shpC } }, sgn(cv.m1_m2)), ` · front→back ${sgn(cv.front_back)} · ${cv.units || ""}`));
+        const chartDiv = el("div", { style: { height: "180px" } });
+        cell.appendChild(chartDiv);
+        grid.appendChild(cell);
+        setTimeout(() => {
+          const xs = cv.tenors.map(t => t.tenor);
+          const ys = cv.tenors.map(t => t.last);
+          Plotly.newPlot(chartDiv, [{
+            x: xs, y: ys, type: "scatter", mode: "lines+markers",
+            line: { color: colorMap[gi % colorMap.length], width: 2.5 }, marker: { size: 6 },
+            hovertemplate: "%{x}: %{y}<extra></extra>",
+          }], {
+            ...plotLayout, height: 180, margin: { l: 44, r: 10, t: 8, b: 24 },
+            xaxis: { ...plotLayout.xaxis, type: "category" },
+            yaxis: { ...plotLayout.yaxis },
+            showlegend: false,
+          }, { responsive: true, displayModeBar: false });
+        }, 30);
+      });
+      box.appendChild(grid);
+    }
+    const curveColors = ["#06b6d4", "#f59e0b", "#8b5cf6", "#10b981", "#ef4444", "#f472b6"];
+    curveSection("Crude Term Structure (flat, M1–M6)", curves.flat, curveColors);
+    curveSection("Crack Curves (M1–M5)", curves.cracks, ["#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4", "#f472b6"]);
+    curveSection("OTC Swap Crack Curves (M0–M4)", curves.swaps, ["#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#f472b6", "#a3e635"]);
+
     // Snapshot tables: flat + curve + positioning
     function tableCard(title, headers, rows) {
       const c = el("div", { style: { background: C.card, border: "1px solid #1e293b", borderRadius: "8px", padding: "12px 14px", marginBottom: "14px" } });
@@ -2222,8 +2314,6 @@
       });
       c.appendChild(tbl); return c;
     }
-    const sgn = (x, dp = 2) => (x >= 0 ? "+" : "") + Number(x).toFixed(dp);
-    const chgC = x => x > 0 ? C.green : x < 0 ? C.red : C.muted;
 
     // Flat + curve merged
     const flatRows = Object.entries(d.flat || {}).map(([k, v]) => {

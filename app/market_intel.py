@@ -257,6 +257,353 @@ def build_context(cot_multi_data, pricing, margins, extras=None):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Term-structure curves (flat, cracks, swaps) + desk trade recommendations
+# ─────────────────────────────────────────────────────────────────────────────
+def _tenor_pack(idx, sheet, labels, tenor_names=None):
+    """Build a term-structure snapshot from a list of tenor labels.
+
+    Returns dict with per-tenor signal, front spread (M1-M2), front-to-back,
+    curve shape, and the front-tenor percentile/trend — or None if <2 tenors."""
+    rows = []
+    for i, lab in enumerate(labels):
+        s = _sig_from_idx(idx, sheet, lab)
+        if not s:
+            continue
+        rows.append({
+            "tenor": tenor_names[i] if tenor_names else lab,
+            "label": lab,
+            "last": s["last"], "wow": s["wow"], "dod": s["dod"],
+            "pctile": s["pctile"], "trend": s["trend"],
+        })
+    if len(rows) < 2:
+        return None
+    m1, m2 = rows[0]["last"], rows[1]["last"]
+    diff = round(m1 - m2, 3)
+    shape = "backwardation" if diff > 0.02 else "contango" if diff < -0.02 else "flat"
+    return {
+        "tenors": rows,
+        "m1": m1, "m2": m2, "m1_m2": diff,
+        "front_back": round(rows[0]["last"] - rows[-1]["last"], 3),
+        "shape": shape,
+        "front_pctile": rows[0]["pctile"], "front_wow": rows[0]["wow"],
+        "front_trend": rows[0]["trend"],
+    }
+
+
+# (family key) -> (sheet, [tenor labels], display name, units)
+_FLAT_CURVE_DEFS = {
+    "Brent": ("brent", ["CO1", "CO2", "CO3", "CO4", "CO5", "CO6"], "ICE Brent", "$/bbl"),
+    "WTI": ("wti", ["CL1", "CL2", "CL3", "CL4", "CL5", "CL6"], "NYMEX WTI", "$/bbl"),
+    "Gasoil": ("gasoil", ["QS1", "QS2", "QS3", "QS4", "QS5", "QS6"], "ICE Gasoil", "$/mt"),
+    "RBOB": ("rbob", ["XB1", "XB2", "XB3", "XB4", "XB5", "XB6"], "NYMEX RBOB", "¢/gal"),
+    "HeatingOil": ("heating oil", ["HO1", "HO2", "HO3", "HO4", "HO5", "HO6"], "NYMEX ULSD (HO)", "¢/gal"),
+    "Dubai": ("dubai crude", ["DAT1", "DAT2", "DAT3", "DAT4", "DAT5", "DAT6"], "Dubai", "$/bbl"),
+}
+
+_CRACK_CURVE_DEFS = {
+    "GO-Brent": ("cracks", ["GO-Brent 1", "GO-Brent 2", "GO-Brent 3", "GO-Brent 4", "GO-Brent 5"],
+                 "Gasoil–Brent crack", "$/bbl"),
+    "HO-WTI": ("cracks", ["HO-WTI 1", "HO-WTI 2", "HO-WTI 3", "HO-WTI 4", "HO-WTI 5"],
+               "ULSD–WTI crack", "$/bbl"),
+    "HO-Brent": ("cracks", ["HO-Brent 1", "HO-Brent 2", "HO-Brent 3", "HO-Brent 4"],
+                 "ULSD–Brent crack", "$/bbl"),
+    "RBOB-Brent": ("cracks", ["RBOB-Brent 1", "RBOB-Brent 2", "RBOB-Brent 3", "RBOB-Brent 4"],
+                   "RBOB–Brent crack", "$/bbl"),
+    "RBOB-WTI": ("cracks", ["RBOB-WTI 1", "RBOB-WTI 2", "RBOB-WTI 3", "RBOB-WTI 4", "RBOB-WTI 5"],
+                 "RBOB–WTI crack", "$/bbl"),
+    "HOGO": ("cracks", ["HOGO 1", "HOGO 2", "HOGO 3", "HOGO 4"], "ULSD–Gasoil (HOGO)", "$/bbl"),
+}
+
+_SWAP_CURVE_DEFS = {
+    "EBOB-Brt": ("swaps eur", ["EBOB-Brt M0", "EBOB-Brt M1", "EBOB-Brt M2", "EBOB-Brt M3", "EBOB-Brt M4"],
+                 "EBOB–Brent crack", "$/bbl"),
+    "DslCIFNWE": ("swaps eur", ["DslCIFNWE M0", "DslCIFNWE M1", "DslCIFNWE M2", "DslCIFNWE M3", "DslCIFNWE M4"],
+                  "Diesel CIF NWE", "$/mt"),
+    "JetNWE-Brt": ("swaps eur", ["JetNWE-Brt BalMo", "JetNWE-Brt M1", "JetNWE-Brt M2", "JetNWE-Brt M3", "JetNWE-Brt M4"],
+                   "Jet NWE–Brent crack", "$/bbl"),
+    "USGCGas-WTI": ("swaps us", ["USGCGas-WTI M0", "USGCGas-WTI M1", "USGCGas-WTI M2", "USGCGas-WTI M3", "USGCGas-WTI M4"],
+                    "USGC Gasoline–WTI crack", "$/bbl"),
+    "ULSD-WTI": ("swaps us", ["ULSD-WTI M0", "ULSD-WTI M1", "ULSD-WTI M2", "ULSD-WTI M3", "ULSD-WTI M4"],
+                 "USGC ULSD–WTI crack", "$/bbl"),
+    "GO-Dubai": ("swaps asia", ["GO-Dubai M0", "GO-Dubai M1", "GO-Dubai M2", "GO-Dubai M3", "GO-Dubai M4"],
+                 "Sing Gasoil–Dubai crack", "$/bbl"),
+    "SingGO": ("swaps asia", ["SingGO M0", "SingGO M1", "SingGO M2", "SingGO M3", "SingGO M4"],
+               "Sing Gasoil 10ppm", "$/bbl"),
+}
+
+
+def build_curves(pricing):
+    """Full term-structure snapshot for flat benchmarks, cracks and OTC swaps."""
+    idx = _pricing_index(pricing)
+    tn = ["M1", "M2", "M3", "M4", "M5", "M6"]
+    swp_tn = ["M0", "M1", "M2", "M3", "M4"]
+
+    def _collect(defs, tenor_names):
+        out = {}
+        for key, (sh, labs, disp, units) in defs.items():
+            pack = _tenor_pack(idx, sh, labs, tenor_names[:len(labs)])
+            if pack:
+                pack["display"], pack["units"] = disp, units
+                out[key] = pack
+        return out
+
+    return {
+        "flat": _collect(_FLAT_CURVE_DEFS, tn),
+        "cracks": _collect(_CRACK_CURVE_DEFS, tn),
+        "swaps": _collect(_SWAP_CURVE_DEFS, swp_tn),
+    }
+
+
+def _stars(conviction):
+    conviction = max(1, min(5, int(round(conviction))))
+    return "★" * conviction + "☆" * (5 - conviction)
+
+
+def _bias_from_dir(direction):
+    d = direction.upper()
+    if "SHORT" in d:
+        return "BEARISH"
+    if "LONG" in d:
+        return "BULLISH"
+    return "NEUTRAL"
+
+
+def _crude_recommendation(name, disp, flat, curve, cot, mg, news_hit):
+    """Return a desk trade card for a crude benchmark."""
+    if not (flat or curve):
+        return None
+    score, rationale = 0.0, []
+    shape = curve["shape"] if curve else "flat"
+    if curve:
+        s = 28 if shape == "backwardation" else -28 if shape == "contango" else 0
+        score += s
+        rationale.append(
+            f"Curve in **{shape}** — M1–M2 {curve['m1_m2']:+.2f}, front-to-M6 {curve['front_back']:+.2f} "
+            f"({'prompt tightness is bid' if shape == 'backwardation' else 'prompt length weighs on the front' if shape == 'contango' else 'balanced prompt'}).")
+    if flat:
+        s = max(-18, min(18, flat["wow"] * 6))
+        score += s
+        rationale.append(
+            f"Flat **{disp} ${flat['last']:.2f}**, {'up' if flat['wow'] >= 0 else 'down'} {abs(flat['wow']):.2f} w/w "
+            f"({flat['trend']}), {flat['pos_in_range']:.0f}% of the 60-day range.")
+    crowded = False
+    if cot:
+        # contrarian: crowded longs are a headwind
+        s = -(cot["pctile"] - 50) * 0.35
+        score += s
+        crowded = cot["pctile"] >= 82
+        light = cot["pctile"] <= 18
+        rationale.append(
+            f"Managed money **{cot['stance']}** — net {cot['mm_net']:,} ({cot['pctile']:.0f}th pctile, z {cot['z']:+.2f}), "
+            f"{cot['chg_4w']:+,} over 4wk. "
+            f"{'Crowded long → reversal/liquidation risk.' if crowded else 'Room to add length.' if light else 'Two-way positioning.'}")
+    if mg:
+        rationale.append(
+            f"Refiner pull: {mg['name']} ${mg['last']:.2f} ({mg['seasonal_pctile']:.0f}th seasonal pctile) — "
+            f"{'strong margins support crude demand' if (mg['seasonal_pctile'] or 0) > 55 else 'soft margins argue for run cuts'}.")
+
+    score = max(-100, min(100, score))
+
+    # Trade construction
+    if shape == "backwardation" and not crowded and score > 0:
+        direction, instrument = "LONG", f"Long {disp} M1–M2 time spread + hold prompt length"
+        risk = "A flip out of backwardation or a bearish inventory surprise flattens the spread."
+        invalidation = f"M1–M2 rolling back below {max(0.0, curve['m1_m2'] - 0.30):+.2f} (loss of backwardation)."
+        conv = 4 if score > 45 else 3
+    elif shape == "backwardation" and crowded:
+        direction, instrument = "NEUTRAL/LONG", f"Book {disp} longs into strength; buy M1–M2 dips, sell flat-price rallies"
+        risk = "Crowded MM long can unwind violently even with a firm curve."
+        invalidation = "A weekly MM net drop >15% alongside a curve flattening."
+        conv = 2
+    elif shape == "contango":
+        direction, instrument = "SHORT", f"Short {disp} M1–M2 (prompt length) / roll length to deferred"
+        risk = "Supply outage or Hormuz escalation snaps the front back into backwardation."
+        invalidation = f"M1–M2 recovering above {curve['m1_m2'] + 0.30:+.2f}."
+        conv = 3 if score < -35 else 2
+    else:
+        direction, instrument = "NEUTRAL", f"Stand aside on outright {disp}; trade the M1–M2 range"
+        risk = "Low-conviction; a curve break either way sets direction."
+        invalidation = "A decisive M1–M2 move (>±0.30) out of the current range."
+        conv = 1
+    if news_hit:
+        conv = min(5, conv + 1)
+        rationale.append(f"Market intel corroborates the setup: {news_hit}")
+
+    return {
+        "market": disp + " crude", "product": "crude", "benchmark": name,
+        "bias": _bias_from_dir(direction), "score": round(score, 1), "conviction": conv, "stars": _stars(conv),
+        "direction": direction, "trade": instrument, "rationale": rationale,
+        "risk": risk, "invalidation": invalidation,
+        "metrics": {
+            "flat": f"${flat['last']:.2f}" if flat else "n/a",
+            "flat_wow": f"{flat['wow']:+.2f}" if flat else "n/a",
+            "m1_m2": f"{curve['m1_m2']:+.2f}" if curve else "n/a",
+            "shape": shape,
+            "mm_pctile": f"{cot['pctile']:.0f}th" if cot else "n/a",
+        },
+    }
+
+
+def _crack_recommendation(cfg, crack_sig, crack_curve, flat, cot, mg, news_hit):
+    """Desk card for a product crack (distillate/gasoline/jet)."""
+    if not crack_sig:
+        return None
+    score, rationale = 0.0, []
+    pctile = crack_sig["pctile"]
+    wow = crack_sig["wow"]
+    # momentum
+    s = max(-22, min(22, wow * 8))
+    score += s
+    # level (mean reversion): rich cracks lean bearish forward, cheap cracks bullish
+    lvl = (pctile - 50) * -0.45
+    score += lvl
+    rationale.append(
+        f"Crack **{crack_sig['label']} ${crack_sig['last']:.2f}** ({wow:+.2f} w/w, {pctile:.0f}th pctile) — "
+        f"{'historically rich, mean-reversion risk' if pctile >= 80 else 'depressed, run-cut/rebound zone' if pctile <= 20 else 'mid-range'}.")
+    crk_shape = None
+    if crack_curve:
+        crk_shape = crack_curve["shape"]
+        rationale.append(
+            f"Crack curve **{crk_shape}** — M1–M2 {crack_curve['m1_m2']:+.2f} "
+            f"({'front crack bid vs deferred (tight prompt product)' if crk_shape == 'backwardation' else 'deferred over prompt (forward strength/weak prompt)' if crk_shape == 'contango' else 'flat crack curve'}).")
+        score += 10 if crk_shape == "backwardation" else -8 if crk_shape == "contango" else 0
+    if mg:
+        s2 = ((mg["seasonal_pctile"] or 50) - 50) * 0.3
+        score += s2
+        rationale.append(
+            f"{cfg['region_name']} margin {mg['name']} ${mg['last']:.2f} ({mg['seasonal_pctile']:.0f}th seasonal pctile, {mg['wow']:+.2f} w/w).")
+    if cot:
+        rationale.append(f"Positioning proxy ({cfg['cot']}) {cot['stance']} at {cot['pctile']:.0f}th pctile.")
+
+    score = max(-100, min(100, score))
+    lab = crack_sig["label"]
+
+    if pctile >= 80:
+        direction = "SHORT CRACK"
+        instrument = f"Sell/hedge {lab} forward (short M2–M3 crack); book refiner length"
+        risk = "Fresh outage or export surge keeps the crack bid despite the rich percentile."
+        conv = 4 if pctile >= 92 else 3
+        invalidation = f"Crack pushing to a new 60-day high above ${crack_sig['max60']:.2f}."
+    elif pctile <= 20:
+        direction = "LONG CRACK"
+        instrument = f"Long {lab} for mean-reversion (buy prompt crack); run-cut floor near"
+        risk = "Demand air-pocket or import wave caps the rebound."
+        conv = 4 if pctile <= 8 else 3
+        invalidation = f"Crack breaking to a new 60-day low below ${crack_sig['min60']:.2f}."
+    elif wow > 0 and (not mg or (mg['seasonal_pctile'] or 0) > 55):
+        direction = "LONG CRACK"
+        instrument = f"Stay long front {lab}; favour M1–M2 crack backwardation"
+        risk = "Flat-price spike compresses the crack; watch crude outperformance."
+        conv = 3
+        invalidation = f"Crack rolling back below {crack_sig['last'] + crack_sig['wow']:.2f} (this week's base)."
+    else:
+        direction = "NEUTRAL"
+        instrument = f"Range-trade {lab}; no strong edge either way"
+        risk = "Low conviction; a percentile break sets direction."
+        conv = 1
+        invalidation = "A move outside the 20th–80th percentile band."
+    if news_hit:
+        conv = min(5, conv + 1)
+        rationale.append(f"Market intel corroborates: {news_hit}")
+
+    return {
+        "market": cfg["market"], "product": cfg["product"], "benchmark": lab,
+        "bias": _bias_from_dir(direction), "score": round(score, 1), "conviction": conv, "stars": _stars(conv),
+        "direction": direction, "trade": instrument, "rationale": rationale,
+        "risk": risk, "invalidation": invalidation,
+        "metrics": {
+            "crack": f"${crack_sig['last']:.2f}", "crack_wow": f"{wow:+.2f}",
+            "crack_pctile": f"{pctile:.0f}th",
+            "crack_m1_m2": f"{crack_curve['m1_m2']:+.2f}" if crack_curve else "n/a",
+            "crack_shape": crk_shape or "n/a",
+            "margin_pctile": f"{mg['seasonal_pctile']:.0f}th" if mg else "n/a",
+        },
+    }
+
+
+def _first_crack(ctx, curves, *keys):
+    """Return (front-crack signal, crack curve pack) for the first available key."""
+    for k in keys:
+        cc = curves["cracks"].get(k) or curves["swaps"].get(k)
+        sig = None
+        # front-crack signal: prefer cracks dict (1) then swaps (M0)
+        for lab in (f"{k} 1", f"{k} M0"):
+            sig = ctx["cracks"].get(lab) or ctx["swaps"].get(lab)
+            if sig:
+                break
+        if not sig and cc:
+            # synthesise a signal-lite from the curve front tenor
+            fr = cc["tenors"][0]
+            sig = {"label": fr["label"], "last": fr["last"], "wow": fr["wow"],
+                   "pctile": fr["pctile"], "trend": fr["trend"],
+                   "min60": fr["last"], "max60": fr["last"]}
+        if sig:
+            return sig, cc
+    return None, None
+
+
+def desk_recommendations(ctx, curves, news_products=None):
+    """Build detailed per-market trade recommendations across the barrel."""
+    news_products = news_products or {}
+    recs = []
+
+    # Crude benchmarks
+    crude_defs = [
+        ("Brent", "ICE Brent", ctx["flat"].get("Brent"), curves["flat"].get("Brent"), ctx["cot"].get("brent"), "North-West Europe"),
+        ("WTI", "NYMEX WTI", ctx["flat"].get("WTI"), curves["flat"].get("WTI"), ctx["cot"].get("wti"), "US Gulf Coast"),
+        ("Dubai", "Dubai", ctx["flat"].get("Dubai"), curves["flat"].get("Dubai"), ctx["cot"].get("brent"), "Singapore"),
+    ]
+    for name, disp, flat, curve, cot, mreg in crude_defs:
+        mgs = [m for m in ctx.get("margins", []) if m["region"] == mreg]
+        mg = max(mgs, key=lambda m: m["seasonal_pctile"] or 0) if mgs else None
+        r = _crude_recommendation(name, disp, flat, curve, cot, mg, news_products.get("crude"))
+        if r:
+            recs.append(r)
+
+    # Product cracks
+    crack_cfgs = [
+        {"market": "Distillate — ARA/Gasoil (ICE)", "product": "distillate", "cot": "gasoil",
+         "keys": ["GO-Brent"], "region_name": "NW Europe", "margin_region": "North-West Europe"},
+        {"market": "Distillate — USGC ULSD", "product": "distillate", "cot": "gasoil",
+         "keys": ["HO-WTI", "ULSD-WTI"], "region_name": "US Gulf", "margin_region": "US Gulf Coast"},
+        {"market": "Distillate — Sing Gasoil", "product": "distillate", "cot": "gasoil",
+         "keys": ["GO-Dubai"], "region_name": "Singapore", "margin_region": "Singapore"},
+        {"market": "Gasoline — RBOB (US)", "product": "gasoline", "cot": "rbob",
+         "keys": ["RBOB-Brent", "RBOB-WTI"], "region_name": "US Gulf", "margin_region": "US Gulf Coast"},
+        {"market": "Gasoline — EBOB (Europe)", "product": "gasoline", "cot": "rbob",
+         "keys": ["EBOB-Brt"], "region_name": "NW Europe", "margin_region": "North-West Europe"},
+        {"market": "Jet — NWE", "product": "distillate", "cot": "gasoil",
+         "keys": ["JetNWE-Brt"], "region_name": "NW Europe", "margin_region": "North-West Europe"},
+    ]
+    for cfg in crack_cfgs:
+        sig, cc = _first_crack(ctx, curves, *cfg["keys"])
+        if not sig:
+            continue
+        mgs = [m for m in ctx.get("margins", []) if m["region"] == cfg["margin_region"]]
+        mg = max(mgs, key=lambda m: m["seasonal_pctile"] or 0) if mgs else None
+        cot = ctx["cot"].get(cfg["cot"])
+        r = _crack_recommendation(cfg, sig, cc, ctx["flat"].get("Brent"), cot, mg, news_products.get(cfg["product"]))
+        if r:
+            recs.append(r)
+    return recs
+
+
+def _news_hits(products):
+    """One-line news catalyst per product (first relevant sentence), for corroboration."""
+    out = {}
+    for p in products:
+        ex = news_excerpt(p, limit=1200)
+        if not ex:
+            continue
+        # take the first sentence-ish fragment
+        frag = ex.replace("\n", " ").strip()
+        frag = frag[:180].rsplit(".", 1)[0].strip()
+        if frag:
+            out[p] = frag + "."
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Briefing generation (rule-based) — with optional LLM polish
 # ─────────────────────────────────────────────────────────────────────────────
 REGION_LABEL = {"US": "US", "UK": "UK/Europe", "DUBAI": "Dubai", "SING": "Singapore"}

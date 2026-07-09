@@ -2902,6 +2902,10 @@ async def market_crossmarket():
     plus a flows/outages → product-impact linkage."""
     import app.market_intel as mi
     ctx = _build_market_context()
+    pricing = _load_pricing_raw()
+    curves = mi.build_curves(pricing)
+    news_hits = mi._news_hits(["crude", "distillate", "gasoline"])
+    desk = mi.desk_recommendations(ctx, curves, news_hits)
 
     def _score_product(prod):
         """Directional score in [-100,100] from crack pctile/trend, curve, positioning, margin."""
@@ -2970,6 +2974,8 @@ async def market_crossmarket():
         "flat": ctx["flat"], "curve": ctx["curve"], "cot": ctx["cot"],
         "cracks": ctx["cracks"], "swaps": ctx["swaps"], "margins": ctx["margins"],
         "trajectory": trajectory,
+        "curves": curves,
+        "desk": desk,
         "linkage": linkage,
         "outages": ctx.get("outages"),
     }
