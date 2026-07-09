@@ -10124,13 +10124,44 @@ def _map_alt_category(cat: str) -> str:
         return "HT"
     return cat or "OTHER"
 
+def _derive_monthly_from_daily():
+    """Aggregate the daily unit-status data to a monthly frame when no
+    pre-computed monthly parquet exists (e.g. fresh API-bootstrapped deploys)."""
+    daily = _load_genscape_daily()
+    if daily is None or daily.empty:
+        return None
+    d = daily.copy()
+    d["offlineValue"] = np.where(d["unitOnline"] == False, d["unitCapacity"], 0.0)  # noqa: E712
+    d["monthDate"] = d["measurementDate"].values.astype("datetime64[M]")
+    agg = (
+        d.groupby(["monthDate", "unitId"])
+        .agg(
+            offlineValue=("offlineValue", "mean"),
+            unitCapacity=("unitCapacity", "max"),
+            facilityName=("facilityName", "first"),
+            unitName=("unitName", "first"),
+            region=("region", "first"),
+            alternativeCategory=("alternativeCategory", "first"),
+        )
+        .reset_index()
+    )
+    return agg
+
+
 def _load_genscape_monthly():
     global _genscape_monthly_df
     if _genscape_monthly_df is not None:
         return _genscape_monthly_df
     path = os.path.join(_GENSCAPE_DATA_DIR, "runs_status_monthly.parquet")
     if not os.path.isfile(path):
-        return None
+        df = _derive_monthly_from_daily()
+        if df is None:
+            return None
+        df["monthDate"] = pd.to_datetime(df["monthDate"])
+        df["month"] = df["monthDate"].dt.month
+        df["year"] = df["monthDate"].dt.year
+        _genscape_monthly_df = df
+        return df
     df = pd.read_parquet(path)
     df["monthDate"] = pd.to_datetime(df["monthDate"])
     df["month"] = df["monthDate"].dt.month
@@ -10266,8 +10297,10 @@ def _genscape_pull_and_merge(lookback_days: int = 3) -> dict:
     os.makedirs(_GENSCAPE_DATA_DIR, exist_ok=True)
     combined.to_parquet(path, index=False)
 
-    # Reset cached DataFrame so next load picks up new data
+    # Reset cached DataFrames so next load picks up new data
     _genscape_daily_df = None
+    global _genscape_monthly_df
+    _genscape_monthly_df = None
     now_ts = _dt.now(timezone.utc).isoformat()
     _genscape_last_pulled = now_ts
 
