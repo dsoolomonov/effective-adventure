@@ -1002,7 +1002,7 @@
         Plotly.newPlot(id, traces, {
           ...plotLayout,
           height: 500,
-          xaxis: { ...plotLayout.xaxis, title: "Month", tickmode: "array", tickvals: months, ticktext: months },
+          xaxis: { ...plotLayout.xaxis, type: "category", categoryorder: "array", categoryarray: months, title: "Month" },
           yaxis: { ...plotLayout.yaxis, title: ov.units },
           legend: { font: { size: 11, color: C.text }, orientation: "h", y: -0.12 },
           showlegend: true,
@@ -1476,7 +1476,7 @@
         Plotly.newPlot(id, traces, {
           ...plotLayout,
           height: 500,
-          xaxis: { ...plotLayout.xaxis, title: "Month", tickmode: "array", tickvals: months, ticktext: months },
+          xaxis: { ...plotLayout.xaxis, type: "category", categoryorder: "array", categoryarray: months, title: "Month" },
           yaxis: { ...plotLayout.yaxis, title: ov.units },
           legend: { font: { size: 11, color: C.text }, orientation: "h", y: -0.12 },
           showlegend: true,
