@@ -20,6 +20,49 @@ import numpy as np
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Market news (analyst intel uploaded to app/market_news.txt)
+# ─────────────────────────────────────────────────────────────────────────────
+_NEWS_PATH = os.path.join(os.path.dirname(__file__), "market_news.txt")
+
+_PRODUCT_KEYWORDS = {
+    "crude": ["crude", "brent", "wti", "dubai", "hormuz", "osp", "differential", "cushing",
+              "spr", "export", "forties", "angol", "nigeria", "murban", "stockbuild"],
+    "distillate": ["diesel", "distillate", "gasoil", "hogo", "jet", "regrade", "ulsd",
+                   "heating oil", "yanbu", "gofo", "hydrocracker"],
+    "gasoline": ["gasoline", "ebob", "rbob", "sing92", "octane", "reformate", "alkylate",
+                 "blend", "naphtha", "gas-nap", "rvo", "rin"],
+    "freight": ["freight", "tanker", "vlcc", "aframax", "suezmax", "td3", "td7", "td20",
+                "td25", "tc2", "tc5", "tc14", "tonne", "ffa", "charter", "insurance"],
+}
+
+
+def load_market_news():
+    try:
+        with open(_NEWS_PATH, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def news_excerpt(product, limit=9000):
+    """Return the paragraphs of the uploaded market news most relevant to a product."""
+    txt = load_market_news()
+    if not txt:
+        return ""
+    kws = _PRODUCT_KEYWORDS.get(product.lower(), [])
+    paras = [p.strip() for p in txt.split("\n\n") if p.strip()]
+    scored = [(sum(p.lower().count(k) for k in kws), p) for p in paras]
+    picked = [p for s, p in sorted(scored, key=lambda t: -t[0]) if s > 0] or paras
+    out, total = [], 0
+    for p in picked:
+        if total + len(p) > limit:
+            break
+        out.append(p)
+        total += len(p)
+    return "\n\n".join(out)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Series signal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def _clean(dates, values):
@@ -500,7 +543,11 @@ _STYLE = (
     "structure: a TL;DR (3-5 punchy lead sentences each followed by a short explanation), "
     "a 'Market State' paragraph, a 'Physical Update' with 2-3 themes, and a numbered 'What to Watch'. "
     "Use ONLY the numbers provided in the JSON context; do not invent figures. Be specific, cite "
-    "levels, w/w changes, percentiles, curve shape and positioning. Tone: sharp, non-hedging."
+    "levels, w/w changes, percentiles, curve shape and positioning. Tone: sharp, non-hedging. "
+    "If a MARKET NEWS section is provided, weigh it heavily in your analysis: reconcile the "
+    "platform's computed signals with the news (geopolitics, outages, arbs, export bans), "
+    "flag agreements/contradictions between the two, and fold the key news catalysts into the "
+    "TL;DR and What to Watch. Attribute news facts as 'per latest market intel'."
 )
 
 
@@ -547,9 +594,11 @@ def llm_polish_briefing(ctx, product, region, base):
         return base
     try:
         import json as _json
+        news = news_excerpt(product)
         user_msg = (f"Product: {product}. Region: {region}.\n"
                     f"Computed signals JSON:\n{_json.dumps(base, default=str)[:6000]}\n"
-                    f"Broader context JSON:\n{_json.dumps(ctx, default=str)[:6000]}")
+                    f"Broader context JSON:\n{_json.dumps(ctx, default=str)[:6000]}"
+                    + (f"\n\nMARKET NEWS (latest analyst intel):\n{news}" if news else ""))
         txt = None
         if os.environ.get("ANTHROPIC_API_KEY"):
             txt = _anthropic_call(user_msg)

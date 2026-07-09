@@ -2845,6 +2845,9 @@ def _build_market_context():
     outages = _iir_outage_summary()
     if outages:
         ctx["outages"] = outages
+    news = mi.load_market_news()
+    if news:
+        ctx["news_headline"] = news[:500]
     return ctx
 
 
@@ -2866,6 +2869,14 @@ async def market_briefing(product: str = Query("crude"), region: str = Query("US
         if not base.get("llm"):
             base["llm_note"] = mi._llm_error() or ("No LLM key configured" if not mi._llm_available() else None)
     return base
+
+
+@app.get("/api/market/news")
+async def market_news(product: str = Query(None)):
+    """Latest uploaded analyst market news (optionally filtered to a product)."""
+    import app.market_intel as mi
+    txt = mi.news_excerpt(product) if product else mi.load_market_news()
+    return {"available": bool(txt), "product": product, "news": txt}
 
 
 @app.get("/api/market/briefings")
@@ -10129,11 +10140,22 @@ def _load_genscape_monthly():
     _genscape_monthly_df = df
     return df
 
+_genscape_bootstrap_attempted = False
+
+
 def _load_genscape_daily():
-    global _genscape_daily_df
+    global _genscape_daily_df, _genscape_bootstrap_attempted
     if _genscape_daily_df is not None:
         return _genscape_daily_df
     path = os.path.join(_GENSCAPE_DATA_DIR, "runs_status.parquet")
+    if not os.path.isfile(path):
+        # No historical file (e.g. fresh deployment) — bootstrap from the API once
+        if not _genscape_bootstrap_attempted and os.environ.get("GSPE_API_KEY"):
+            _genscape_bootstrap_attempted = True
+            try:
+                _genscape_pull_and_merge(lookback_days=365)
+            except Exception as exc:
+                print(f"[GSPE-Bootstrap] failed: {exc}")
     if not os.path.isfile(path):
         return None
     df = pd.read_parquet(path)
@@ -10241,6 +10263,7 @@ def _genscape_pull_and_merge(lookback_days: int = 3) -> dict:
         combined = new_df
 
     # Save back to parquet
+    os.makedirs(_GENSCAPE_DATA_DIR, exist_ok=True)
     combined.to_parquet(path, index=False)
 
     # Reset cached DataFrame so next load picks up new data
@@ -11404,7 +11427,7 @@ def _iir_get_token() -> str:
     conn.request("POST", url)
     resp = conn.getresponse()
     headers = dict(resp.getheaders())
-    resp.read()
+    body = resp.read()
     conn.close()
 
     token = None
@@ -11414,7 +11437,17 @@ def _iir_get_token() -> str:
             break
 
     if not token:
-        raise HTTPException(status_code=500, detail="Failed to obtain IIR API token")
+        upstream = ""
+        try:
+            err = _json.loads(body)
+            upstream = f" (IIR error #{err.get('code')}: {err.get('message', '')})"
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to obtain IIR API token{upstream}. "
+                   "This comes from IIR's server — if the credentials are correct, the account "
+                   "may be locked/expired; contact IIR member services.")
 
     _IIR_TOKEN = token
     _IIR_TOKEN_EXPIRY = now + timedelta(days=6)
