@@ -2234,7 +2234,7 @@
         const chips = el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" } });
         Object.entries(r.metrics).forEach(([k, v]) => {
           chips.appendChild(el("span", { style: { fontSize: "10px", color: C.muted, background: "#0f1826", borderRadius: "4px", padding: "2px 7px" } },
-            `${k.replace(/_/g, " ")}: `, el("b", { style: { color: C.text } }, String(v))));
+            [document.createTextNode(`${k.replace(/_/g, " ")}: `), el("b", { style: { color: C.text } }, String(v))]));
         });
         card.appendChild(chips);
       }
