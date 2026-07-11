@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+app/live_ticks.json
+bridge/bridge_config.json

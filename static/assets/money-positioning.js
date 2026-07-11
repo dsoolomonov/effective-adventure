@@ -66,6 +66,44 @@
     hovermode: "x unified",
   };
 
+  // Live-feed status badge (green when the Bloomberg bridge is pushing fresh
+  // ticks; grey "SNAPSHOT" when no live feed). Self-refreshes every 5s while
+  // attached to the DOM.
+  function liveBadge() {
+    const b = el("span", {
+      style: {
+        fontSize: "10px", fontWeight: "800", letterSpacing: ".05em",
+        borderRadius: "999px", padding: "3px 10px", whiteSpace: "nowrap",
+        border: "1px solid #334155", color: C.muted, background: "#0b1220",
+      },
+    }, "○ SNAPSHOT");
+    async function tick() {
+      if (!document.body.contains(b)) return;
+      try {
+        const r = await fetch("/api/pricing/live");
+        const d = await r.json();
+        const s = d.stale_seconds;
+        if (d.count && s != null && s < 120) {
+          b.textContent = `● LIVE · ${d.count} tickers · ${Math.round(s)}s ago`;
+          b.style.color = "#000"; b.style.background = C.green;
+          b.style.borderColor = C.green;
+        } else if (d.count) {
+          const ago = s == null ? "?" : (s > 3600 ? Math.round(s / 3600) + "h" : Math.round(s / 60) + "m");
+          b.textContent = `○ STALE · last ${ago} ago`;
+          b.style.color = C.gold; b.style.background = "#0b1220";
+          b.style.borderColor = C.gold;
+        } else {
+          b.textContent = "○ SNAPSHOT (no live feed)";
+          b.style.color = C.muted; b.style.background = "#0b1220";
+          b.style.borderColor = "#334155";
+        }
+      } catch (e) { /* keep last state */ }
+      setTimeout(tick, 5000);
+    }
+    tick();
+    return b;
+  }
+
   // ========== MONEY POSITIONING ==========
   async function renderMP(box) {
     box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Money Positioning analysis...</div>';
@@ -520,9 +558,12 @@
     if (!groups.length) { box.innerHTML = `<div style="color:${C.muted};padding:20px;">No pricing data.</div>`; return; }
 
     // Header
-    box.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.amber, marginBottom: "3px" } }, "🏷️ PRICING — Futures, Cracks & OTC Swaps"));
+    const prHdr = el("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "3px", flexWrap: "wrap" } });
+    prHdr.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.amber } }, "🏷️ PRICING — Futures, Cracks & OTC Swaps"));
+    prHdr.appendChild(liveBadge());
+    box.appendChild(prHdr);
     box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "12px" } },
-      `Bloomberg daily settlements · ${groups.reduce((a, g) => a + g.n_series, 0)} series across ${groups.length} books`));
+      `Bloomberg settlements + live intraday when the bridge is running · ${groups.reduce((a, g) => a + g.n_series, 0)} series across ${groups.length} books`));
 
     // Sub-tab selector (portfolio-style)
     const selRow = el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "14px" } });
@@ -564,6 +605,7 @@
       body.appendChild(grid);
 
       const plots = [];
+      const liveMap = {};
       gd.series.forEach((s, i) => {
         // slice by range
         let xs = s.dates, ys = s.values;
@@ -580,8 +622,10 @@
         const cardEl = el("div", { style: { background: C.card, border: "1px solid #1e293b", borderRadius: "8px", padding: "10px" } });
         const th = el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "4px" } });
         th.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "700", color: C.text } }, s.label));
-        th.appendChild(el("div", { style: { fontSize: "11px", fontWeight: "700", color: chgC } }, `${last.toFixed(2)} (${chg >= 0 ? "+" : ""}${chg.toFixed(2)})`));
+        const valEl = el("div", { style: { fontSize: "11px", fontWeight: "700", color: chgC, borderRadius: "3px", padding: "0 2px", transition: "background .4s" } }, `${last.toFixed(2)} (${chg >= 0 ? "+" : ""}${chg.toFixed(2)})`);
+        th.appendChild(valEl);
         cardEl.appendChild(th);
+        liveMap[s.label] = { valEl, prev: prev, ref: last };
         cardEl.appendChild(el("div", { style: { fontSize: "9px", color: C.muted, marginBottom: "4px" } }, s.ticker));
         const pd = el("div", { id: `pr-${current.replace(/\s/g, "")}-${i}`, style: { width: "100%", height: "180px" } });
         cardEl.appendChild(pd);
@@ -606,6 +650,35 @@
           }], lay, cfg);
         });
       });
+
+      // Live intraday updates: patch each series' front value as the bridge
+      // pushes fresh Bloomberg ticks (green/red flash on change).
+      if (window.__prTimer) clearTimeout(window.__prTimer);
+      const drawToken = {};
+      window.__prDrawToken = drawToken;
+      async function pollLive() {
+        if (window.__prDrawToken !== drawToken || !document.body.contains(body)) return;
+        try {
+          const r = await fetch("/api/pricing/live");
+          const ld = await r.json();
+          const ticks = ld.ticks || {};
+          Object.entries(liveMap).forEach(([label, m]) => {
+            const tk = ticks[label];
+            if (!tk || tk.value == null) return;
+            const v = Number(tk.value);
+            const chg = v - m.prev;
+            m.valEl.textContent = `${v.toFixed(2)} (${chg >= 0 ? "+" : ""}${chg.toFixed(2)})`;
+            m.valEl.style.color = chg >= 0 ? C.green : C.red;
+            if (v !== m.ref) {
+              m.valEl.style.background = (v > m.ref ? C.green : C.red) + "44";
+              setTimeout(() => { m.valEl.style.background = "transparent"; }, 500);
+            }
+            m.ref = v;
+          });
+        } catch (e) { /* ignore */ }
+        window.__prTimer = setTimeout(pollLive, 5000);
+      }
+      pollLive();
     }
 
     groups.forEach(g => {
@@ -2175,9 +2248,16 @@
     catch (e) { box.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; return; }
     box.innerHTML = "";
 
-    box.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.amber, marginBottom: "3px" } }, "🧠 CROSS-MARKET INTELLIGENCE"));
+    const cmHdr = el("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "3px", flexWrap: "wrap" } });
+    cmHdr.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.amber } }, "🧠 CROSS-MARKET INTELLIGENCE"));
+    cmHdr.appendChild(liveBadge());
+    box.appendChild(cmHdr);
     box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "16px" } },
-      `Fuses positioning · pricing · term structure · cracks · margins into a directional read per product. Generated ${(d.generated || "").slice(0, 16).replace("T", " ")} UTC.`));
+      `Fuses positioning · pricing · term structure · cracks · margins into a directional read per product. Generated ${(d.generated || "").slice(0, 16).replace("T", " ")} UTC.${d.live && d.live.count ? " · Prices live from Bloomberg bridge." : ""}`));
+
+    // Auto-refresh the whole read while the tab stays open (live feed cadence).
+    if (window.__cmTimer) clearTimeout(window.__cmTimer);
+    window.__cmTimer = setTimeout(() => { if (document.body.contains(box)) renderCrossMarket(box); }, 45000);
 
     // Trajectory cards
     const traj = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "12px", marginBottom: "20px" } });

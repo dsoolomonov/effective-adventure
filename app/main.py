@@ -49,6 +49,20 @@ app = FastAPI(title="Crude Oil Futures Backtesting Platform")
 # ------------- Password Gate (shared password) ----------------
 _APP_PASSWORD = os.environ.get("APP_PASSWORD", "CrudeOil$Analyt1cs#2026!Secure")
 _AUTH_SECRET = hashlib.sha256((_APP_PASSWORD + "_coa_signing_key").encode()).hexdigest()
+# Shared token used by the local Bloomberg bridge to push live prices. Defaults
+# to a value derived from the app password so it works without extra config, but
+# should be overridden with LIVE_INGEST_TOKEN in production.
+_LIVE_INGEST_TOKEN = os.environ.get(
+    "LIVE_INGEST_TOKEN",
+    hashlib.sha256((_APP_PASSWORD + "_live_ingest").encode()).hexdigest()[:32],
+)
+
+
+def hmac_compare(a: str, b: str) -> bool:
+    import hmac
+    return hmac.compare_digest(str(a), str(b))
+
+
 _LOGIN_PAGE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -117,6 +131,14 @@ class PasswordGateMiddleware(BaseHTTPMiddleware):
         token = request.cookies.get("coa_session")
         if token and _verify_session_token(token):
             return await call_next(request)
+        # Live price ingest from the local Bloomberg bridge authenticates with a
+        # shared token header instead of a browser session cookie.
+        if path == "/api/pricing/live" and request.method == "POST":
+            ingest = request.headers.get("x-ingest-token", "")
+            if ingest and _LIVE_INGEST_TOKEN and hmac_compare(ingest, _LIVE_INGEST_TOKEN):
+                return await call_next(request)
+            from starlette.responses import JSONResponse
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
         if path.startswith("/api/"):
             from starlette.responses import JSONResponse
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -2811,11 +2833,147 @@ async def pricing_groups():
 @app.get("/api/pricing/data")
 async def pricing_data_endpoint(group: str = Query(...)):
     """Return full time series for every series within a single pricing group."""
-    data = _load_pricing_raw()
+    data = _pricing_with_live()
     for g in data.get("groups", []):
         if g["sheet"].lower() == group.lower():
-            return {"sheet": g["sheet"], "title": g["title"], "series": g["series"]}
+            return {"sheet": g["sheet"], "title": g["title"], "series": g["series"],
+                    "live": data.get("live")}
     raise HTTPException(status_code=404, detail=f"No pricing group '{group}'")
+
+
+# ── Live price feed (pushed by the local Bloomberg bridge) ─────────────────
+_LIVE_TICKS = None
+_LIVE_META = {"generated": None, "source": None}
+
+
+def _live_ticks_path():
+    return os.path.join(os.path.dirname(__file__), "live_ticks.json")
+
+
+def _get_live_ticks():
+    """In-memory map of label -> {value, ts, prev}. Loaded from disk once."""
+    global _LIVE_TICKS
+    if _LIVE_TICKS is None:
+        _LIVE_TICKS = {}
+        try:
+            with open(_live_ticks_path()) as f:
+                blob = _json.load(f)
+            _LIVE_TICKS = blob.get("ticks", {})
+            _LIVE_META["generated"] = blob.get("generated")
+            _LIVE_META["source"] = blob.get("source")
+        except FileNotFoundError:
+            pass
+        except Exception:
+            _LIVE_TICKS = {}
+    return _LIVE_TICKS
+
+
+def _pricing_with_live():
+    """Pricing workbook with the latest live ticks overlaid on each series'
+    front value (replacing today's point or appending a fresh one)."""
+    base = _load_pricing_raw()
+    ticks = _get_live_ticks()
+    if not ticks:
+        return base
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    out = dict(base)
+    new_groups = []
+    for g in base.get("groups", []):
+        ng = dict(g)
+        new_series = []
+        for s in g.get("series", []):
+            tk = ticks.get(s.get("label"))
+            if tk is None:
+                tk = ticks.get(s.get("ticker"))
+            if tk is not None and s.get("values"):
+                try:
+                    v = float(tk["value"])
+                except (TypeError, ValueError, KeyError):
+                    new_series.append(s)
+                    continue
+                ns = dict(s)
+                dates = list(s.get("dates", []))
+                values = list(s.get("values", []))
+                if dates and dates[-1] == today:
+                    values[-1] = v
+                else:
+                    dates.append(today)
+                    values.append(v)
+                ns["dates"] = dates
+                ns["values"] = values
+                ns["live"] = True
+                ns["live_ts"] = tk.get("ts")
+                new_series.append(ns)
+            else:
+                new_series.append(s)
+        ng["series"] = new_series
+        new_groups.append(ng)
+    out["groups"] = new_groups
+    out["live"] = {
+        "count": len(ticks),
+        "generated": _LIVE_META.get("generated"),
+        "source": _LIVE_META.get("source"),
+    }
+    return out
+
+
+@app.post("/api/pricing/live")
+async def pricing_live_ingest(request: Request):
+    """Ingest live prices pushed by the local Bloomberg bridge. Auth is handled
+    by the gate middleware via the X-Ingest-Token header."""
+    body = await request.json()
+    raw = body.get("ticks", body)
+    incoming = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            incoming[str(k)] = v
+    elif isinstance(raw, list):
+        for row in raw:
+            if isinstance(row, dict) and "label" in row:
+                incoming[str(row["label"])] = row.get("value")
+    now = datetime.utcnow().isoformat() + "Z"
+    ticks = _get_live_ticks()
+    n = 0
+    for lab, val in incoming.items():
+        if val is None:
+            continue
+        try:
+            fv = float(val)
+        except (TypeError, ValueError):
+            continue
+        prev = ticks.get(lab, {}).get("value")
+        ticks[lab] = {"value": fv, "ts": now, "prev": prev}
+        n += 1
+    _LIVE_META["generated"] = now
+    _LIVE_META["source"] = body.get("source", "bloomberg-bridge")
+    try:
+        with open(_live_ticks_path(), "w") as f:
+            _json.dump({"ticks": ticks, "generated": now,
+                        "source": _LIVE_META["source"]}, f)
+    except Exception:
+        pass
+    return {"ok": True, "updated": n, "generated": now}
+
+
+@app.get("/api/pricing/live")
+async def pricing_live_read():
+    """Return the current live ticks (for the frontend LIVE overlay/badge)."""
+    ticks = _get_live_ticks()
+    gen = _LIVE_META.get("generated")
+    stale = None
+    if gen:
+        try:
+            ts = datetime.fromisoformat(gen.replace("Z", ""))
+            stale = round((datetime.utcnow() - ts).total_seconds(), 1)
+        except ValueError:
+            stale = None
+    return {
+        "ticks": ticks,
+        "count": len(ticks),
+        "generated": gen,
+        "source": _LIVE_META.get("source"),
+        "stale_seconds": stale,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2839,9 +2997,11 @@ def _iir_outage_summary():
 
 def _build_market_context():
     import app.market_intel as mi
-    pricing = _load_pricing_raw()
+    pricing = _pricing_with_live()
     margins = _load_margins_raw()
     ctx = mi.build_context(cot_multi_data, pricing, margins)
+    if pricing.get("live"):
+        ctx["live"] = pricing["live"]
     outages = _iir_outage_summary()
     if outages:
         ctx["outages"] = outages
@@ -2902,7 +3062,7 @@ async def market_crossmarket():
     plus a flows/outages → product-impact linkage."""
     import app.market_intel as mi
     ctx = _build_market_context()
-    pricing = _load_pricing_raw()
+    pricing = _pricing_with_live()
     curves = mi.build_curves(pricing)
     news_hits = mi._news_hits(["crude", "distillate", "gasoline"])
     desk = mi.desk_recommendations(ctx, curves, news_hits)
@@ -2978,6 +3138,7 @@ async def market_crossmarket():
         "desk": desk,
         "linkage": linkage,
         "outages": ctx.get("outages"),
+        "live": ctx.get("live"),
     }
 
 
