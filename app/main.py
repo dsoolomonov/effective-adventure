@@ -2922,6 +2922,15 @@ async def pricing_live_ingest(request: Request):
     """Ingest live prices pushed by the local Bloomberg bridge. Auth is handled
     by the gate middleware via the X-Ingest-Token header."""
     body = await request.json()
+    if body.get("clear"):
+        _get_live_ticks().clear()
+        _LIVE_META["generated"] = None
+        _LIVE_META["source"] = None
+        try:
+            os.remove(_live_ticks_path())
+        except FileNotFoundError:
+            pass
+        return {"ok": True, "cleared": True}
     raw = body.get("ticks", body)
     incoming = {}
     if isinstance(raw, dict):
