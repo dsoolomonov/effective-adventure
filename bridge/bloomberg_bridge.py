@@ -142,22 +142,19 @@ def read_excel(cfg):
             if len(vals) < hidx + 2:
                 continue
             headers = vals[hidx]
-            # last row that has any numeric data = latest / live row
-            last_row = None
-            for row in reversed(vals[hidx + 1:]):
-                if any(_num(c) is not None for c in row):
-                    last_row = row
-                    break
-            if last_row is None:
-                continue
+            data = vals[hidx + 1:]
+            # Each series is its own column and columns can have different
+            # history lengths (ragged), so take the LAST numeric value found in
+            # each labelled column independently rather than one shared row.
             for j, lab in enumerate(headers):
                 if lab is None or str(lab).strip().lower() in skip:
                     continue
-                if j >= len(last_row):
-                    continue
-                v = _num(last_row[j])
-                if v is not None:
-                    ticks[str(lab).strip()] = v
+                for row in reversed(data):
+                    if j < len(row):
+                        v = _num(row[j])
+                        if v is not None:
+                            ticks[str(lab).strip()] = v
+                            break
     return ticks
 
 

@@ -9,7 +9,7 @@
   "workbook": "active",
   "layout": "row",
   "sheets": null,
-  "header_row": 1,
+  "header_row": "auto",
   "skip_labels": ["date", "dates", ""],
   "label_col": 1,
   "value_col": 2,
