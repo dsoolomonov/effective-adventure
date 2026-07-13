@@ -889,6 +889,10 @@
         }
       }
     });
+
+    // Weekly balance & forecast table + trend predictions (EA forecast data)
+    box.appendChild(el("div", { style: { fontSize: "14px", fontWeight: "700", color: C.amber, margin: "18px 0 10px" } }, "📅 WEEKLY BALANCE & FORECAST — actual + predicted stock path"));
+    usWeeklyForecastBlock(box);
   }
 
   // ========== GASOLINE BALANCES (Monthly S&D + Multi-Year Overlay) ==========
@@ -5240,6 +5244,240 @@
   // ==========================================================================
   // Kpler Refinery Trade Flows tab
   // ==========================================================================
+  // ========== LOCAL BALANCES (Energy Aspects gasoline) ==========
+
+  function eaFmt(n, dec) { return n == null ? "–" : Number(n).toLocaleString(undefined, { maximumFractionDigits: dec == null ? 0 : dec, minimumFractionDigits: dec == null ? 0 : dec }); }
+  function eaSign(n, dec) { return n == null ? "–" : (n > 0 ? "+" : "") + eaFmt(n, dec); }
+
+  function eaChipBar(options, active, onPick) {
+    const bar = el("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "12px" } });
+    options.forEach(o => {
+      const isOn = o.value === active;
+      bar.appendChild(el("button", {
+        style: {
+          padding: "5px 12px", borderRadius: "999px", fontSize: "11px", fontWeight: "700", cursor: "pointer",
+          border: `1px solid ${isOn ? C.amber : C.border}`, color: isOn ? "#000" : C.muted,
+          background: isOn ? C.amber : "#0b1220",
+        },
+        onClick: () => onPick(o.value),
+      }, o.label));
+    });
+    return bar;
+  }
+
+  // Weekly US/PADD gasoline balance table + trend predictions (shared by the
+  // Local Balances tab and the Gasoline Stocks tab).
+  function usWeeklyForecastBlock(container) {
+    let area = "US";
+    const wrap = el("div", {});
+    container.appendChild(wrap);
+
+    async function load() {
+      wrap.innerHTML = '<div style="color:#94a3b8;padding:20px;">Loading weekly balance forecast…</div>';
+      let d;
+      try { const r = await fetch(`/api/localbal/usweekly?area=${encodeURIComponent(area)}`); if (!r.ok) throw new Error((await r.json()).detail || r.statusText); d = await r.json(); }
+      catch (e) { wrap.innerHTML = `<div style="color:${C.red};padding:12px;">Weekly forecast unavailable: ${e.message}</div>`; return; }
+      wrap.innerHTML = "";
+
+      const asOf = d.as_of, a = d.data, dates = a.dates;
+      const lastActualIdx = (() => { let k = -1; for (let i = 0; i < dates.length; i++) if (dates[i] <= asOf) k = i; return k; })();
+      const startIdx = Math.max(0, lastActualIdx - 7);
+
+      wrap.appendChild(eaChipBar((d.areas || []).map(x => ({ value: x, label: x })), area, v => { area = v; load(); }));
+
+      const isUS = area === "US";
+      const cols = isUS
+        ? [["production", "Production kb/d"], ["imports", "Imports kb/d"], ["exports", "Exports kb/d"], ["net_imports", "Net imports kb/d"], ["product_supplied", "Product supplied kb/d"], ["stock_change", "Stock chg kb/d"], ["stocks", "Stocks mb"]]
+        : [["production", "Production kb/d"], ["demand", "Demand kb/d"], ["net_imports", "Net imports kb/d"], ["stock_change", "Stock chg kb/d"], ["stocks", "Stocks mb"]];
+
+      const tbl = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11.5px" } });
+      const thr = el("tr", {});
+      thr.appendChild(el("th", { style: { textAlign: "left", padding: "6px 8px", color: C.amber, borderBottom: `1px solid ${C.border}` } }, "Week ending"));
+      cols.forEach(c => thr.appendChild(el("th", { style: { textAlign: "right", padding: "6px 8px", color: C.amber, borderBottom: `1px solid ${C.border}` } }, c[1])));
+      thr.appendChild(el("th", { style: { textAlign: "center", padding: "6px 8px", color: C.amber, borderBottom: `1px solid ${C.border}` } }, ""));
+      tbl.appendChild(thr);
+
+      for (let i = startIdx; i < dates.length; i++) {
+        const isFcst = dates[i] > asOf;
+        const tr = el("tr", { style: { background: isFcst ? "rgba(245,185,15,0.06)" : "transparent" } });
+        tr.appendChild(el("td", { style: { padding: "5px 8px", color: C.text, borderBottom: "1px solid #131c30", fontWeight: i === lastActualIdx ? "800" : "400" } }, dates[i]));
+        cols.forEach(c => {
+          let v = (a[c[0]] || [])[i];
+          if (c[0] === "stocks" && v != null) v = v / 1000;
+          const color = c[0] === "stock_change" ? (v > 0 ? C.green : v < 0 ? C.red : C.muted) : C.text;
+          tr.appendChild(el("td", { style: { padding: "5px 8px", textAlign: "right", color, borderBottom: "1px solid #131c30" } },
+            c[0] === "stocks" ? eaFmt(v, 1) : (c[0] === "stock_change" ? eaSign(v, 0) : eaFmt(v, 0))));
+        });
+        tr.appendChild(el("td", { style: { padding: "5px 8px", textAlign: "center", borderBottom: "1px solid #131c30" } },
+          isFcst ? "FCST" : (i === lastActualIdx ? "LATEST" : "")));
+        const tag = tr.lastChild; tag.style.fontSize = "9px"; tag.style.fontWeight = "800";
+        tag.style.color = isFcst ? C.gold : (i === lastActualIdx ? C.cyan : C.muted);
+        tbl.appendChild(tr);
+      }
+      wrap.appendChild(card(`${area} — Weekly gasoline balance & forecast (as of ${asOf})`, el("div", { style: { overflowX: "auto" } }, tbl)));
+
+      // Stocks chart: history solid, forecast dashed
+      const chartDiv = el("div", { style: { width: "100%", height: "380px" } });
+      wrap.appendChild(card(`${area} — Gasoline stocks: history vs forecast`, chartDiv));
+
+      // Trend read / predictions
+      const st = a.stocks || [], sc = a.stock_change || [];
+      const li = lastActualIdx;
+      const avg = (arr, i0, i1) => { const xs = arr.slice(Math.max(0, i0), i1).filter(v => v != null); return xs.length ? xs.reduce((p, q) => p + q, 0) / xs.length : null; };
+      const prod4 = avg(a.production || [], li - 3, li + 1), prod4p = avg(a.production || [], li - 7, li - 3);
+      const demKey = isUS ? "product_supplied" : "demand";
+      const dem4 = avg(a[demKey] || [], li - 3, li + 1), dem4p = avg(a[demKey] || [], li - 7, li - 3);
+      const fcstChg = sc.slice(li + 1).filter(v => v != null);
+      const cumFcst = fcstChg.length ? fcstChg.reduce((p, q) => p + q, 0) * 7 / 1000 : null;
+      const endStock = st[st.length - 1], nowStock = st[li];
+      const yrAgo = li >= 52 ? st[li - 52] : null;
+      const lines = [];
+      if (nowStock != null) lines.push(`Current ${area} gasoline stocks: ${eaFmt(nowStock / 1000, 1)} mb (week ending ${dates[li]})${yrAgo != null ? `, ${eaSign((nowStock - yrAgo) / 1000, 1)} mb vs a year ago` : ""}.`);
+      if (prod4 != null && prod4p != null) lines.push(`Production trend: 4-week avg ${eaFmt(prod4, 0)} kb/d, ${eaSign(prod4 - prod4p, 0)} kb/d vs the prior 4 weeks — ${prod4 > prod4p ? "runs/blending ramping up" : "output easing"}.`);
+      if (dem4 != null && dem4p != null) lines.push(`Demand trend: 4-week avg ${eaFmt(dem4, 0)} kb/d, ${eaSign(dem4 - dem4p, 0)} kb/d vs the prior 4 weeks — ${dem4 > dem4p ? "seasonal driving demand still building" : "demand momentum fading"}.`);
+      if (cumFcst != null && endStock != null) lines.push(`Forecast (${fcstChg.length} weeks ahead): cumulative ${cumFcst < 0 ? "DRAW" : "BUILD"} of ${eaFmt(Math.abs(cumFcst), 1)} mb, taking stocks to ${eaFmt(endStock / 1000, 1)} mb by ${dates[dates.length - 1]}.`);
+      if (cumFcst != null) lines.push(cumFcst < 0
+        ? "Read: balances tighten into late summer — draws support prompt gasoline cracks and backwardation; upside risk to RBOB spreads if demand holds."
+        : "Read: balances loosen — builds cap prompt gasoline cracks; watch for crack weakness and softer prompt spreads.");
+      const txt = el("div", { style: { color: C.text, fontSize: "12.5px", lineHeight: "1.8" } });
+      lines.forEach(l => txt.appendChild(el("div", {}, "• " + l)));
+      txt.appendChild(el("div", { style: { color: C.muted, fontSize: "10.5px", marginTop: "8px" } }, `Source: ${d.source} weekly product stock forecast (release ${d.release_date}); weeks after ${asOf} are forecast. Trend read is model-derived from the series above.`));
+      wrap.appendChild(card("Trend read & predictions", txt));
+
+      loadPlotly(() => {
+        const histD = dates.slice(0, li + 1), fcstD = dates.slice(li);
+        const histS = st.slice(0, li + 1).map(v => v == null ? null : v / 1000);
+        const fcstS = st.slice(li).map(v => v == null ? null : v / 1000);
+        Plotly.newPlot(chartDiv, [
+          { x: histD, y: histS, name: "Actual/nowcast", line: { color: C.cyan, width: 2 } },
+          { x: fcstD, y: fcstS, name: "EA forecast", line: { color: C.gold, width: 2, dash: "dash" } },
+        ], { ...plotLayout, yaxis: { ...plotLayout.yaxis, title: "mb" }, shapes: [{ type: "line", x0: asOf, x1: asOf, y0: 0, y1: 1, yref: "paper", line: { color: C.muted, width: 1, dash: "dot" } }] }, { responsive: true, displayModeBar: false });
+      });
+    }
+    load();
+    return wrap;
+  }
+
+  async function renderEABal(box) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Local Balances…</div>';
+    let meta, summary;
+    try {
+      const [r1, r2] = await Promise.all([fetch("/api/localbal/regions"), fetch("/api/localbal/summary")]);
+      if (!r1.ok) throw new Error((await r1.json()).detail || r1.statusText);
+      meta = await r1.json(); summary = await r2.json();
+    } catch (e) { box.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; return; }
+    box.innerHTML = "";
+
+    const hdr = el("div", { style: { marginBottom: "14px" } });
+    hdr.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber } }, "🌐 LOCAL BALANCES — Global & US Gasoline (Energy Aspects)"));
+    hdr.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "4px" } }, `As of ${meta.as_of} · EA release ${meta.release_date} · Monthly regional/country balances + weekly US/PADD stock forecast`));
+    box.appendChild(hdr);
+
+    // ── Main things (takeaways) ──
+    const world = (summary.regions || []).find(r => r.code === "WORLD");
+    const mt = el("div", { style: { color: C.text, fontSize: "12.5px", lineHeight: "1.8" } });
+    if (world) {
+      mt.appendChild(el("div", {}, `• World: demand ${eaFmt(world.demand / 1000, 1)} mb/d vs supply ${eaFmt(world.supply / 1000, 1)} mb/d in July — balance ${eaSign(world.balance, 0)} kb/d (${world.balance < 0 ? "global DEFICIT, stock-draw regime" : "global SURPLUS, stock-build regime"}); next 3 months avg ${eaSign(world.balance_next3m, 0)} kb/d.`));
+      if (world.demand_yoy != null) mt.appendChild(el("div", {}, `• Global demand is ${world.demand_yoy > 0 ? "up" : "down"} ${eaFmt(Math.abs(world.demand_yoy), 0)} kb/d YoY.`));
+    }
+    if ((summary.tightening_most || []).length) mt.appendChild(el("div", {}, `• Tightening most vs last year: ${summary.tightening_most.join(", ")}.`));
+    if ((summary.loosening_most || []).length) mt.appendChild(el("div", {}, `• Loosening most vs last year: ${summary.loosening_most.join(", ")}.`));
+    const us = summary.us || {};
+    if (us.stocks_mb != null) mt.appendChild(el("div", {}, `• US gasoline stocks ${eaFmt(us.stocks_mb, 1)} mb (${us.stocks_yoy_mb != null ? eaSign(us.stocks_yoy_mb, 1) + " mb YoY" : ""}); forecast avg ${eaSign(us.fcst_stock_change_kbd, 0)} kb/d over the next ${us.fcst_weeks} weeks — ${us.fcst_stock_change_kbd < 0 ? "draws ahead, constructive for RBOB cracks" : "builds ahead, bearish crack pressure"}.`));
+    box.appendChild(card("Main things — what's changing (as of " + meta.as_of + ")", mt));
+
+    // Region snapshot table
+    const snap = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11.5px" } });
+    const hRow = el("tr", {});
+    ["Region", "Demand kb/d", "Supply kb/d", "Balance kb/d", "Demand YoY", "Bal next 3m", "Bal vs yr-ago"].forEach((h, i) =>
+      hRow.appendChild(el("th", { style: { textAlign: i === 0 ? "left" : "right", padding: "6px 8px", color: C.amber, borderBottom: `1px solid ${C.border}` } }, h)));
+    snap.appendChild(hRow);
+    (summary.regions || []).forEach(r => {
+      const tr = el("tr", { style: r.code === "WORLD" ? { background: "rgba(56,189,248,0.06)" } : {} });
+      tr.appendChild(el("td", { style: { padding: "5px 8px", color: C.text, fontWeight: r.code === "WORLD" ? "800" : "400", borderBottom: "1px solid #131c30" } }, r.name));
+      [[r.demand, 0, C.text], [r.supply, 0, C.text], [r.balance, 0, r.balance < 0 ? C.red : C.green],
+       [r.demand_yoy, 0, r.demand_yoy > 0 ? C.green : C.red], [r.balance_next3m, 0, r.balance_next3m < 0 ? C.red : C.green],
+       [r.balance_vs_yr_ago, 0, r.balance_vs_yr_ago < 0 ? C.red : C.green]].forEach(([v, dec, col], i) =>
+        tr.appendChild(el("td", { style: { padding: "5px 8px", textAlign: "right", color: v == null ? C.muted : col, borderBottom: "1px solid #131c30" } }, i >= 2 ? eaSign(v, dec) : eaFmt(v, dec))));
+      snap.appendChild(tr);
+    });
+    box.appendChild(card("Regional snapshot — July 2026 (negative balance = deficit / stock draw)", el("div", { style: { overflowX: "auto" } }, snap)));
+
+    // ── Region explorer with filters ──
+    let regionCode = "WORLD", countryName = "";
+    const explorer = el("div", {});
+    box.appendChild(explorer);
+
+    async function loadRegion() {
+      explorer.innerHTML = '<div style="color:#94a3b8;padding:20px;">Loading region…</div>';
+      let d;
+      try {
+        const q = `/api/localbal/region?code=${regionCode}` + (countryName ? `&country=${encodeURIComponent(countryName)}` : "");
+        const r = await fetch(q); if (!r.ok) throw new Error((await r.json()).detail || r.statusText); d = await r.json();
+      } catch (e) { explorer.innerHTML = `<div style="color:${C.red};padding:12px;">${e.message}</div>`; return; }
+      explorer.innerHTML = "";
+
+      explorer.appendChild(eaChipBar(meta.regions.map(r => ({ value: r.code, label: r.name })), regionCode, v => { regionCode = v; countryName = ""; loadRegion(); }));
+
+      const clist = (meta.countries || {})[regionCode] || [];
+      if (clist.length) {
+        const selWrap = el("div", { style: { marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px" } });
+        selWrap.appendChild(el("span", { style: { fontSize: "11px", color: C.muted } }, "Country filter:"));
+        const sel = el("select", {
+          style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "5px 8px", fontSize: "12px" },
+          onChange: ev => { countryName = ev.target.value; loadRegion(); },
+        });
+        sel.appendChild(el("option", { value: "" }, `All ${d.name}`));
+        clist.forEach(c => { const o = el("option", { value: c }, c); if (c === countryName) o.selected = true; sel.appendChild(o); });
+        selWrap.appendChild(sel);
+        explorer.appendChild(selWrap);
+      }
+
+      const src = d.country || d;
+      const title = d.country ? `${d.country.name} (${d.name})` : d.name;
+      const ch1 = el("div", { style: { width: "100%", height: "400px" } });
+      explorer.appendChild(card(`${title} — Gasoline demand vs supply (kb/d, monthly; EA forecast beyond mid-2026)`, ch1));
+      const ch2 = el("div", { style: { width: "100%", height: "340px" } });
+      explorer.appendChild(card(`${title} — Balance (supply − demand, kb/d): negative = deficit`, ch2));
+
+      // Monthly 2026 table
+      const dts = src.dates || [], dem = src.demand || [], sup = src.supply || [], bal = src.balance || [];
+      const idx26 = dts.map((dt, i) => [dt, i]).filter(([dt]) => dt.startsWith("2026"));
+      if (idx26.length) {
+        const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11.5px" } });
+        const tr0 = el("tr", {});
+        ["Month", "Supply kb/d", "Demand kb/d", "Balance kb/d", ""].forEach((h, i) =>
+          tr0.appendChild(el("th", { style: { textAlign: i === 0 ? "left" : "right", padding: "6px 8px", color: C.amber, borderBottom: `1px solid ${C.border}` } }, h)));
+        t.appendChild(tr0);
+        idx26.forEach(([dt, i]) => {
+          const isF = dt > d.as_of;
+          const tr = el("tr", { style: { background: isF ? "rgba(245,185,15,0.06)" : "transparent" } });
+          tr.appendChild(el("td", { style: { padding: "5px 8px", color: C.text, borderBottom: "1px solid #131c30" } }, dt.slice(0, 7)));
+          [[sup[i], C.text], [dem[i], C.text], [bal[i], bal[i] < 0 ? C.red : C.green]].forEach(([v, col], k) =>
+            tr.appendChild(el("td", { style: { padding: "5px 8px", textAlign: "right", color: v == null ? C.muted : col, borderBottom: "1px solid #131c30" } }, k === 2 ? eaSign(v, 0) : eaFmt(v, 0))));
+          tr.appendChild(el("td", { style: { padding: "5px 8px", textAlign: "right", fontSize: "9px", fontWeight: "800", color: isF ? C.gold : C.muted, borderBottom: "1px solid #131c30" } }, isF ? "FCST" : ""));
+          t.appendChild(tr);
+        });
+        explorer.appendChild(card(`${title} — 2026 monthly balance table`, el("div", { style: { overflowX: "auto" } }, t)));
+      }
+
+      loadPlotly(() => {
+        Plotly.newPlot(ch1, [
+          { x: dts, y: dem, name: "Demand", line: { color: C.cyan, width: 2 } },
+          { x: dts, y: sup, name: "Supply", line: { color: C.gold, width: 2 } },
+        ], { ...plotLayout, yaxis: { ...plotLayout.yaxis, title: "kb/d" }, shapes: [{ type: "line", x0: d.as_of, x1: d.as_of, y0: 0, y1: 1, yref: "paper", line: { color: C.muted, width: 1, dash: "dot" } }] }, { responsive: true, displayModeBar: false });
+        Plotly.newPlot(ch2, [
+          { x: dts, y: bal, name: "Balance", type: "bar", marker: { color: (bal || []).map(v => (v == null || v >= 0) ? C.green : C.red) } },
+        ], { ...plotLayout, showlegend: false, yaxis: { ...plotLayout.yaxis, title: "kb/d" }, shapes: [{ type: "line", x0: d.as_of, x1: d.as_of, y0: 0, y1: 1, yref: "paper", line: { color: C.muted, width: 1, dash: "dot" } }] }, { responsive: true, displayModeBar: false });
+      });
+    }
+    loadRegion();
+
+    // ── US weekly forecast section ──
+    box.appendChild(el("div", { style: { fontSize: "14px", fontWeight: "700", color: C.amber, margin: "18px 0 10px" } }, "🇺🇸 US WEEKLY GASOLINE BALANCE — actual + forecast by PADD"));
+    usWeeklyForecastBlock(box);
+  }
+
   async function renderKTF(box) {
     box.innerHTML = "";
     const uid = "ktf-" + Date.now() + "-";
@@ -6577,6 +6815,7 @@
         { id: "jodi", label: "JODI Global", icon: "🌍" },
         { id: "cbm", label: "Crude Bal & Margins", icon: "🛢️" },
         { id: "lgb", label: "Local Gasoline Bal", icon: "⛽" },
+        { id: "eabal", label: "Local Balances", icon: "🌐" },
         { id: "gs", label: "Gasoline Stocks", icon: "📊" },
       ]},
       { name: "Refineries", items: [
@@ -6636,6 +6875,7 @@
       if (id === "cbm" && !panes.cbm._loaded) { panes.cbm._loaded = true; renderCBM(panes.cbm); }
       if (id === "margins" && !panes.margins._loaded) { panes.margins._loaded = true; renderMargins(panes.margins); }
       if (id === "lgb" && !panes.lgb._loaded) { panes.lgb._loaded = true; renderLEM(panes.lgb); }
+      if (id === "eabal" && !panes.eabal._loaded) { panes.eabal._loaded = true; renderEABal(panes.eabal); }
       if (id === "gs" && !panes.gs._loaded) { panes.gs._loaded = true; renderGS(panes.gs); }
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }

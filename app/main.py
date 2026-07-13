@@ -12412,6 +12412,136 @@ async def lem_data():
         return json_mod.load(f)
 
 
+# --- Local Balances (Energy Aspects global gasoline + US weekly) ────────────
+_LOCALBAL_CACHE = None
+
+
+def _load_local_balances():
+    """Load the parsed Energy Aspects gasoline balance workbooks."""
+    global _LOCALBAL_CACHE
+    if _LOCALBAL_CACHE is None:
+        path = os.path.join(os.path.dirname(__file__), "local_balances.json")
+        if not os.path.isfile(path):
+            raise HTTPException(status_code=404, detail="Local balances data not available")
+        with open(path) as f:
+            _LOCALBAL_CACHE = _json.load(f)
+    return _LOCALBAL_CACHE
+
+
+def _lb_avg(vals):
+    xs = [v for v in vals if v is not None]
+    return sum(xs) / len(xs) if xs else None
+
+
+@app.get("/api/localbal/regions")
+async def localbal_regions():
+    """List regions/countries available plus release metadata."""
+    d = _load_local_balances()
+    return {
+        "as_of": d["as_of"],
+        "release_date": d["release_date"],
+        "source": d["source"],
+        "regions": [{"code": c, "name": r["name"]} for c, r in d["regions"].items()],
+        "countries": {c: sorted(v["countries"].keys()) for c, v in d["countries"].items()},
+    }
+
+
+@app.get("/api/localbal/region")
+async def localbal_region(code: str = Query("WORLD"), country: str = Query(None)):
+    """Monthly demand/supply/balance series for a region (or one country)."""
+    d = _load_local_balances()
+    reg = d["regions"].get(code)
+    if reg is None:
+        raise HTTPException(status_code=404, detail=f"Unknown region {code}")
+    out = {"as_of": d["as_of"], "code": code, "name": reg["name"],
+           "dates": reg["dates"], "demand": reg["demand"], "supply": reg["supply"],
+           "balance": reg["balance"],
+           "demand_fstart": reg.get("demand_fstart"), "supply_fstart": reg.get("supply_fstart")}
+    if country:
+        creg = d["countries"].get(code, {})
+        c = creg.get("countries", {}).get(country)
+        if c is None:
+            raise HTTPException(status_code=404, detail=f"Unknown country {country}")
+        cd, cs = c.get("demand"), c.get("supply")
+        out["country"] = {
+            "name": country, "dates": creg["dates"], "demand": cd, "supply": cs,
+            "balance": [
+                round(s - dm, 1) if (s is not None and dm is not None) else None
+                for s, dm in zip(cs or [], cd or [])
+            ] if (cs and cd) else None,
+        }
+    return out
+
+
+@app.get("/api/localbal/summary")
+async def localbal_summary():
+    """Key takeaways per region + overall ideas, anchored to the as-of date."""
+    d = _load_local_balances()
+    as_of = d["as_of"]                       # 2026-07-13
+    cur_m = as_of[:7] + "-01"                # 2026-07-01
+    takeaways, tightening = [], []
+    for code, reg in d["regions"].items():
+        dates = reg["dates"]
+        if cur_m not in dates:
+            continue
+        i = dates.index(cur_m)
+        dem, sup, bal = reg["demand"], reg["supply"], reg["balance"]
+        yoy = None
+        if i >= 12 and dem[i] is not None and dem[i - 12]:
+            yoy = round(dem[i] - dem[i - 12], 1)
+        bal_now = _lb_avg(bal[max(0, i - 2):i + 1])
+        bal_next = _lb_avg(bal[i + 1:i + 4])
+        bal_yr_ago = _lb_avg(bal[max(0, i - 14):i - 11]) if i >= 14 else None
+        delta = (round(bal_now - bal_yr_ago, 1)
+                 if bal_now is not None and bal_yr_ago is not None else None)
+        takeaways.append({
+            "code": code, "name": reg["name"],
+            "demand": dem[i], "supply": sup[i], "balance": bal[i],
+            "demand_yoy": yoy,
+            "balance_3m": round(bal_now, 1) if bal_now is not None else None,
+            "balance_next3m": round(bal_next, 1) if bal_next is not None else None,
+            "balance_vs_yr_ago": delta,
+        })
+        if delta is not None and code != "WORLD":
+            tightening.append((delta, reg["name"]))
+    tightening.sort()
+    us = d["us_weekly"]["areas"].get("US", {})
+    us_out = {}
+    if us:
+        dates = us["dates"]
+        idx = [i for i, dt in enumerate(dates) if dt <= as_of]
+        if idx:
+            i = idx[-1]
+            stocks = us.get("stocks", [])
+            us_out = {
+                "last_week": dates[i],
+                "stocks_mb": round(stocks[i] / 1000, 1) if stocks[i] is not None else None,
+                "stocks_yoy_mb": (round((stocks[i] - stocks[i - 52]) / 1000, 1)
+                                  if i >= 52 and stocks[i] is not None and stocks[i - 52] is not None else None),
+                "fcst_weeks": len(dates) - 1 - i,
+                "fcst_stock_change_kbd": _lb_avg((us.get("stock_change") or [])[i + 1:]),
+            }
+    return {
+        "as_of": as_of, "release_date": d["release_date"], "source": d["source"],
+        "regions": takeaways,
+        "tightening_most": [n for _, n in tightening[:3]],
+        "loosening_most": [n for _, n in tightening[-3:]][::-1],
+        "us": us_out,
+    }
+
+
+@app.get("/api/localbal/usweekly")
+async def localbal_usweekly(area: str = Query("US")):
+    """Weekly US/PADD gasoline balance table incl. EA forecast weeks."""
+    d = _load_local_balances()
+    a = d["us_weekly"]["areas"].get(area)
+    if a is None:
+        raise HTTPException(status_code=404, detail=f"Unknown area {area}")
+    return {"as_of": d["as_of"], "release_date": d["release_date"],
+            "source": d["source"], "area": area,
+            "areas": list(d["us_weekly"]["areas"].keys()), "data": a}
+
+
 # ===================================================================
 # Azure SQL Database Integration
 # ===================================================================
