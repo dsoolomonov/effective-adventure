@@ -144,6 +144,48 @@ def read_excel(cfg):
     return ticks
 
 
+def diagnose_excel(cfg):
+    """Print what xlwings can see: which Excel app/workbook is open, its sheet
+    names, and a small top-left sample of each sheet. Helps match the config."""
+    try:
+        import xlwings as xw
+    except Exception as e:  # noqa: BLE001
+        print(f"[diag] xlwings not importable: {e}")
+        return
+    try:
+        n_apps = len(xw.apps)
+    except Exception as e:  # noqa: BLE001
+        print(f"[diag] cannot reach Excel: {e}")
+        return
+    print(f"[diag] Excel instances open: {n_apps}")
+    if n_apps == 0:
+        print("[diag] No Excel is open. Open your Bloomberg workbook in Excel first.")
+        return
+    try:
+        wb = xw.books.active
+    except Exception as e:  # noqa: BLE001
+        print(f"[diag] no active workbook: {e}")
+        return
+    print(f"[diag] active workbook: {wb.name}")
+    print(f"[diag] sheets: {[s.name for s in wb.sheets]}")
+    for sht in wb.sheets:
+        try:
+            vals = sht.used_range.value
+        except Exception:
+            continue
+        if not vals:
+            print(f"[diag]   '{sht.name}': (empty)")
+            continue
+        if not isinstance(vals, list):
+            vals = [[vals]]
+        elif not isinstance(vals[0], list):
+            vals = [vals]
+        rows = len(vals)
+        cols = max(len(r) for r in vals)
+        head = vals[0][:8]
+        print(f"[diag]   '{sht.name}': {rows} rows x {cols} cols | row1: {head}")
+
+
 # ─────────────────────────── blpapi source ─────────────────────────────────
 def read_blpapi(cfg, state):
     """Subscribe to real-time LAST_PRICE for the configured securities and
@@ -204,6 +246,10 @@ def main():
 
     print(f"[bridge] mode={mode}  platform={platform_url}  every {interval}s")
     print("[bridge] Keep the Bloomberg Terminal + workbook open. Ctrl+C to stop.\n")
+
+    if mode == "excel":
+        diagnose_excel(cfg)
+        print()
 
     while True:
         t0 = time.time()

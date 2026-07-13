@@ -10,7 +10,11 @@ where py >nul 2>nul
 if %errorlevel%==0 (set PY=py -3) else (set PY=python)
 
 echo Installing/updating dependencies...
-%PY% -m pip install --quiet --upgrade -r requirements.txt
+if exist requirements.txt (
+  %PY% -m pip install --quiet --upgrade -r requirements.txt
+) else (
+  %PY% -m pip install --quiet --upgrade xlwings
+)
 
 if not exist bridge_config.json (
   echo.
