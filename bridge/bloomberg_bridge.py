@@ -71,6 +71,19 @@ def _num(v):
     return None
 
 
+def _detect_header_row(vals, max_scan=8):
+    """Pick the row that holds the column labels. Prefers a row with many
+    short text tokens (e.g. Date, CO1, CO2…) over a long descriptive title."""
+    best_idx, best_score = 0, -1
+    for i, row in enumerate(vals[:max_scan]):
+        shortish = [c for c in row
+                    if isinstance(c, str) and c.strip() and len(c.strip()) <= 16]
+        score = len(shortish)
+        if score > best_score:
+            best_score, best_idx = score, i
+    return best_idx
+
+
 def read_excel(cfg):
     """Read the open Bloomberg workbook and return {label: value}.
 
@@ -95,7 +108,7 @@ def read_excel(cfg):
 
     layout = cfg.get("layout", "row")
     sheets = cfg.get("sheets")  # None => all sheets
-    header_row = int(cfg.get("header_row", 1))
+    header_cfg = cfg.get("header_row", "auto")
     skip = {s.lower() for s in cfg.get("skip_labels", ["date", "dates", ""])}
     ticks = {}
 
@@ -122,12 +135,16 @@ def read_excel(cfg):
                 if v is not None:
                     ticks[str(lab).strip()] = v
         else:  # "row"
-            if len(vals) < header_row + 1:
+            if header_cfg == "auto":
+                hidx = _detect_header_row(vals)
+            else:
+                hidx = int(header_cfg) - 1
+            if len(vals) < hidx + 2:
                 continue
-            headers = vals[header_row - 1]
+            headers = vals[hidx]
             # last row that has any numeric data = latest / live row
             last_row = None
-            for row in reversed(vals[header_row:]):
+            for row in reversed(vals[hidx + 1:]):
                 if any(_num(c) is not None for c in row):
                     last_row = row
                     break
@@ -182,8 +199,11 @@ def diagnose_excel(cfg):
             vals = [vals]
         rows = len(vals)
         cols = max(len(r) for r in vals)
-        head = vals[0][:8]
-        print(f"[diag]   '{sht.name}': {rows} rows x {cols} cols | row1: {head}")
+        hidx = _detect_header_row(vals)
+        labels = [str(c).strip() for c in vals[hidx]
+                  if isinstance(c, str) and c.strip()][:12]
+        print(f"[diag]   '{sht.name}': {rows}r x {cols}c | header row {hidx + 1} "
+              f"labels: {labels}")
 
 
 # ─────────────────────────── blpapi source ─────────────────────────────────
