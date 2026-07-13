@@ -135,10 +135,22 @@ def read_excel(cfg):
                 if v is not None:
                     ticks[str(lab).strip()] = v
         else:  # "row"
+            auto_idx = _detect_header_row(vals)
             if header_cfg == "auto":
-                hidx = _detect_header_row(vals)
+                hidx = auto_idx
             else:
                 hidx = int(header_cfg) - 1
+                # Self-correct a bad/stale header_row (e.g. pointing at a title
+                # row): if it yields far fewer labels than auto-detection, use
+                # auto instead so the bridge works without editing the config.
+                def _nlabels(i):
+                    if i < 0 or i >= len(vals):
+                        return 0
+                    return sum(1 for c in vals[i]
+                               if isinstance(c, str) and c.strip()
+                               and c.strip().lower() not in skip)
+                if _nlabels(hidx) < _nlabels(auto_idx):
+                    hidx = auto_idx
             if len(vals) < hidx + 2:
                 continue
             headers = vals[hidx]
