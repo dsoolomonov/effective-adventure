@@ -12838,6 +12838,173 @@ async def get_margins():
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# ═══  PLATTS / S&P GLOBAL COMMODITY INSIGHTS (SPGCI)
+# ═══════════════════════════════════════════════════════════════════════════
+# Server-side proxy: user credentials never reach the browser. A short-lived
+# bearer token is cached in-process and refreshed automatically.
+
+_SPGCI_BASE = "https://api.platts.com"
+_SPGCI_UA = "Mozilla/5.0 (compatible; BarrelTerminal/1.0)"
+_SPGCI_TOKEN_CACHE = {"token": None, "expires_at": 0.0}
+
+
+def _spgci_token() -> str:
+    """Return a valid SPGCI bearer token, refreshing when near expiry."""
+    import time as _time
+    import urllib.request as _ur
+    import urllib.parse as _up
+    now = _time.time()
+    if _SPGCI_TOKEN_CACHE["token"] and now < _SPGCI_TOKEN_CACHE["expires_at"] - 60:
+        return _SPGCI_TOKEN_CACHE["token"]
+    user = os.environ.get("SPGCI_USERNAME", "")
+    pw = os.environ.get("SPGCI_PASSWORD", "")
+    if not user or not pw:
+        raise HTTPException(status_code=503, detail="Platts credentials not configured")
+    body = _up.urlencode({"username": user, "password": pw}).encode()
+    req = _ur.Request(_SPGCI_BASE + "/auth/api", data=body, method="POST",
+                      headers={"Content-Type": "application/x-www-form-urlencoded",
+                               "User-Agent": _SPGCI_UA, "Accept": "application/json"})
+    try:
+        with _ur.urlopen(req, timeout=30) as resp:
+            data = _json.loads(resp.read().decode())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Platts auth failed: {e}")
+    tok = data.get("access_token")
+    if not tok:
+        raise HTTPException(status_code=502, detail="Platts auth returned no token")
+    _SPGCI_TOKEN_CACHE["token"] = tok
+    _SPGCI_TOKEN_CACHE["expires_at"] = now + float(data.get("expires_in", 3600))
+    return tok
+
+
+def _spgci_get(path: str, params: dict) -> dict:
+    """GET an SPGCI REST path with the cached bearer token; return parsed JSON."""
+    import urllib.request as _ur
+    import urllib.parse as _up
+    clean = {k: v for k, v in params.items() if v is not None and v != ""}
+    url = _SPGCI_BASE + path
+    if clean:
+        url += "?" + _up.urlencode(clean)
+    tok = _spgci_token()
+    req = _ur.Request(url, headers={"Authorization": f"Bearer {tok}", "Accept": "application/json",
+                                    "User-Agent": _SPGCI_UA})
+    try:
+        with _ur.urlopen(req, timeout=45) as resp:
+            return _json.loads(resp.read().decode())
+    except _ur.HTTPError as e:
+        detail = e.read().decode()[:300] if hasattr(e, "read") else str(e)
+        raise HTTPException(status_code=e.code, detail=f"Platts API error: {detail}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Platts request failed: {e}")
+
+
+@app.get("/api/platts/status")
+async def platts_status():
+    """Report whether Platts credentials are configured and reachable."""
+    configured = bool(os.environ.get("SPGCI_USERNAME") and os.environ.get("SPGCI_PASSWORD"))
+    if not configured:
+        return {"configured": False, "connected": False}
+    try:
+        _spgci_token()
+        return {"configured": True, "connected": True}
+    except HTTPException as e:
+        return {"configured": True, "connected": False, "detail": str(e.detail)}
+
+
+@app.get("/api/platts/mdc")
+async def platts_mdc(subscribed_only: bool = Query(True)):
+    """List Market Data Categories (assessment groups) the account can access."""
+    j = _spgci_get("/market-data/reference-data/v3/mdc",
+                   {"subscribedOnly": "true" if subscribed_only else "false", "pageSize": 500})
+    return {"count": j.get("metadata", {}).get("count"), "results": j.get("results", [])}
+
+
+@app.get("/api/platts/search")
+async def platts_search(q: str = Query(None), mdc: str = Query(None),
+                        commodity: str = Query(None), page: int = Query(1),
+                        page_size: int = Query(25)):
+    """Search assessment symbols / reference metadata."""
+    filters = []
+    if mdc:
+        filters.append(f'mdc: "{mdc}"')
+    if commodity:
+        filters.append(f'commodity: "{commodity}"')
+    params = {"pageSize": page_size, "page": page}
+    if q:
+        params["q"] = q
+    if filters:
+        params["filter"] = " AND ".join(filters)
+    j = _spgci_get("/market-data/reference-data/v3/search", params)
+    return {"count": j.get("metadata", {}).get("count"),
+            "total_pages": j.get("metadata", {}).get("total_pages"),
+            "page": page, "results": j.get("results", [])}
+
+
+@app.get("/api/platts/current")
+async def platts_current(symbols: str = Query(...), bate: str = Query("c")):
+    """Current assessment values for one or more symbols (comma-separated)."""
+    syms = [s.strip() for s in symbols.split(",") if s.strip()]
+    if not syms:
+        raise HTTPException(status_code=400, detail="No symbols provided")
+    sym_list = ",".join(f'"{s}"' for s in syms)
+    filt = f"symbol IN ({sym_list})"
+    if bate:
+        blist = ",".join(f'"{b.strip()}"' for b in bate.split(",") if b.strip())
+        filt += f" AND bate IN ({blist})"
+    j = _spgci_get("/market-data/v3/value/current/symbol", {"filter": filt})
+    return {"results": j.get("results", [])}
+
+
+@app.get("/api/platts/history")
+async def platts_history(symbol: str = Query(...), start: str = Query(None),
+                         end: str = Query(None), bate: str = Query("c"),
+                         page_size: int = Query(5000)):
+    """Historical assessment values for a single symbol."""
+    parts = [f'symbol: "{symbol}"']
+    if bate:
+        blist = ",".join(f'"{b.strip()}"' for b in bate.split(",") if b.strip())
+        parts.append(f"bate IN ({blist})")
+    if start:
+        parts.append(f'assessDate >= "{start}"')
+    if end:
+        parts.append(f'assessDate <= "{end}"')
+    j = _spgci_get("/market-data/v3/value/history/symbol",
+                   {"filter": " AND ".join(parts), "pageSize": page_size})
+    return {"results": j.get("results", [])}
+
+
+@app.get("/api/platts/curve-search")
+async def platts_curve_search(q: str = Query(None), commodity: str = Query(None),
+                              page_size: int = Query(25)):
+    """Search forward curves by keyword / commodity."""
+    params = {"pageSize": page_size}
+    if q:
+        params["q"] = q
+    if commodity:
+        params["filter"] = f'commodity: "{commodity}"'
+    j = _spgci_get("/market-data/reference-data/v3/forward-curve/search", params)
+    return {"count": j.get("metadata", {}).get("count"), "results": j.get("results", [])}
+
+
+@app.get("/api/platts/curve")
+async def platts_curve(code: str = Query(...), page_size: int = Query(60)):
+    """Forward curve contract-by-contract data for a curve code."""
+    j = _spgci_get("/market-data/forward-curve/v3/curve-code",
+                   {"filter": f'curve_code: "{code}"', "pageSize": page_size})
+    return {"results": j.get("results", {})}
+
+
+@app.get("/api/platts/news")
+async def platts_news(q: str = Query(None), page_size: int = Query(20)):
+    """Latest Platts news / market commentary headlines."""
+    params = {"pageSize": page_size, "sort": "updatedDate:desc"}
+    if q:
+        params["q"] = q
+    j = _spgci_get("/news-insights/v1/search", params)
+    return {"count": j.get("metadata", {}).get("count"), "results": j.get("results", [])}
+
+
 # --- Serve Frontend Static Files ---
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 

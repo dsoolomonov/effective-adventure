@@ -5061,6 +5061,267 @@
   function eaFmt(n, dec) { return n == null ? "–" : Number(n).toLocaleString(undefined, { maximumFractionDigits: dec == null ? 0 : dec, minimumFractionDigits: dec == null ? 0 : dec }); }
   function eaSign(n, dec) { return n == null ? "–" : (n > 0 ? "+" : "") + eaFmt(n, dec); }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // PLATTS / S&P GLOBAL COMMODITY INSIGHTS
+  // ═══════════════════════════════════════════════════════════════════════
+  const PLATTS_BENCHMARKS = [
+    { sym: "PCAAS00", name: "Dated Brent", uom: "$/bbl" },
+    { sym: "POABC00", name: "Gasoil FOB Singapore", uom: "$/bbl" },
+    { sym: "PJAAU00", name: "Jet CIF NWE", uom: "$/mt" },
+    { sym: "PAAAL00", name: "Naphtha CIF NWE", uom: "$/mt" },
+    { sym: "AAQZV00", name: "Gasoline Eurobob FOB AR", uom: "$/mt" },
+    { sym: "PUMFD00", name: "Marine Fuel 0.5% FOB Rdam", uom: "$/mt" },
+  ];
+
+  async function plattsFetch(path) {
+    const r = await fetch(path);
+    if (!r.ok) {
+      let msg = r.statusText;
+      try { const j = await r.json(); msg = j.detail || j.error || msg; } catch (e) {}
+      throw new Error(msg);
+    }
+    return r.json();
+  }
+
+  function plattsSection(box, title, subtitle) {
+    const s = el("div", { style: { marginBottom: "24px" } });
+    s.appendChild(el("h3", { style: { color: C.amber, margin: "0 0 4px 0", fontSize: "16px", borderBottom: `1px solid ${C.border}`, paddingBottom: "6px" } }, title));
+    if (subtitle) s.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: "0 0 10px 0" } }, subtitle));
+    box.appendChild(s);
+    return s;
+  }
+
+  async function renderPlatts(box) {
+    box.innerHTML = "";
+
+    // ── Header + connection badge ──
+    const hdr = el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "18px" } });
+    const hl = el("div", {});
+    hl.appendChild(el("h2", { style: { color: C.amber, margin: "0 0 6px 0", fontSize: "20px" } }, "🅿️ Platts — S&P Global Commodity Insights"));
+    hl.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: 0 } }, "Live Platts assessments, forward curves & market commentary · credentials stay server-side"));
+    hdr.appendChild(hl);
+    const badge = el("span", { style: { fontSize: "10.5px", fontWeight: "700", letterSpacing: "1px", padding: "5px 10px", borderRadius: "999px", border: `1px solid ${C.border}`, color: C.muted, whiteSpace: "nowrap" } }, "○ CHECKING…");
+    hdr.appendChild(badge);
+    box.appendChild(hdr);
+
+    plattsFetch("/api/platts/status").then(st => {
+      if (st.connected) { badge.textContent = "● CONNECTED"; badge.style.color = C.green; badge.style.borderColor = C.green + "88"; }
+      else if (st.configured) { badge.textContent = "○ AUTH ERROR"; badge.style.color = C.red; badge.style.borderColor = C.red + "88"; }
+      else { badge.textContent = "○ NOT CONFIGURED"; badge.style.color = C.amber; }
+    }).catch(() => { badge.textContent = "○ OFFLINE"; badge.style.color = C.red; });
+
+    // ══ Benchmarks ══
+    const benSec = plattsSection(box, "📊 Key Platts Benchmarks (latest assessment)", "Click a row to load its price history below");
+    const benCard = card("Benchmarks", el("div", { style: { color: C.muted, fontSize: "12px", padding: "8px" } }, "Loading…"));
+    benSec.appendChild(benCard);
+
+    // ══ History chart target ══
+    const histSec = plattsSection(box, "📈 Assessment History", "Select a benchmark above or search a symbol below");
+    const histTitle = el("div", { style: { color: C.text, fontSize: "13px", fontWeight: "700", marginBottom: "8px" } }, "No symbol selected");
+    const histChart = el("div", { style: { height: "340px" } });
+    histSec.appendChild(card(histTitle, histChart));
+
+    let plotReady = false;
+    loadPlotly(() => { plotReady = true; });
+
+    async function showHistory(sym, label, uom) {
+      histTitle.textContent = `${label || sym} (${sym})${uom ? " · " + uom : ""}`;
+      histChart.innerHTML = `<div style="color:${C.muted};padding:40px;text-align:center;">Loading history…</div>`;
+      try {
+        const start = new Date(Date.now() - 400 * 864e5).toISOString().slice(0, 10);
+        const j = await plattsFetch(`/api/platts/history?symbol=${encodeURIComponent(sym)}&start=${start}&bate=c&page_size=5000`);
+        const res = (j.results || []).filter(r => r.symbol === sym);
+        let pts = [];
+        res.forEach(r => (r.data || []).forEach(d => pts.push([d.assessDate, d.value])));
+        pts = pts.filter(p => p[1] != null).sort((a, b) => a[0] < b[0] ? -1 : 1);
+        if (!pts.length) { histChart.innerHTML = `<div style="color:${C.muted};padding:40px;text-align:center;">No history returned</div>`; return; }
+        const draw = () => Plotly.newPlot(histChart, [{
+          x: pts.map(p => p[0].slice(0, 10)), y: pts.map(p => p[1]),
+          mode: "lines", line: { color: C.amber, width: 1.8 }, name: sym,
+          fill: "tozeroy", fillcolor: "rgba(56,189,248,0.06)",
+        }], { ...plotLayout, yaxis: { ...plotLayout.yaxis, title: uom || "" } }, { responsive: true });
+        if (plotReady) draw(); else loadPlotly(() => { plotReady = true; draw(); });
+      } catch (e) {
+        histChart.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`;
+      }
+    }
+
+    // Load benchmark current values
+    (async () => {
+      try {
+        const syms = PLATTS_BENCHMARKS.map(b => b.sym).join(",");
+        const j = await plattsFetch(`/api/platts/current?symbols=${syms}&bate=c,h,l`);
+        const bySym = {};
+        (j.results || []).forEach(r => { bySym[r.symbol] = r.data || []; });
+        const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "12px" } });
+        const hr = el("tr", {});
+        ["Benchmark", "Symbol", "Close", "High", "Low", "Date"].forEach((h, i) =>
+          hr.appendChild(el("th", { style: { textAlign: i === 0 ? "left" : "right", padding: "6px 10px", color: C.muted, borderBottom: `1px solid ${C.border}` } }, h)));
+        t.appendChild(hr);
+        PLATTS_BENCHMARKS.forEach(b => {
+          const data = bySym[b.sym] || [];
+          const pick = code => { const d = data.find(x => x.bate === code); return d ? d.value : null; };
+          const dt = data.length ? (data[0].assessDate || "").slice(0, 10) : "";
+          const tr = el("tr", { style: { cursor: "pointer" }, onClick: () => showHistory(b.sym, b.name, b.uom) });
+          tr.addEventListener("mouseenter", () => tr.style.background = "rgba(56,189,248,0.06)");
+          tr.addEventListener("mouseleave", () => tr.style.background = "transparent");
+          tr.appendChild(el("td", { style: { padding: "6px 10px", color: C.text, fontWeight: "600", borderBottom: `1px solid ${C.border}22` } }, `${b.name} · ${b.uom}`));
+          tr.appendChild(el("td", { style: { textAlign: "right", padding: "6px 10px", color: C.blue, fontVariantNumeric: "tabular-nums", borderBottom: `1px solid ${C.border}22` } }, b.sym));
+          [pick("c"), pick("h"), pick("l")].forEach(v =>
+            tr.appendChild(el("td", { style: { textAlign: "right", padding: "6px 10px", color: C.text, fontVariantNumeric: "tabular-nums", borderBottom: `1px solid ${C.border}22` } }, v == null ? "–" : eaFmt(v, 2))));
+          tr.appendChild(el("td", { style: { textAlign: "right", padding: "6px 10px", color: C.muted, borderBottom: `1px solid ${C.border}22` } }, dt));
+          t.appendChild(tr);
+        });
+        benCard.replaceChild(t, benCard.lastChild);
+        // Auto-load first benchmark history
+        showHistory(PLATTS_BENCHMARKS[0].sym, PLATTS_BENCHMARKS[0].name, PLATTS_BENCHMARKS[0].uom);
+      } catch (e) {
+        benCard.replaceChild(el("div", { style: { color: C.red, padding: "10px", fontSize: "12px" } }, "Error loading benchmarks: " + e.message), benCard.lastChild);
+      }
+    })();
+
+    // ══ Symbol search ══
+    const searchSec = plattsSection(box, "🔎 Symbol Search", "Search Platts' assessment universe by keyword (e.g. 'Dubai', 'ULSD', 'RBOB'). Click a result to chart it.");
+    const searchRow = el("div", { style: { display: "flex", gap: "8px", marginBottom: "10px" } });
+    const searchInput = el("input", { placeholder: "Search assessments…", style: { flex: "1", padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: "6px", color: C.text, fontSize: "13px" } });
+    const searchBtn = el("button", { style: { padding: "8px 18px", background: C.amber, color: "#04121c", border: "none", borderRadius: "6px", fontWeight: "700", cursor: "pointer", fontSize: "13px" } }, "Search");
+    searchRow.appendChild(searchInput); searchRow.appendChild(searchBtn);
+    searchSec.appendChild(searchRow);
+    const searchOut = el("div", {});
+    searchSec.appendChild(searchOut);
+
+    async function doSearch() {
+      const q = searchInput.value.trim();
+      if (!q) return;
+      searchOut.innerHTML = `<div style="color:${C.muted};padding:12px;font-size:12px;">Searching…</div>`;
+      try {
+        const j = await plattsFetch(`/api/platts/search?q=${encodeURIComponent(q)}&page_size=40`);
+        const rows = j.results || [];
+        if (!rows.length) { searchOut.innerHTML = `<div style="color:${C.muted};padding:12px;font-size:12px;">No matches.</div>`; return; }
+        searchOut.innerHTML = "";
+        searchOut.appendChild(el("div", { style: { color: C.muted, fontSize: "11px", marginBottom: "6px" } }, `${j.count != null ? j.count.toLocaleString() : rows.length} matches · showing ${rows.length}`));
+        const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11.5px" } });
+        const hr = el("tr", {});
+        ["Symbol", "Description", "Commodity", "Freq", "UOM"].forEach((h, i) =>
+          hr.appendChild(el("th", { style: { textAlign: "left", padding: "5px 8px", color: C.muted, borderBottom: `1px solid ${C.border}` } }, h)));
+        t.appendChild(hr);
+        rows.forEach(r => {
+          const tr = el("tr", { style: { cursor: "pointer" }, onClick: () => { showHistory(r.symbol, r.description, r.uom); histSec.scrollIntoView({ behavior: "smooth", block: "start" }); } });
+          tr.addEventListener("mouseenter", () => tr.style.background = "rgba(56,189,248,0.06)");
+          tr.addEventListener("mouseleave", () => tr.style.background = "transparent");
+          tr.appendChild(el("td", { style: { padding: "5px 8px", color: C.blue, fontWeight: "700", borderBottom: `1px solid ${C.border}22` } }, r.symbol));
+          tr.appendChild(el("td", { style: { padding: "5px 8px", color: C.text, borderBottom: `1px solid ${C.border}22` } }, r.description || ""));
+          tr.appendChild(el("td", { style: { padding: "5px 8px", color: C.muted, borderBottom: `1px solid ${C.border}22` } }, r.commodity || ""));
+          tr.appendChild(el("td", { style: { padding: "5px 8px", color: C.muted, borderBottom: `1px solid ${C.border}22` } }, r.assessment_frequency || ""));
+          tr.appendChild(el("td", { style: { padding: "5px 8px", color: C.muted, borderBottom: `1px solid ${C.border}22` } }, r.uom || ""));
+          t.appendChild(tr);
+        });
+        const wrap = el("div", { style: { overflowX: "auto", maxHeight: "360px", overflowY: "auto" } });
+        wrap.appendChild(t);
+        searchOut.appendChild(wrap);
+      } catch (e) {
+        searchOut.innerHTML = `<div style="color:${C.red};padding:12px;font-size:12px;">Error: ${e.message}</div>`;
+      }
+    }
+    searchBtn.addEventListener("click", doSearch);
+    searchInput.addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+
+    // ══ Forward curves ══
+    const curveSec = plattsSection(box, "📉 Forward Curves", "Search a forward curve (e.g. 'Brent', 'Gasoil') and chart its term structure.");
+    const curveRow = el("div", { style: { display: "flex", gap: "8px", marginBottom: "10px" } });
+    const curveInput = el("input", { placeholder: "Search forward curves…", value: "Brent", style: { flex: "1", padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: "6px", color: C.text, fontSize: "13px" } });
+    const curveBtn = el("button", { style: { padding: "8px 18px", background: C.amber, color: "#04121c", border: "none", borderRadius: "6px", fontWeight: "700", cursor: "pointer", fontSize: "13px" } }, "Search");
+    curveRow.appendChild(curveInput); curveRow.appendChild(curveBtn);
+    curveSec.appendChild(curveRow);
+    const curveList = el("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" } });
+    curveSec.appendChild(curveList);
+    const curveChart = el("div", { style: { height: "320px" } });
+    curveSec.appendChild(card("Term structure", curveChart));
+
+    async function drawCurve(code, name) {
+      curveChart.innerHTML = `<div style="color:${C.muted};padding:40px;text-align:center;">Loading ${name}…</div>`;
+      try {
+        const j = await plattsFetch(`/api/platts/curve?code=${encodeURIComponent(code)}&page_size=80`);
+        const res = j.results || {};
+        const rowsArr = Array.isArray(res) ? res : (res.symbol_data || []);
+        const closeOf = d => {
+          if (d.value != null) return d.value;
+          const cs = (d.data || []).filter(x => x.bate === "c" && x.value != null).sort((a, b) => a.assessDate < b.assessDate ? 1 : -1);
+          return cs.length ? cs[0].value : null;
+        };
+        const pts = rowsArr
+          .map(d => ({ label: d.contract_label || d.contractLabel || d.symbol, pos: d.derivative_position != null ? d.derivative_position : 0, value: closeOf(d) }))
+          .filter(p => p.value != null)
+          .sort((a, b) => a.pos - b.pos);
+        if (!pts.length) { curveChart.innerHTML = `<div style="color:${C.muted};padding:40px;text-align:center;">No curve data</div>`; return; }
+        const draw = () => Plotly.newPlot(curveChart, [{
+          x: pts.map(p => p.label), y: pts.map(p => p.value),
+          mode: "lines+markers", line: { color: C.purple, width: 2 }, marker: { size: 6 }, name: name,
+        }], { ...plotLayout, xaxis: { ...plotLayout.xaxis, type: "category" }, yaxis: { ...plotLayout.yaxis, title: "" } }, { responsive: true });
+        if (plotReady) draw(); else loadPlotly(() => { plotReady = true; draw(); });
+      } catch (e) {
+        curveChart.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function searchCurves() {
+      const q = curveInput.value.trim();
+      curveList.innerHTML = `<span style="color:${C.muted};font-size:12px;">Searching…</span>`;
+      try {
+        const j = await plattsFetch(`/api/platts/curve-search?q=${encodeURIComponent(q)}&page_size=20`);
+        const rows = (j.results || []).filter(r => r.curve_code);
+        if (!rows.length) { curveList.innerHTML = `<span style="color:${C.muted};font-size:12px;">No curves found.</span>`; return; }
+        curveList.innerHTML = "";
+        rows.forEach((r, i) => {
+          const chip = el("button", { style: { padding: "5px 12px", borderRadius: "999px", fontSize: "11px", fontWeight: "600", cursor: "pointer", background: C.card, border: `1px solid ${C.border}`, color: C.text } }, r.curve_name || r.curve_code);
+          chip.addEventListener("click", () => { Array.from(curveList.children).forEach(c => { c.style.background = C.card; c.style.borderColor = C.border; }); chip.style.background = C.purple + "33"; chip.style.borderColor = C.purple; drawCurve(r.curve_code, r.curve_name || r.curve_code); });
+          curveList.appendChild(chip);
+          if (i === 0) chip.click();
+        });
+      } catch (e) {
+        curveList.innerHTML = `<span style="color:${C.red};font-size:12px;">Error: ${e.message}</span>`;
+      }
+    }
+    curveBtn.addEventListener("click", searchCurves);
+    curveInput.addEventListener("keydown", e => { if (e.key === "Enter") searchCurves(); });
+    searchCurves();
+
+    // ══ News ══
+    const newsSec = plattsSection(box, "📰 Platts Market Commentary & News", "Latest headlines from Platts news & insights");
+    const newsRow = el("div", { style: { display: "flex", gap: "8px", marginBottom: "10px" } });
+    const newsInput = el("input", { placeholder: "Filter news (e.g. 'gasoline', 'OPEC')…", style: { flex: "1", padding: "8px 12px", background: C.card, border: `1px solid ${C.border}`, borderRadius: "6px", color: C.text, fontSize: "13px" } });
+    const newsBtn = el("button", { style: { padding: "8px 18px", background: C.amber, color: "#04121c", border: "none", borderRadius: "6px", fontWeight: "700", cursor: "pointer", fontSize: "13px" } }, "Search");
+    newsRow.appendChild(newsInput); newsRow.appendChild(newsBtn);
+    newsSec.appendChild(newsRow);
+    const newsOut = el("div", {});
+    newsSec.appendChild(newsOut);
+
+    async function loadNews() {
+      const q = newsInput.value.trim();
+      newsOut.innerHTML = `<div style="color:${C.muted};padding:12px;font-size:12px;">Loading…</div>`;
+      try {
+        const j = await plattsFetch(`/api/platts/news?page_size=25${q ? "&q=" + encodeURIComponent(q) : ""}`);
+        const rows = j.results || [];
+        if (!rows.length) { newsOut.innerHTML = `<div style="color:${C.muted};padding:12px;font-size:12px;">No headlines.</div>`; return; }
+        newsOut.innerHTML = "";
+        rows.forEach(r => {
+          const item = el("div", { style: { padding: "8px 12px", borderBottom: `1px solid ${C.border}22`, display: "flex", justifyContent: "space-between", gap: "12px" } });
+          const link = el("a", { href: r.documentUrl || "#", target: "_blank", style: { color: C.text, fontSize: "12.5px", textDecoration: "none", flex: "1", lineHeight: "1.4" } }, r.headline || "(untitled)");
+          link.addEventListener("mouseenter", () => link.style.color = C.amber);
+          link.addEventListener("mouseleave", () => link.style.color = C.text);
+          item.appendChild(link);
+          item.appendChild(el("span", { style: { color: C.muted, fontSize: "10.5px", whiteSpace: "nowrap" } }, (r.updatedDate || "").slice(0, 16).replace("T", " ")));
+          newsOut.appendChild(item);
+        });
+      } catch (e) {
+        newsOut.innerHTML = `<div style="color:${C.red};padding:12px;font-size:12px;">Error: ${e.message}</div>`;
+      }
+    }
+    newsBtn.addEventListener("click", loadNews);
+    newsInput.addEventListener("keydown", e => { if (e.key === "Enter") loadNews(); });
+    loadNews();
+  }
+
   function eaChipBar(options, active, onPick) {
     const bar = el("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "12px" } });
     options.forEach(o => {
@@ -6635,6 +6896,9 @@
         { id: "gseu", label: "Genscape Europe", icon: "🇪🇺" },
         { id: "iir", label: "IIR Turnarounds", icon: "🔧" },
       ]},
+      { name: "Platts / SPGCI", items: [
+        { id: "platts", label: "Platts", icon: "🅿️" },
+      ]},
       { name: "Flows & Data", items: [
         { id: "kpler", label: "Kpler Flows", icon: "🚢" },
         { id: "ktf", label: "Kpler Refinery Flows", icon: "🏭" },
@@ -6689,6 +6953,7 @@
       if (id === "lgb" && !panes.lgb._loaded) { panes.lgb._loaded = true; renderLEM(panes.lgb); }
       if (id === "eabal" && !panes.eabal._loaded) { panes.eabal._loaded = true; renderEABal(panes.eabal); }
       if (id === "gs" && !panes.gs._loaded) { panes.gs._loaded = true; renderGS(panes.gs); }
+      if (id === "platts" && !panes.platts._loaded) { panes.platts._loaded = true; renderPlatts(panes.platts); }
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }
       if (id === "ksql" && !panes.ksql._loaded) { panes.ksql._loaded = true; renderKSQL(panes.ksql); }
