@@ -97,8 +97,17 @@ def read_excel(cfg):
     import xlwings as xw
 
     wb_name = cfg.get("workbook", "active")
+    pos_wb = ((cfg.get("positioning") or {}).get("workbook") or "")
+    pos_base = os.path.basename(pos_wb) if pos_wb else ""
     if wb_name in ("active", "", None):
         wb = xw.books.active
+        # If the focused book is the positioning workbook, read prices from a
+        # different open book instead (so having both open doesn't clobber prices).
+        if pos_base and wb is not None and wb.name == pos_base:
+            for b in xw.books:
+                if b.name != pos_base:
+                    wb = b
+                    break
     else:
         # attach to an already-open book by name, else open it
         try:
@@ -422,6 +431,12 @@ def main():
     state = {}
 
     print(f"[bridge] mode={mode}  platform={platform_url}  every {interval}s")
+    if pos_on:
+        print(f"[bridge] positioning: ON  workbook='{pos_cfg.get('workbook')}'  "
+              f"sheet='{pos_cfg.get('sheet', 'Energy')}'")
+    else:
+        print("[bridge] positioning: OFF (add a \"positioning\" block to "
+              "bridge_config.json to enable)")
     print("[bridge] Keep the Bloomberg Terminal + workbook open. Ctrl+C to stop.\n")
 
     if mode == "excel":
