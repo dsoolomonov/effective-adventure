@@ -445,11 +445,20 @@ def main():
 
     while True:
         t0 = time.time()
-        try:
-            ticks = read_excel(cfg) if mode == "excel" else read_blpapi(cfg, state)
-        except Exception as e:  # noqa: BLE001
-            print(f"[bridge] read error: {e}")
-            ticks = {}
+        ticks = {}
+        last_err = None
+        # Excel is often busy recalculating live Bloomberg (RTD) cells exactly when
+        # we read — that raises "Call was rejected by callee". Retry a few times.
+        for attempt in range(4):
+            try:
+                ticks = read_excel(cfg) if mode == "excel" else read_blpapi(cfg, state)
+                last_err = None
+                break
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                time.sleep(0.4)
+        if last_err is not None and not ticks:
+            print(f"[bridge] read error: {last_err}")
 
         if ticks:
             res = push(platform_url, token, ticks, cfg.get("source", "bloomberg-bridge"))
