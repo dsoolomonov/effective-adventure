@@ -4127,6 +4127,244 @@
   // ═══  CRUDE BALANCES & MARGINS (NWE/MED)
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // ── Global crude balances dashboard (monthly supply/demand/balance, runs,
+  // quality, OPEC+, stocks, price outlook). Rendered at the top of the
+  // Crude Bal & Margins tab. Source branding intentionally omitted.
+  async function renderCrudeBalances(container) {
+    let d;
+    try {
+      const r = await fetch("/api/crude-balances");
+      if (!r.ok) return;
+      d = await r.json();
+    } catch (e) { return; }
+    if (!d || !d.months) return;
+    await new Promise(res => loadPlotly(res));
+
+    const M = d.months;
+    const ci = M.indexOf(d.current_month);
+    const cur = ci >= 0 ? ci : M.length - 1;
+    const fcIdx = M.indexOf(d.forecast_from);
+    const mb = v => (v == null ? null : v / 1000);
+    const REG_COL = {
+      "North America": C.cyan, "Latin America": "#f59e0b", "Europe": C.blue,
+      "FSU": C.purple, "North Africa": "#eab308", "Africa": "#f97316",
+      "Middle East": C.green, "Asia": C.red,
+    };
+    // Forecast shading for month-indexed charts
+    const fcShapes = () => (fcIdx > 0 ? [{
+      type: "rect", xref: "x", yref: "paper",
+      x0: M[fcIdx], x1: M[M.length - 1], y0: 0, y1: 1,
+      fillcolor: "rgba(148,163,184,0.07)", line: { width: 0 }, layer: "below",
+    }] : []);
+    const fcAnno = () => (fcIdx > 0 ? [{
+      x: M[fcIdx], y: 1, yref: "paper", xref: "x", yanchor: "bottom",
+      text: "forecast →", showarrow: false, font: { size: 10, color: C.muted },
+    }] : []);
+    const monthLabel = m => { const [y, mm] = m.split("-"); return ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][+mm] + " " + y.slice(2); };
+
+    // ── Header ──
+    container.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.gold, marginBottom: "3px" } },
+      "🛢️ GLOBAL CRUDE BALANCES"));
+    container.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "14px" } },
+      `Monthly crude & condensate supply / demand / balance, refinery runs, OPEC+ output and price outlook · ${monthLabel(M[0])} → ${monthLabel(M[M.length - 1])} · latest actual ${monthLabel(d.current_month)}, thereafter forecast (kb/d unless noted)`));
+
+    // ── KPI row ──
+    const g = d.global;
+    const bal = g.balance[cur];
+    const brent = d.prices["Dated Brent"] ? d.prices["Dated Brent"][d.sd_months.indexOf(d.current_month)] : null;
+    const days = d.stocks_mmb["OECD stocks Days Cover"] ? d.stocks_mmb["OECD stocks Days Cover"][d.sd_months.indexOf(d.current_month)] : null;
+    container.appendChild(card("Snapshot — " + monthLabel(d.current_month), statRow([
+      ["Crude Supply", mb(g.supply[cur]).toFixed(2) + " mb/d", C.text],
+      ["Crude Demand", mb(g.demand[cur]).toFixed(2) + " mb/d", C.text],
+      [bal >= 0 ? "Surplus" : "Deficit", (bal >= 0 ? "+" : "") + mb(bal).toFixed(2) + " mb/d", bal >= 0 ? C.green : C.red],
+      ["Refinery Runs", mb(g.refinery_intake[cur]).toFixed(2) + " mb/d", C.cyan],
+      ["OECD Days Cover", days != null ? days.toFixed(1) + "d" : "—", C.text],
+      ["Dated Brent", brent != null ? "$" + brent.toFixed(1) : "—", C.gold],
+    ])));
+
+    // ── Chart 1: Global balance ──
+    const c1 = el("div", { id: "cb-global", style: { width: "100%", height: "440px" } });
+    container.appendChild(card("Global Crude Balance — supply vs demand (lines) & balance (bars), mb/d", c1));
+    const balColors = M.map((_, i) => (g.balance[i] >= 0 ? C.green : C.red));
+    Plotly.newPlot("cb-global", [
+      { x: M, y: g.balance.map(mb), type: "bar", name: "Balance", marker: { color: balColors, opacity: 0.55 } },
+      { x: M, y: g.supply.map(mb), name: "Supply", line: { color: C.cyan, width: 2 } },
+      { x: M, y: g.demand.map(mb), name: "Demand", line: { color: C.gold, width: 2 } },
+    ], {
+      ...plotLayout, height: 440, barmode: "relative",
+      yaxis: { ...plotLayout.yaxis, title: { text: "mb/d", font: { size: 12 } } },
+      xaxis: { ...plotLayout.xaxis, type: "category", nticks: 20 },
+      shapes: fcShapes(), annotations: fcAnno(),
+    }, { responsive: true, displaylogo: false });
+
+    // ── Chart 2: Regional balance (with region filter) ──
+    const head2 = el("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px", flexWrap: "wrap" } });
+    head2.appendChild(el("span", { style: { fontSize: "11.5px", fontWeight: "700", color: C.amber, textTransform: "uppercase", letterSpacing: "1.2px" } }, "Regional Crude Balance"));
+    const regSel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "4px", padding: "4px 10px", fontSize: "12px" } });
+    ["ALL (current month)", ...d.regions].forEach(r => { const o = document.createElement("option"); o.value = r; o.textContent = r; regSel.appendChild(o); });
+    head2.appendChild(regSel);
+    const c2 = el("div", { id: "cb-region", style: { width: "100%", height: "420px" } });
+    const cardR = card(null, el("div", {}, [head2, c2]));
+    container.appendChild(cardR);
+    function drawRegion(sel) {
+      if (sel.startsWith("ALL")) {
+        const vals = d.regions.map(r => mb(d.balance[r][cur]));
+        Plotly.newPlot("cb-region", [{
+          x: d.regions, y: vals, type: "bar",
+          marker: { color: vals.map(v => (v >= 0 ? C.green : C.red)) },
+          text: vals.map(v => (v >= 0 ? "+" : "") + v.toFixed(1)), textposition: "outside",
+        }], {
+          ...plotLayout, height: 420, showlegend: false,
+          title: { text: "Net crude balance by region — " + monthLabel(d.current_month) + " (mb/d, surplus vs deficit)", font: { size: 12, color: C.muted } },
+          yaxis: { ...plotLayout.yaxis, title: { text: "mb/d", font: { size: 12 } } },
+          xaxis: { ...plotLayout.xaxis },
+        }, { responsive: true, displaylogo: false });
+      } else {
+        const col = REG_COL[sel] || C.cyan;
+        Plotly.newPlot("cb-region", [
+          { x: M, y: d.balance[sel].map(mb), type: "bar", name: "Balance", marker: { color: M.map((_, i) => (d.balance[sel][i] >= 0 ? C.green : C.red)), opacity: 0.5 } },
+          { x: M, y: d.supply[sel].map(mb), name: "Supply", line: { color: C.cyan, width: 2 } },
+          { x: M, y: d.demand[sel].map(mb), name: "Demand", line: { color: C.gold, width: 2 } },
+        ], {
+          ...plotLayout, height: 420, barmode: "relative",
+          title: { text: sel + " — crude supply / demand / balance (mb/d)", font: { size: 12, color: C.muted } },
+          yaxis: { ...plotLayout.yaxis, title: { text: "mb/d", font: { size: 12 } } },
+          xaxis: { ...plotLayout.xaxis, type: "category", nticks: 20 },
+          shapes: fcShapes(), annotations: fcAnno(),
+        }, { responsive: true, displaylogo: false });
+      }
+    }
+    regSel.addEventListener("change", () => drawRegion(regSel.value));
+    drawRegion("ALL (current month)");
+
+    // ── Chart 3: Refinery runs ──
+    const c3 = el("div", { id: "cb-runs", style: { width: "100%", height: "420px" } });
+    container.appendChild(card("Global Refinery Runs (crude intake, mb/d)", c3));
+    Plotly.newPlot("cb-runs", [
+      { x: M, y: g.refinery_intake.map(mb), name: "Global Runs", line: { color: C.cyan, width: 2.5 }, fill: "tozeroy", fillcolor: "rgba(34,211,238,0.10)" },
+    ], {
+      ...plotLayout, height: 420, showlegend: false,
+      yaxis: { ...plotLayout.yaxis, title: { text: "mb/d", font: { size: 12 } } },
+      xaxis: { ...plotLayout.xaxis, type: "category", nticks: 20 },
+      shapes: fcShapes(), annotations: fcAnno(),
+    }, { responsive: true, displaylogo: false });
+
+    // Regional runs (separate monthly window)
+    if (d.runs && d.runs_months && d.runs_months.length) {
+      const RM = d.runs_months;
+      const runRegs = Object.keys(d.runs).filter(k => k !== "Total" && k !== "China" && k !== "Rest of Asia");
+      const c3b = el("div", { id: "cb-runs-reg", style: { width: "100%", height: "440px" } });
+      container.appendChild(card("Refinery Runs by Region (mb/d) — " + monthLabel(RM[0]) + " → " + monthLabel(RM[RM.length - 1]), c3b));
+      const traces = runRegs.map(r => ({
+        x: RM.map(monthLabel), y: d.runs[r].map(mb), type: "bar", name: r,
+        marker: { color: REG_COL[r === "Asia Pacific" ? "Asia" : r] || C.muted },
+      }));
+      Plotly.newPlot("cb-runs-reg", traces, {
+        ...plotLayout, height: 440, barmode: "stack",
+        yaxis: { ...plotLayout.yaxis, title: { text: "mb/d", font: { size: 12 } } },
+        xaxis: { ...plotLayout.xaxis },
+      }, { responsive: true, displaylogo: false });
+    }
+
+    // ── Chart 4: Supply by quality ──
+    if (d.quality) {
+      const q = d.quality;
+      const c4 = el("div", { id: "cb-quality", style: { width: "100%", height: "420px" } });
+      container.appendChild(card("Global Supply by Quality (mb/d, stacked)", c4));
+      const qDefs = [
+        ["Heavy", "Heavy Crude", C.red], ["Medium", "Medium Crude", "#f59e0b"],
+        ["Light", "Light Crude", C.gold], ["Condensate", "Condensate", C.cyan],
+        ["NGLs", "NGLs", C.blue], ["Biofuels", "Biofuels", C.green],
+      ];
+      Plotly.newPlot("cb-quality", qDefs.filter(x => q[x[0]]).map(x => ({
+        x: M, y: q[x[0]].map(mb), name: x[1], stackgroup: "q", line: { width: 0.5, color: x[2] }, fillcolor: x[2],
+      })), {
+        ...plotLayout, height: 420,
+        yaxis: { ...plotLayout.yaxis, title: { text: "mb/d", font: { size: 12 } } },
+        xaxis: { ...plotLayout.xaxis, type: "category", nticks: 20 },
+        shapes: fcShapes(), annotations: fcAnno(),
+      }, { responsive: true, displaylogo: false });
+    }
+
+    // ── Chart 5: OPEC+ output & spare capacity ──
+    if (d.opec && d.opec_months && d.opec["Total OPEC+"]) {
+      const OM = d.opec_months;
+      const c5 = el("div", { id: "cb-opec", style: { width: "100%", height: "420px" } });
+      container.appendChild(card("OPEC+ Crude Output & Spare Capacity (mb/d)", c5));
+      const tr = [
+        { key: "Total OPEC+", col: C.gold, w: 2.5 },
+        { key: "Total OPEC OPEC+", col: C.cyan, w: 2, name: "OPEC (of OPEC+)" },
+        { key: "Total Non-OPEC OPEC+", col: C.blue, w: 2, name: "Non-OPEC (of OPEC+)" },
+        { key: "Spare Capacity", col: C.purple, w: 2, dash: "dot" },
+      ].filter(t => d.opec[t.key]);
+      Plotly.newPlot("cb-opec", tr.map(t => ({
+        x: OM, y: d.opec[t.key].map(mb), name: t.name || t.key, line: { color: t.col, width: t.w, dash: t.dash },
+      })), {
+        ...plotLayout, height: 420,
+        yaxis: { ...plotLayout.yaxis, title: { text: "mb/d", font: { size: 12 } } },
+        xaxis: { ...plotLayout.xaxis, type: "category", nticks: 20 },
+      }, { responsive: true, displaylogo: false });
+    }
+
+    // ── Chart 6: OECD stocks & days cover ──
+    if (d.stocks_mmb && d.stocks_mmb["Onland OECD Company Stocks"]) {
+      const SM = d.sd_months;
+      const s = d.stocks_mmb;
+      const c6 = el("div", { id: "cb-stocks", style: { width: "100%", height: "420px" } });
+      container.appendChild(card("OECD Onland Company Stocks (mmb) & Days Cover", c6));
+      const tr6 = [
+        { x: SM, y: s["Onland OECD Company Stocks"], name: "OECD Stocks (mmb)", line: { color: C.cyan, width: 2.5 } },
+      ];
+      if (s["5 Year Average"]) tr6.push({ x: SM, y: s["5 Year Average"], name: "5-Yr Avg (mmb)", line: { color: C.muted, width: 1.5, dash: "dot" } });
+      if (s["OECD stocks Days Cover"]) tr6.push({ x: SM, y: s["OECD stocks Days Cover"], name: "Days Cover (RHS)", yaxis: "y2", line: { color: C.gold, width: 2 } });
+      Plotly.newPlot("cb-stocks", tr6, {
+        ...plotLayout, height: 420,
+        yaxis: { ...plotLayout.yaxis, title: { text: "mmb", font: { size: 12 } } },
+        yaxis2: { overlaying: "y", side: "right", gridcolor: "rgba(0,0,0,0)", tickfont: { size: 11, color: C.gold }, title: { text: "days", font: { size: 11, color: C.gold } } },
+        xaxis: { ...plotLayout.xaxis, type: "category", nticks: 16 },
+      }, { responsive: true, displaylogo: false });
+    }
+
+    // ── Chart 7: Price outlook ──
+    if (d.prices && d.prices["Dated Brent"]) {
+      const SM = d.sd_months;
+      const c7 = el("div", { id: "cb-prices", style: { width: "100%", height: "400px" } });
+      container.appendChild(card("Crude Price Outlook ($/bbl)", c7));
+      const pDefs = [["Dated Brent", C.gold], ["WTI Cushing", C.cyan], ["Dubai M1", C.green], ["Urals CIF NWE", C.red]];
+      Plotly.newPlot("cb-prices", pDefs.filter(p => d.prices[p[0]]).map(p => ({
+        x: SM, y: d.prices[p[0]], name: p[0], line: { color: p[1], width: 2 },
+      })), {
+        ...plotLayout, height: 400,
+        yaxis: { ...plotLayout.yaxis, title: { text: "$/bbl", font: { size: 12 } } },
+        xaxis: { ...plotLayout.xaxis, type: "category", nticks: 16 },
+      }, { responsive: true, displaylogo: false });
+    }
+
+    // ── Regional balance table ──
+    const tbl = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "12px" } });
+    const thead = el("thead");
+    const hr = el("tr", { style: { borderBottom: `2px solid ${C.border}` } });
+    ["Region", "Supply (mb/d)", "Demand (mb/d)", "Balance (mb/d)", "Status"].forEach((h, i) => {
+      hr.appendChild(el("th", { style: { textAlign: i === 0 ? "left" : "right", padding: "8px 10px", color: C.amber, fontSize: "10px", textTransform: "uppercase" } }, h));
+    });
+    thead.appendChild(hr); tbl.appendChild(thead);
+    const tb = el("tbody");
+    d.regions.forEach(r => {
+      const b = mb(d.balance[r][cur]);
+      const tr = el("tr", { style: { borderBottom: `1px solid ${C.border}` } });
+      tr.appendChild(el("td", { style: { padding: "7px 10px", color: C.text, fontWeight: "600" } }, r));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: C.text } }, mb(d.supply[r][cur]).toFixed(2)));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: C.text } }, mb(d.demand[r][cur]).toFixed(2)));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: b >= 0 ? C.green : C.red, fontWeight: "700" } }, (b >= 0 ? "+" : "") + b.toFixed(2)));
+      tr.appendChild(el("td", { style: { padding: "7px 10px", textAlign: "right", color: b >= 0 ? C.green : C.red } }, b >= 0 ? "Surplus" : "Deficit"));
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    container.appendChild(card("Regional Crude Balance — " + monthLabel(d.current_month), tbl));
+
+    container.appendChild(el("div", { style: { height: "1px", background: C.border, margin: "10px 0 22px" } }));
+  }
+
   async function renderCBM(box) {
     box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Crude Balances & Margins…</div>';
     let sheets, marginsData, marginsSummary;
@@ -4138,9 +4376,12 @@
       ]);
       sheets = sh; marginsData = mg; marginsSummary = ms;
     } catch(e) { box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load: ${e.message}</div>`; return; }
-    if (!sheets && !marginsData) { box.innerHTML = '<div style="color:#94a3b8;padding:40px;">No crude balance or margins data available.</div>'; return; }
-
     box.innerHTML = "";
+
+    // Global crude balances dashboard (top of tab)
+    try { await renderCrudeBalances(box); } catch (e) { /* non-fatal */ }
+
+    if (!sheets && !marginsData) { return; }
 
     // ── STATE ──
     let activeSheet = "demand";

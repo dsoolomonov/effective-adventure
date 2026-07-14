@@ -12838,6 +12838,28 @@ async def get_margins():
     }
 
 
+_CRUDE_BAL_CACHE = None
+
+
+def _load_crude_balances():
+    """Load parsed global crude balances / runs from the committed JSON file."""
+    global _CRUDE_BAL_CACHE
+    if _CRUDE_BAL_CACHE is not None:
+        return _CRUDE_BAL_CACHE
+    path = os.path.join(os.path.dirname(__file__), "crude_balances_data.json")
+    with open(path) as f:
+        _CRUDE_BAL_CACHE = _json.load(f)
+    return _CRUDE_BAL_CACHE
+
+
+@app.get("/api/crude-balances")
+async def get_crude_balances():
+    """Monthly global crude/condensate balances: regional supply, demand and
+    balance; global refinery runs; supply by quality; OECD stocks; OPEC+ output;
+    and the crude price outlook. Values in kb/d unless noted."""
+    return _load_crude_balances()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # ═══  PLATTS / S&P GLOBAL COMMODITY INSIGHTS (SPGCI)
 # ═══════════════════════════════════════════════════════════════════════════
