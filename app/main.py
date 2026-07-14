@@ -6366,7 +6366,7 @@ def _default_ea_data():
     ]
     return {
         "title": "Summary of crude and condensate balances, mb/d",
-        "source": "Energy Aspects",
+        "source": "internal",
         "columns": ["2025", "Q1 26", "Q2 26", "Q3 26", "Q4 26", "2026", "Q1 27", "Q2 27", "Q3 27", "Q4 27", "2027", "y/y 26", "y/y 27"],
         "col_keys": ["y2025", "q1_26", "q2_26", "q3_26", "q4_26", "y2026", "q1_27", "q2_27", "q3_27", "q4_27", "y2027", "yoy_26", "yoy_27"],
         "rows": rows_raw,
@@ -6383,7 +6383,7 @@ def _generate_ea_trend_text(data):
     rows = data["rows"]
     lines = []
     # Find latest quarter data - check Q1 27 as "latest forward"
-    lines.append("**Latest Trend Analysis (Energy Aspects Crude & Condensate Balances):**\n")
+    lines.append("**Latest Trend Analysis (Crude & Condensate Balances):**\n")
     
     # Runs analysis
     runs = next((r for r in rows if r["metric"] == "Runs"), None)
@@ -12400,16 +12400,18 @@ async def iir_refinery_detail(
 # --- LEM (Light Ends Market) ---
 @app.get("/api/lem/data")
 async def lem_data():
-    """Return LEM gasoline/naphtha balance data."""
-    import json as json_mod
-    lem_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "lem")
-    if _LEAN_MODE:
-        lem_dir = "/app/data/lem"
-    path = os.path.join(lem_dir, "lem_may2026.json")
+    """Return LEM gasoline/naphtha balance data (quarterly dataset)."""
+    return await lem_quarterly()
+
+
+@app.get("/api/lem/quarterly")
+async def lem_quarterly():
+    """Return quarterly light-ends balances (gasoline/naphtha) with analyst notes."""
+    path = os.path.join(os.path.dirname(__file__), "lem_quarterly.json")
     if not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="LEM data not available")
+        raise HTTPException(status_code=404, detail="Quarterly LEM data not available")
     with open(path) as f:
-        return json_mod.load(f)
+        return _json.load(f)
 
 
 # --- Local Balances (Energy Aspects global gasoline + US weekly) ────────────

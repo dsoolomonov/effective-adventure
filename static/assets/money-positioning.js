@@ -4124,7 +4124,7 @@
 
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // ═══  CRUDE BALANCES & MARGINS (Energy Aspects NWE/MED)
+  // ═══  CRUDE BALANCES & MARGINS (NWE/MED)
   // ═══════════════════════════════════════════════════════════════════════════
 
   async function renderCBM(box) {
@@ -4293,7 +4293,7 @@
     if (sheets && sheets.sheets) {
       const balSect = el("div", { style: { marginBottom: "32px" } });
       const balTitle = el("div", { style: { fontSize: "16px", fontWeight: "700", color: C.amber, marginBottom: "12px", borderBottom: "1px solid " + C.border, paddingBottom: "8px" } },
-        "📊 NWE / MED CRUDE BALANCE — Energy Aspects (kb/d)");
+        "📊 NWE / MED CRUDE BALANCE (kb/d)");
       balSect.appendChild(balTitle);
 
       // Controls row
@@ -4876,29 +4876,26 @@
   }
 
 
-  // ─── LOCAL GASOLINE BALANCES (LEM) TAB ───
+  // ─── LOCAL GASOLINE BALANCES — QUARTERLY (LEM) TAB ───
   async function renderLEM(box) {
-    box.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Loading LEM data...</div>';
+    box.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Loading quarterly balances...</div>';
     let data;
     try {
-      const r = await fetch("/api/lem/data");
+      const r = await fetch("/api/lem/quarterly");
       if (!r.ok) throw new Error(r.statusText);
       data = await r.json();
     } catch(e) {
-      box.innerHTML = `<div style="color:${C.red};padding:20px;">Error loading LEM data: ${e.message}</div>`;
+      box.innerHTML = `<div style="color:${C.red};padding:20px;">Error loading quarterly balance data: ${e.message}</div>`;
       return;
     }
     box.innerHTML = "";
-    renderLEMContent(box, data);
+    renderLEMQuarterly(box, data);
   }
 
-  function renderLEMContent(box, data) {
-    const us = data.us_gasoline;
-    const eu = data.eu_gasoline;
-    const pf = data.price_forecasts;
-    const gb = data.global_balance;
-    const narr = data.key_narratives;
-    const naph = data.naphtha_narratives;
+  function renderLEMQuarterly(box, data) {
+    const Q = data.quarters;
+    const gas = data.gasoline;
+    const notes = data.ai_notes || {};
 
     function lemSection(title, subtitle) {
       const s = el("div", { style: { marginBottom: "25px" } });
@@ -4907,335 +4904,150 @@
       return s;
     }
 
-    // ── Header ──
-    const hdr = el("div", { style: { marginBottom: "20px" } });
-    hdr.appendChild(el("h2", { style: { color: C.amber, margin: "0 0 6px 0", fontSize: "20px" } }, "⛽ Local Gasoline Balances — LEM May 2026"));
-    hdr.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: 0 } }, `Source: ${data.source}`));
-    box.appendChild(hdr);
-
-    // ── Key Summary Notes ──
-    const summSection = lemSection("📋 Key Takeaways — " + narr.headline, "Analyst summary from the latest LEM outlook");
-    const notesList = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" } });
-    narr.key_points.forEach((pt, i) => {
-      const card = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "10px 12px", fontSize: "12px", color: C.text, lineHeight: "1.5" } });
-      card.innerHTML = `<span style="color:${C.amber};font-weight:700;margin-right:6px;">${i+1}.</span>${pt}`;
-      notesList.appendChild(card);
-    });
-    summSection.appendChild(notesList);
-
-    // Risks
-    const risksDiv = el("div", { style: { marginTop: "12px" } });
-    risksDiv.appendChild(el("h4", { style: { color: "#ef4444", fontSize: "13px", margin: "0 0 6px 0" } }, "⚠ Key Risks"));
-    const risksList = el("div", { style: { display: "flex", flexWrap: "wrap", gap: "8px" } });
-    narr.risks.forEach(r => {
-      const chip = el("div", { style: { background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "4px", padding: "6px 10px", fontSize: "11px", color: "#fca5a5" } }, r);
-      risksList.appendChild(chip);
-    });
-    risksDiv.appendChild(risksList);
-    summSection.appendChild(risksDiv);
-    box.appendChild(summSection);
-
-    // ── Region filter ──
-    let currentRegion = "US";
-    const filterRow = el("div", { style: { display: "flex", gap: "8px", marginBottom: "15px" } });
-    const regionBtns = {};
-    ["US", "Europe"].forEach(r => {
-      const b = el("button", { style: { padding: "8px 20px", background: r === "US" ? C.amber : C.card, color: r === "US" ? "#000" : C.text, border: `1px solid ${C.border}`, borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "600" } });
-      b.textContent = r + " Gasoline";
-      b.addEventListener("click", () => {
-        currentRegion = r;
-        Object.values(regionBtns).forEach(btn => { btn.style.background = C.card; btn.style.color = C.text; });
-        b.style.background = C.amber; b.style.color = "#000";
-        drawBalanceCharts(r === "US" ? us : eu, r);
-      });
-      regionBtns[r] = b;
-      filterRow.appendChild(b);
-    });
-    box.appendChild(filterRow);
-
-    // ── Balance Charts Container ──
-    const chartsBox = el("div");
-    box.appendChild(chartsBox);
-
-    function drawBalanceCharts(bal, region) {
-      chartsBox.innerHTML = "";
-      const months = bal.months;
-      const layout = (title, yTitle) => ({
-        title: { text: title, font: { color: C.text, size: 14 } },
-        paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-        font: { color: C.text, size: 11 },
-        xaxis: { gridcolor: "#1e293b", linecolor: C.border },
-        yaxis: { title: yTitle || "kb/d", gridcolor: "#1e293b", linecolor: C.border },
-        legend: { orientation: "h", y: -0.18, font: { size: 10 } },
-        margin: { t: 40, r: 20, b: 60, l: 70 },
-        hovermode: "x unified",
-        barmode: "group",
-      });
-
-      // 1) Supply vs Demand
-      const sdDiv = el("div", { id: "lem-supply-demand", style: { width: "100%", height: "480px", marginBottom: "20px" } });
-      chartsBox.appendChild(lemSection(`${region} Gasoline Supply vs Demand (2026)`, "Monthly supply and demand in kb/d with balance shown as bars"));
-      chartsBox.appendChild(sdDiv);
-
-      // 2) Stock Change
-      const scDiv = el("div", { id: "lem-stock-change", style: { width: "100%", height: "450px", marginBottom: "20px" } });
-      chartsBox.appendChild(lemSection(`${region} Gasoline Stock Change (2026)`, "Monthly stock builds (green) and draws (red) in million barrels"));
-      chartsBox.appendChild(scDiv);
-
-      // 3) Ending Stocks
-      const esDiv = el("div", { id: "lem-ending-stocks", style: { width: "100%", height: "450px", marginBottom: "20px" } });
-      chartsBox.appendChild(lemSection(`${region} Gasoline Ending Stocks (2026)`, "Monthly ending stocks (mb) with year-over-year comparison"));
-      chartsBox.appendChild(esDiv);
-
-      // 4) Imports vs Exports
-      const ieDiv = el("div", { id: "lem-imports-exports", style: { width: "100%", height: "450px", marginBottom: "20px" } });
-      chartsBox.appendChild(lemSection(`${region} Gasoline Trade Flows (2026)`, "Imports, exports, and net trade position"));
-      chartsBox.appendChild(ieDiv);
-
-      // 5) Days Forward Cover
-      const dfcDiv = el("div", { id: "lem-days-cover", style: { width: "100%", height: "400px", marginBottom: "20px" } });
-      chartsBox.appendChild(lemSection(`${region} Gasoline Days Forward Cover (2026)`, "Days of forward demand covered by current stocks"));
-      chartsBox.appendChild(dfcDiv);
-
-      // 6) Balance Table
-      const tblSection = lemSection(`${region} Gasoline Balance Table — LEM May 2026`, "All balance components in kb/d (stocks in mb)");
-      const tbl = document.createElement("table");
-      tbl.style.cssText = `width:100%;border-collapse:collapse;font-size:11px;`;
-      const hdrS = `padding:6px 8px;border-bottom:2px solid ${C.border};color:${C.amber};font-weight:600;text-align:right;background:#111827;`;
-      const cellS = `padding:5px 8px;border-bottom:1px solid ${C.border};text-align:right;`;
-      const rowLabelS = `padding:5px 8px;border-bottom:1px solid ${C.border};text-align:left;color:${C.text};font-weight:600;`;
-
-      let headerHtml = `<th style="${hdrS}text-align:left;">Component</th>`;
-      months.forEach(m => { headerHtml += `<th style="${hdrS}">${m.replace(" 26","")}</th>`; });
-      tbl.innerHTML = `<thead><tr>${headerHtml}</tr></thead>`;
-
-      const tbody = document.createElement("tbody");
-      const rows = [
-        { label: "Refinery Runs", key: "refinery_runs", fmt: v => v.toLocaleString(), unit: "kb/d" },
-        { label: "Gasoline Yield", key: "yields_pct", fmt: v => (typeof v === "number" && v < 1 ? (v*100).toFixed(1) : v.toFixed ? v.toFixed(1) : v) + "%", unit: "%" },
-        { label: "Supply", key: "supply", fmt: v => v.toLocaleString(), unit: "kb/d", bold: true },
-        { label: "  Supply y/y", key: "supply_yoy", fmt: v => (v > 0 ? "+" : "") + v, color: true },
-        { label: "Demand", key: "demand", fmt: v => v.toLocaleString(), unit: "kb/d", bold: true },
-        { label: "  Demand y/y", key: "demand_yoy", fmt: v => (v > 0 ? "+" : "") + v, color: true },
-        { label: "Imports", key: "imports", fmt: v => v.toLocaleString() },
-        { label: "Exports", key: "exports", fmt: v => v.toLocaleString() },
-        { label: "Net Imports", key: "net_imports", fmt: v => v.toLocaleString(), color: true },
-        { label: "Stock Change (mb)", key: "stock_change", fmt: v => v.toFixed(1), color: true, bold: true },
-        { label: "Ending Stocks (mb)", key: "ending_stocks", fmt: v => typeof v === "number" ? v.toFixed(1) : v, bold: true },
-        { label: "  Stocks y/y", key: "ending_stocks_yoy", fmt: v => (v > 0 ? "+" : "") + (typeof v === "number" ? v.toFixed(1) : v), color: true },
-        { label: "Days Fwd Cover", key: "days_fwd_cover", fmt: v => typeof v === "number" ? v.toFixed(1) : v },
-      ];
-
-      rows.forEach((rowDef, ri) => {
-        if (!bal[rowDef.key]) return;
-        const tr = document.createElement("tr");
-        tr.style.background = ri % 2 === 0 ? "transparent" : "rgba(30,41,59,0.3)";
-        let html = `<td style="${rowLabelS}${rowDef.bold ? "font-weight:700;" : ""}">${rowDef.label}</td>`;
-        bal[rowDef.key].forEach(v => {
-          let clr = C.text;
-          if (rowDef.color && typeof v === "number") clr = v > 0 ? C.green : (v < 0 ? C.red : C.muted);
-          html += `<td style="${cellS}color:${clr};${rowDef.bold ? "font-weight:600;" : ""}">${rowDef.fmt(v)}</td>`;
+    function qTable(rows, opts) {
+      // rows: [{name, series:{Balance:[..8], Demand:[..], Supply:[..]}}]
+      const o = opts || {};
+      const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11px" } });
+      const thead = el("tr", {});
+      thead.appendChild(el("th", { style: { textAlign: "left", padding: "5px 8px", color: C.muted, borderBottom: `1px solid ${C.border}` } }, o.firstCol || ""));
+      Q.forEach(q => thead.appendChild(el("th", { style: { textAlign: "right", padding: "5px 8px", color: q.endsWith("'26") ? C.gold : C.muted, borderBottom: `1px solid ${C.border}` } }, q)));
+      t.appendChild(thead);
+      rows.forEach(row => {
+        Object.keys(row.series).forEach((metric, mi) => {
+          const vals = row.series[metric];
+          if (!vals) return;
+          const tr = el("tr", {});
+          const isBal = metric === "Balance";
+          tr.appendChild(el("td", { style: { padding: "4px 8px", color: mi === 0 ? C.text : C.muted, fontWeight: mi === 0 ? "700" : "400", paddingLeft: mi === 0 ? "8px" : "20px", borderBottom: `1px solid ${C.border}22` } }, mi === 0 ? row.name : metric));
+          vals.forEach(v => {
+            const col = !isBal ? C.text : v == null ? C.muted : v < 0 ? C.red : C.green;
+            tr.appendChild(el("td", { style: { textAlign: "right", padding: "4px 8px", color: col, fontVariantNumeric: "tabular-nums", borderBottom: `1px solid ${C.border}22` } }, isBal ? eaSign(v) : eaFmt(v)));
+          });
+          t.appendChild(tr);
         });
-        tr.innerHTML = html;
-        tbody.appendChild(tr);
       });
-      tbl.appendChild(tbody);
-      tblSection.appendChild(tbl);
-      chartsBox.appendChild(tblSection);
-
-      // Draw Plotly charts
-      loadPlotly(() => {
-        // 1) Supply vs Demand
-        const balance = bal.supply.map((s, i) => s - bal.demand[i]);
-        Plotly.newPlot("lem-supply-demand", [
-          { x: months, y: bal.supply, type: "scatter", mode: "lines+markers", name: "Supply", line: { color: "#3b82f6", width: 3 }, marker: { size: 6 } },
-          { x: months, y: bal.demand, type: "scatter", mode: "lines+markers", name: "Demand", line: { color: "#ef4444", width: 3 }, marker: { size: 6 } },
-          { x: months, y: balance, type: "bar", name: "Balance (S-D)", marker: { color: balance.map(v => v >= 0 ? "rgba(16,185,129,0.6)" : "rgba(239,68,68,0.6)") }, yaxis: "y2" },
-        ], {
-          ...layout(`${region} Gasoline Supply vs Demand`, "kb/d"),
-          yaxis2: { title: "Balance (kb/d)", overlaying: "y", side: "right", gridcolor: "transparent", showgrid: false },
-        }, { responsive: true });
-
-        // 2) Stock Change
-        Plotly.newPlot("lem-stock-change", [{
-          x: months, y: bal.stock_change, type: "bar", name: "Stock Change (mb)",
-          marker: { color: bal.stock_change.map(v => v >= 0 ? "#10b981" : "#ef4444") },
-        }], layout(`${region} Monthly Stock Change`, "million barrels"), { responsive: true });
-
-        // 3) Ending Stocks
-        const esTraces = [
-          { x: months, y: bal.ending_stocks, type: "scatter", mode: "lines+markers", name: "Ending Stocks (2026)", line: { color: "#f59e0b", width: 3 }, marker: { size: 6 } },
-        ];
-        if (bal.ending_stocks_yoy) {
-          const prevYr = bal.ending_stocks.map((s, i) => s - (bal.ending_stocks_yoy[i] || 0));
-          esTraces.push({ x: months, y: prevYr, type: "scatter", mode: "lines", name: "2025", line: { color: "#94a3b8", width: 2, dash: "dot" } });
-        }
-        Plotly.newPlot("lem-ending-stocks", esTraces, layout(`${region} Ending Stocks`, "million barrels"), { responsive: true });
-
-        // 4) Imports vs Exports
-        Plotly.newPlot("lem-imports-exports", [
-          { x: months, y: bal.imports, type: "bar", name: "Imports", marker: { color: "#3b82f6" } },
-          { x: months, y: bal.exports.map(v => -v), type: "bar", name: "Exports", marker: { color: "#ef4444" } },
-          { x: months, y: bal.net_imports, type: "scatter", mode: "lines+markers", name: "Net Imports", line: { color: "#f59e0b", width: 2.5 }, marker: { size: 5 } },
-        ], { ...layout(`${region} Trade Flows`, "kb/d"), barmode: "relative" }, { responsive: true });
-
-        // 5) Days Forward Cover
-        Plotly.newPlot("lem-days-cover", [{
-          x: months, y: bal.days_fwd_cover, type: "scatter", mode: "lines+markers", fill: "tozeroy",
-          name: "Days Cover", line: { color: "#8b5cf6", width: 2.5 }, fillcolor: "rgba(139,92,246,0.15)", marker: { size: 6 },
-        }], layout(`${region} Days Forward Cover`, "days"), { responsive: true });
-      });
+      const wrap = el("div", { style: { overflowX: "auto" } });
+      wrap.appendChild(t);
+      return wrap;
     }
 
-    // ── Global Balance by Region ──
-    const gbSection = lemSection("🌍 Global Gasoline Balance by Region (kb/d)", "Quarterly supply/demand balance — positive = net exporter, negative = net importer");
-    const gbDiv = el("div", { id: "lem-global-balance", style: { width: "100%", height: "500px", marginBottom: "20px" } });
-    gbSection.appendChild(gbDiv);
-    box.appendChild(gbSection);
+    // ── Header ──
+    const hdr = el("div", { style: { marginBottom: "20px" } });
+    hdr.appendChild(el("h2", { style: { color: C.amber, margin: "0 0 6px 0", fontSize: "20px" } }, "⛽ Local Gasoline Balances — Quarterly (Q1'25 → Q4'26)"));
+    hdr.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: 0 } }, `Quarterly light-ends balances · demand / supply / balance in kb/d · as of ${data.as_of} · '26 quarters include forecast`));
+    box.appendChild(hdr);
 
-    // Global balance table
-    const gbTblSection = lemSection("Global Balance Table", "Supply, Demand, Balance by region (kb/d)");
-    const gbTbl = document.createElement("table");
-    gbTbl.style.cssText = `width:100%;border-collapse:collapse;font-size:11px;`;
-    const ghS = `padding:6px 8px;border-bottom:2px solid ${C.border};color:${C.amber};font-weight:600;text-align:right;background:#111827;`;
-    const gcS = `padding:5px 8px;border-bottom:1px solid ${C.border};text-align:right;`;
-    let gbHdr = `<th style="${ghS}text-align:left;">Region</th>`;
-    gb.quarters.forEach(q => { gbHdr += `<th style="${ghS}">${q}</th>`; });
-    gbTbl.innerHTML = `<thead><tr>${gbHdr}</tr></thead>`;
-    const gbBody = document.createElement("tbody");
-
-    // Global row first
-    const gRow = document.createElement("tr");
-    gRow.style.background = "rgba(245,158,11,0.1)";
-    let gHtml = `<td style="${gcS}text-align:left;color:${C.amber};font-weight:700;">Global Balance</td>`;
-    gb.global.balance.forEach(v => {
-      const clr = v >= 0 ? C.green : C.red;
-      gHtml += `<td style="${gcS}color:${clr};font-weight:700;">${v.toLocaleString()}</td>`;
-    });
-    gRow.innerHTML = gHtml;
-    gbBody.appendChild(gRow);
-
-    // Region rows
-    Object.entries(gb.regions).forEach(([reg, d], ri) => {
-      // Balance row
-      const tr = document.createElement("tr");
-      tr.style.background = ri % 2 === 0 ? "transparent" : "rgba(30,41,59,0.3)";
-      let html = `<td style="${gcS}text-align:left;color:${C.text};font-weight:600;">${reg}</td>`;
-      d.balance.forEach(v => {
-        const clr = v >= 0 ? C.green : C.red;
-        html += `<td style="${gcS}color:${clr};">${v.toLocaleString()}</td>`;
+    // ── AI Analyst Notes ──
+    if (notes.points) {
+      const sec = lemSection("🤖 AI Analyst Notes — " + (notes.headline || ""), notes.generated);
+      const grid = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" } });
+      notes.points.forEach((pt, i) => {
+        const c = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.gold}`, borderRadius: "6px", padding: "10px 12px", fontSize: "12px", color: C.text, lineHeight: "1.5" } });
+        c.appendChild(el("span", { style: { color: C.gold, fontWeight: "700", marginRight: "6px" } }, `${i + 1}.`));
+        c.appendChild(document.createTextNode(pt));
+        grid.appendChild(c);
       });
-      tr.innerHTML = html;
-      gbBody.appendChild(tr);
+      sec.appendChild(grid);
+      if (notes.conclusion) {
+        sec.appendChild(el("div", { style: { marginTop: "10px", background: "#132018", border: `1px solid ${C.green}55`, borderRadius: "6px", padding: "12px 14px", fontSize: "12.5px", color: C.text, lineHeight: "1.55" } }, notes.conclusion));
+      }
+      box.appendChild(sec);
+    }
 
-      // Demand sub-row
-      const dr = document.createElement("tr");
-      dr.style.background = ri % 2 === 0 ? "transparent" : "rgba(30,41,59,0.3)";
-      let dHtml = `<td style="${gcS}text-align:left;color:${C.muted};padding-left:20px;">  Demand</td>`;
-      d.demand.forEach(v => { dHtml += `<td style="${gcS}color:${C.muted};">${v.toLocaleString()}</td>`; });
-      dr.innerHTML = dHtml;
-      gbBody.appendChild(dr);
+    // ── Regional quarterly balances ──
+    const regSec = lemSection("🌍 Regional Gasoline Balances by Quarter (kb/d)", "Balance = supply − demand · negative = deficit (needs imports) · positive = surplus (exports)");
+    const regChart = el("div", { style: { height: "360px", marginBottom: "12px" } });
+    regSec.appendChild(card("Quarterly balance by region", regChart));
+    const regionNames = Object.keys(gas.regions).filter(r => r !== "Global");
+    const regRows = regionNames.concat(gas.regions.Global ? ["Global"] : []).map(r => ({
+      name: r === "Global" ? "GLOBAL" : r,
+      series: { Balance: gas.regions[r].balance, Demand: gas.regions[r].demand, Supply: gas.regions[r].supply },
+    }));
+    regSec.appendChild(card("Regional quarterly table (kb/d)", qTable(regRows, { firstCol: "Region / metric" })));
+    box.appendChild(regSec);
 
-      // Supply sub-row
-      const sr = document.createElement("tr");
-      sr.style.background = ri % 2 === 0 ? "transparent" : "rgba(30,41,59,0.3)";
-      let sHtml = `<td style="${gcS}text-align:left;color:${C.muted};padding-left:20px;">  Supply</td>`;
-      d.supply.forEach(v => { sHtml += `<td style="${gcS}color:${C.muted};">${v.toLocaleString()}</td>`; });
-      sr.innerHTML = sHtml;
-      gbBody.appendChild(sr);
+    // ── Country explorer ──
+    const ctrySec = lemSection("🗺️ Country Balances by Quarter (kb/d)", "Pick a region to see its country-level quarterly gasoline balances");
+    const chipRow = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" } });
+    const ctryBody = el("div", {});
+    ctrySec.appendChild(chipRow);
+    ctrySec.appendChild(ctryBody);
+    const ctryRegions = Object.keys(gas.countries);
+    let activeReg = ctryRegions[0];
+    function drawCountries() {
+      ctryBody.innerHTML = "";
+      const cs = gas.countries[activeReg];
+      const rows = Object.keys(cs).map(cn => ({ name: cn === "Total" ? `TOTAL ${activeReg.toUpperCase()}` : cn, series: { Balance: cs[cn].balance, Demand: cs[cn].demand, Supply: cs[cn].supply } }));
+      ctryBody.appendChild(card(`${activeReg} — country quarterly balances (kb/d)`, qTable(rows, { firstCol: "Country / metric" })));
+    }
+    ctryRegions.forEach(rn => {
+      const chip = el("button", { style: { background: rn === activeReg ? C.gold : C.card, color: rn === activeReg ? "#000" : C.text, border: `1px solid ${C.border}`, borderRadius: "14px", padding: "5px 14px", fontSize: "12px", cursor: "pointer" } }, rn);
+      chip.onclick = () => {
+        activeReg = rn;
+        Array.from(chipRow.children).forEach((c, i) => { c.style.background = ctryRegions[i] === rn ? C.gold : C.card; c.style.color = ctryRegions[i] === rn ? "#000" : C.text; });
+        drawCountries();
+      };
+      chipRow.appendChild(chip);
     });
-    gbTbl.appendChild(gbBody);
-    gbTblSection.appendChild(gbTbl);
-    box.appendChild(gbTblSection);
+    drawCountries();
+    box.appendChild(ctrySec);
 
-    // ── Price Forecasts ──
-    const pfSection = lemSection("💰 Light Ends Price Forecasts (Energy Aspects)", "RBOB, NWE Gasoline, Singapore 92 Ron — actuals and forecasts");
-    const pfDiv = el("div", { id: "lem-price-forecasts", style: { width: "100%", height: "500px", marginBottom: "20px" } });
-    pfSection.appendChild(pfDiv);
-
-    // Price table
-    const pfTbl = document.createElement("table");
-    pfTbl.style.cssText = `width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;`;
-    const phS = `padding:6px 8px;border-bottom:2px solid ${C.border};color:${C.amber};font-weight:600;text-align:right;background:#111827;`;
-    const pcS = `padding:5px 8px;border-bottom:1px solid ${C.border};text-align:right;`;
-    pfTbl.innerHTML = `<thead><tr>
-      <th style="${phS}text-align:left;">Period</th><th style="${phS}">Type</th>
-      <th style="${phS}">RBOB vs LLS</th><th style="${phS}">RBOB vs WTI</th><th style="${phS}">RBOB $/gal</th>
-      <th style="${phS}">NWE vs Brent</th><th style="${phS}">NWE $/t</th>
-      <th style="${phS}">Sing vs Dubai</th><th style="${phS}">Sing $/t</th>
-    </tr></thead>`;
-    const pfBody = document.createElement("tbody");
-    pf.periods.forEach((period, i) => {
-      const isFcst = pf.type[i] === "forecast";
-      const bgc = isFcst ? "rgba(245,158,11,0.05)" : "transparent";
-      const tr = document.createElement("tr");
-      tr.style.background = i % 2 === 0 ? bgc : `rgba(30,41,59,${isFcst ? "0.35" : "0.3"})`;
-      tr.innerHTML = `
-        <td style="${pcS}text-align:left;color:${C.text};font-weight:600;">${period}</td>
-        <td style="${pcS}color:${isFcst ? C.amber : C.muted};font-style:${isFcst ? "italic" : "normal"};">${pf.type[i]}</td>
-        <td style="${pcS}color:${C.text};">$${pf.rbob_crack_lls[i].toFixed(1)}</td>
-        <td style="${pcS}color:${C.text};">$${pf.rbob_crack_wti[i].toFixed(1)}</td>
-        <td style="${pcS}color:${C.text};">$${pf.rbob_outright[i].toFixed(2)}</td>
-        <td style="${pcS}color:${C.text};">$${pf.nwe_crack_brent[i].toFixed(1)}</td>
-        <td style="${pcS}color:${C.text};">$${pf.nwe_outright_usd_t[i]}</td>
-        <td style="${pcS}color:${C.text};">$${pf.sing_crack_dubai[i].toFixed(1)}</td>
-        <td style="${pcS}color:${C.text};">$${pf.sing_outright_usd_t[i]}</td>
-      `;
-      pfBody.appendChild(tr);
+    // ── US & PADD detail ──
+    const usSec = lemSection("🇺🇸 United States & PADD Quarterly Balances (kb/d)", "US total incl. refinery gasoline + ethanol split · Canada & Mexico below");
+    const usRows = Object.keys(gas.us).map(k => {
+      const e = gas.us[k];
+      const series = { Balance: e.balance, Demand: e.demand, Supply: e.supply };
+      if (e.refinery_gasoline) series["· refinery gasoline"] = e.refinery_gasoline;
+      if (e.ethanol) series["· ethanol"] = e.ethanol;
+      return { name: k, series };
     });
-    pfTbl.appendChild(pfBody);
-    pfSection.appendChild(pfTbl);
-    box.appendChild(pfSection);
-
-    // ── Naphtha Summary ──
-    const naphSection = lemSection("🧪 Naphtha Market Summary", naph.headline);
-    const naphList = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" } });
-    naph.key_points.forEach((pt, i) => {
-      const card = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "10px 12px", fontSize: "12px", color: C.text, lineHeight: "1.5" } });
-      card.innerHTML = `<span style="color:#06b6d4;font-weight:700;margin-right:6px;">${i+1}.</span>${pt}`;
-      naphList.appendChild(card);
+    Object.keys(gas.north_america).forEach(k => {
+      if (k === "Total") return;
+      const e = gas.north_america[k];
+      usRows.push({ name: k, series: { Balance: e.balance, Demand: e.demand, Supply: e.supply } });
     });
-    naphSection.appendChild(naphList);
-    box.appendChild(naphSection);
+    usSec.appendChild(card("US / PADD / Canada / Mexico (kb/d)", qTable(usRows, { firstCol: "Area / metric" })));
+    box.appendChild(usSec);
 
-    // ── Draw initial charts ──
-    drawBalanceCharts(us, "US");
+    // ── Naphtha ──
+    const napSec = lemSection("🧪 Naphtha Quarterly Balances", "Country-level naphtha balances — Asia Pacific & Europe (source units)");
+    Object.keys(data.naphtha.countries).forEach(reg => {
+      const cs = data.naphtha.countries[reg];
+      const rows = Object.keys(cs).map(cn => ({ name: cn, series: { Balance: cs[cn].balance, Demand: cs[cn].demand, Supply: cs[cn].supply } }));
+      napSec.appendChild(card(`${reg} — naphtha quarterly balances`, qTable(rows, { firstCol: "Country / metric" })));
+    });
+    box.appendChild(napSec);
 
-    // Draw global balance chart + price forecast chart
+    // ── Refinery runs + maintenance ──
+    const refSec = lemSection("🏭 Refinery Runs & Maintenance", "Quarterly crude runs (mb/d) by region · monthly offline capacity (kb/d) May–Nov 2026");
+    const runsChart = el("div", { style: { height: "360px" } });
+    const maintChart = el("div", { style: { height: "320px" } });
+    refSec.appendChild(card("Refinery runs by region (mb/d)", runsChart));
+    refSec.appendChild(card("Quarterly runs table (mb/d)", qTable(Object.keys(data.refinery_runs_mbd).map(k => ({ name: k, series: { Runs: data.refinery_runs_mbd[k] } })), { firstCol: "Region" })));
+    refSec.appendChild(card("Maintenance — offline capacity by region (kb/d)", maintChart));
+    box.appendChild(refSec);
+
     loadPlotly(() => {
-      // Global balance stacked bar
-      const regColors = { "North America": "#3b82f6", "Latin America": "#10b981", "Europe": "#f59e0b", "FSU": "#8b5cf6", "Middle East": "#ef4444", "Asia-Pacific": "#06b6d4", "Africa": "#ec4899" };
-      const traces = Object.entries(gb.regions).map(([reg, d]) => ({
-        x: gb.quarters, y: d.balance, type: "bar", name: reg,
-        marker: { color: regColors[reg] || "#94a3b8" },
-      }));
-      traces.push({
-        x: gb.quarters, y: gb.global.balance, type: "scatter", mode: "lines+markers",
-        name: "Global Net", line: { color: "#fff", width: 3 }, marker: { size: 8, symbol: "diamond" },
-      });
-      Plotly.newPlot("lem-global-balance", traces, {
-        title: { text: "Global Gasoline Balance by Region (kb/d)", font: { color: C.text, size: 14 } },
-        paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-        font: { color: C.text, size: 11 },
-        xaxis: { gridcolor: "#1e293b" }, yaxis: { title: "kb/d", gridcolor: "#1e293b" },
-        legend: { orientation: "h", y: -0.18, font: { size: 10 } },
-        margin: { t: 40, r: 20, b: 60, l: 70 },
-        barmode: "relative",
+      const balTraces = regionNames.map(r => ({ x: Q, y: gas.regions[r].balance, name: r, type: "bar" }));
+      Plotly.newPlot(regChart, balTraces, { ...plotLayout,
+        barmode: "group", xaxis: { ...plotLayout.xaxis, type: "category" },
+        yaxis: { ...plotLayout.yaxis, title: "kb/d", zeroline: true, zerolinecolor: "#64748b" },
       }, { responsive: true });
 
-      // Price forecast chart
-      Plotly.newPlot("lem-price-forecasts", [
-        { x: pf.periods, y: pf.rbob_crack_wti, type: "scatter", mode: "lines+markers", name: "RBOB vs WTI ($/bbl)", line: { color: "#3b82f6", width: 2.5 } },
-        { x: pf.periods, y: pf.nwe_crack_brent, type: "scatter", mode: "lines+markers", name: "NWE vs Brent ($/bbl)", line: { color: "#f59e0b", width: 2.5 } },
-        { x: pf.periods, y: pf.sing_crack_dubai, type: "scatter", mode: "lines+markers", name: "Singapore vs Dubai ($/bbl)", line: { color: "#10b981", width: 2.5 } },
-      ], {
-        title: { text: "Gasoline Crack Spread Forecasts ($/bbl)", font: { color: C.text, size: 14 } },
-        paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-        font: { color: C.text, size: 11 },
-        xaxis: { gridcolor: "#1e293b", tickangle: -45 }, yaxis: { title: "$/bbl", gridcolor: "#1e293b" },
-        legend: { orientation: "h", y: -0.25, font: { size: 10 } },
-        margin: { t: 40, r: 20, b: 80, l: 60 },
-        hovermode: "x unified",
+      const runKeys = ["North America", "Europe", "Asia", "Middle East", "FSU", "Latin America", "Africa", "Global Runs"].filter(k => data.refinery_runs_mbd[k]);
+      Plotly.newPlot(runsChart, runKeys.map(k => ({
+        x: Q, y: data.refinery_runs_mbd[k], name: k, mode: "lines+markers",
+        line: { width: k === "Global Runs" ? 3 : 1.6 }, yaxis: k === "Global Runs" ? "y2" : "y",
+      })), { ...plotLayout,
+        xaxis: { ...plotLayout.xaxis, type: "category" }, yaxis: { ...plotLayout.yaxis, title: "regional mb/d" },
+        yaxis2: { title: "global mb/d", overlaying: "y", side: "right", gridcolor: "#1e293b" },
+      }, { responsive: true });
+
+      const m = data.maintenance_kbd;
+      Plotly.newPlot(maintChart, Object.keys(m.regions).filter(k => k !== "Total").map(k => ({
+        x: m.months, y: m.regions[k], name: k, type: "bar",
+      })), { ...plotLayout,
+        barmode: "stack", xaxis: { ...plotLayout.xaxis, type: "category" }, yaxis: { ...plotLayout.yaxis, title: "kb/d offline" },
       }, { responsive: true });
     });
   }
@@ -5244,7 +5056,7 @@
   // ==========================================================================
   // Kpler Refinery Trade Flows tab
   // ==========================================================================
-  // ========== LOCAL BALANCES (Energy Aspects gasoline) ==========
+  // ========== LOCAL BALANCES (global gasoline) ==========
 
   function eaFmt(n, dec) { return n == null ? "–" : Number(n).toLocaleString(undefined, { maximumFractionDigits: dec == null ? 0 : dec, minimumFractionDigits: dec == null ? 0 : dec }); }
   function eaSign(n, dec) { return n == null ? "–" : (n > 0 ? "+" : "") + eaFmt(n, dec); }
@@ -5341,7 +5153,7 @@
         : "Read: balances loosen — builds cap prompt gasoline cracks; watch for crack weakness and softer prompt spreads.");
       const txt = el("div", { style: { color: C.text, fontSize: "12.5px", lineHeight: "1.8" } });
       lines.forEach(l => txt.appendChild(el("div", {}, "• " + l)));
-      txt.appendChild(el("div", { style: { color: C.muted, fontSize: "10.5px", marginTop: "8px" } }, `Source: ${d.source} weekly product stock forecast (release ${d.release_date}); weeks after ${asOf} are forecast. Trend read is model-derived from the series above.`));
+      txt.appendChild(el("div", { style: { color: C.muted, fontSize: "10.5px", marginTop: "8px" } }, `Source: weekly product stock forecast (release ${d.release_date}); weeks after ${asOf} are forecast. Trend read is model-derived from the series above.`));
       wrap.appendChild(card("Trend read & predictions", txt));
 
       loadPlotly(() => {
@@ -5350,7 +5162,7 @@
         const fcstS = st.slice(li).map(v => v == null ? null : v / 1000);
         Plotly.newPlot(chartDiv, [
           { x: histD, y: histS, name: "Actual/nowcast", line: { color: C.cyan, width: 2 } },
-          { x: fcstD, y: fcstS, name: "EA forecast", line: { color: C.gold, width: 2, dash: "dash" } },
+          { x: fcstD, y: fcstS, name: "forecast", line: { color: C.gold, width: 2, dash: "dash" } },
         ], { ...plotLayout, yaxis: { ...plotLayout.yaxis, title: "mb" }, shapes: [{ type: "line", x0: asOf, x1: asOf, y0: 0, y1: 1, yref: "paper", line: { color: C.muted, width: 1, dash: "dot" } }] }, { responsive: true, displayModeBar: false });
       });
     }
@@ -5369,8 +5181,8 @@
     box.innerHTML = "";
 
     const hdr = el("div", { style: { marginBottom: "14px" } });
-    hdr.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber } }, "🌐 LOCAL BALANCES — Global & US Gasoline (Energy Aspects)"));
-    hdr.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "4px" } }, `As of ${meta.as_of} · EA release ${meta.release_date} · Monthly regional/country balances + weekly US/PADD stock forecast`));
+    hdr.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber } }, "🌐 LOCAL BALANCES — Global & US Gasoline"));
+    hdr.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "4px" } }, `As of ${meta.as_of} · release ${meta.release_date} · Monthly regional/country balances + weekly US/PADD stock forecast`));
     box.appendChild(hdr);
 
     // ── Main things (takeaways) ──
@@ -5436,7 +5248,7 @@
       const src = d.country || d;
       const title = d.country ? `${d.country.name} (${d.name})` : d.name;
       const ch1 = el("div", { style: { width: "100%", height: "400px" } });
-      explorer.appendChild(card(`${title} — Gasoline demand vs supply (kb/d, monthly; EA forecast beyond mid-2026)`, ch1));
+      explorer.appendChild(card(`${title} — Gasoline demand vs supply (kb/d, monthly; forecast beyond mid-2026)`, ch1));
       const ch2 = el("div", { style: { width: "100%", height: "340px" } });
       explorer.appendChild(card(`${title} — Balance (supply − demand, kb/d): negative = deficit`, ch2));
 
