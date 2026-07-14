@@ -14,6 +14,13 @@
   "label_col": 1,
   "value_col": 2,
 
+  "_comment_positioning": "POSITIONING — also stream the Sparta order-level workbook (kept open alongside the prices one). Reads it by name. Set enabled=false to turn off.",
+  "positioning": {
+    "enabled": true,
+    "workbook": "FinFlows_Stacked_Order_Levels_Bloomberg.xlsx",
+    "sheet": "Energy"
+  },
+
   "_comment_blpapi": "BLPAPI MODE — set mode=blpapi and map labels to securities.",
   "blp_host": "localhost",
   "blp_port": 8194,

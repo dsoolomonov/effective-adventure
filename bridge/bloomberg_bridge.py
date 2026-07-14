@@ -170,6 +170,152 @@ def read_excel(cfg):
     return ticks
 
 
+def push_positioning(platform_url, token, data, source="bloomberg-bridge"):
+    """POST the structured positioning grid to the platform."""
+    url = platform_url.rstrip("/") + "/api/positioning/live"
+    body = json.dumps({"data": data, "source": source}).encode()
+    req = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"Content-Type": "application/json", "X-Ingest-Token": token},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}: {e.read().decode()[:200]}"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+
+# ─── Positioning grid (Sparta-style order-level sheet) parsing ──────────────
+def _pstr(v):
+    return str(v).strip() if v is not None else ""
+
+
+def _pnum(v):
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    return None
+
+
+def parse_positioning(vals):
+    """Parse a positioning sheet's 2D cell grid into a structured payload.
+
+    The sheet lays out instrument blocks on a fixed 9-column template whose
+    header row reads MSET | Strategy | Inst. | Level | Distance $ | Distance % |
+    Est. Lots | New %LS | New Lots. Above each header: a title row, a
+    %Position row (TREND / REVERSION / VALUE), a Net Lots row, and a
+    Current Prices row (Last / High / Low). Blocks repeat horizontally
+    (3 across) and vertically. Everything is located relative to each 'MSET'
+    header cell, so extra columns/rows don't matter.
+    """
+    if not vals:
+        return {"instruments": []}
+    if not isinstance(vals[0], list):
+        vals = [vals]
+    nrows = len(vals)
+
+    def get(r, c):
+        if 0 <= r < nrows and 0 <= c < len(vals[r]):
+            return vals[r][c]
+        return None
+
+    # locate all (header_row, mset_col) anchors
+    anchors = []
+    for r in range(nrows):
+        row = vals[r]
+        for c in range(len(row)):
+            if _pstr(row[c]) == "MSET" and _pstr(get(r, c + 1)) == "Strategy":
+                anchors.append((r, c))
+    # reading order: top-to-bottom bands, left-to-right within a band
+    anchors.sort(key=lambda a: (a[0], a[1]))
+
+    instruments = []
+    for hr, j in anchors:
+        title = _pstr(get(hr - 4, j))
+        fam = {
+            "trend": {"pct": _pnum(get(hr - 3, j + 2)), "net_lots": _pnum(get(hr - 2, j + 2))},
+            "reversion": {"pct": _pnum(get(hr - 3, j + 5)), "net_lots": _pnum(get(hr - 2, j + 5))},
+            "value": {"pct": _pnum(get(hr - 3, j + 8)), "net_lots": _pnum(get(hr - 2, j + 8))},
+        }
+        last = _pnum(get(hr - 1, j + 4))
+        high = _pnum(get(hr - 1, j + 6))
+        low = _pnum(get(hr - 1, j + 8))
+        rows = []
+        settle = None
+        r = hr + 1
+        while r < nrows:
+            cat = _pstr(get(r, j))
+            strat = _pstr(get(r, j + 1))
+            inst = _pstr(get(r, j + 2))
+            if cat == "" and strat == "" and inst == "":
+                break
+            if cat == "MSET" or "% Position" in cat or (" - " in cat and "(" in cat):
+                break
+            if cat == "SETTLE":
+                settle = _pnum(get(r, j + 3))
+                r += 1
+                continue
+            rows.append({
+                "mset": cat,
+                "strategy": strat,
+                "inst": inst,
+                "level": _pnum(get(r, j + 3)),
+                "dist_usd": _pnum(get(r, j + 4)),
+                "dist_pct": _pnum(get(r, j + 5)),
+                "est_lots": _pnum(get(r, j + 6)),
+                "new_pct_ls": _pnum(get(r, j + 7)),
+                "new_lots": _pnum(get(r, j + 8)),
+                "alert": _pstr(get(r, j - 1)) if j >= 1 else "",
+            })
+            r += 1
+        instruments.append({
+            "title": title,
+            "families": fam,
+            "last": last, "high": high, "low": low, "settle": settle,
+            "rows": rows,
+        })
+    return {"instruments": instruments}
+
+
+def read_positioning_excel(cfg):
+    """Read the positioning workbook (by name, so it can be open alongside the
+    prices workbook) and return the structured grid for the configured sheet."""
+    import xlwings as xw
+
+    pcfg = cfg.get("positioning") or {}
+    wb_name = pcfg.get("workbook", "")
+    sheet = pcfg.get("sheet", "Energy")
+    wb = None
+    if wb_name in ("active", "", None):
+        wb = xw.books.active
+    else:
+        base = os.path.basename(wb_name)
+        for b in xw.books:
+            if b.name == base or b.name == wb_name:
+                wb = b
+                break
+        if wb is None:
+            # try any open app/book across instances
+            for app_ in xw.apps:
+                for b in app_.books:
+                    if b.name == base:
+                        wb = b
+                        break
+                if wb:
+                    break
+        if wb is None:
+            raise RuntimeError(f"positioning workbook not open: {base}")
+    try:
+        sht = wb.sheets[sheet]
+    except Exception:
+        raise RuntimeError(f"sheet '{sheet}' not found in {wb.name}")
+    vals = sht.used_range.value
+    return parse_positioning(vals)
+
+
 def diagnose_excel(cfg):
     """Print what xlwings can see: which Excel app/workbook is open, its sheet
     names, and a small top-left sample of each sheet. Helps match the config."""
@@ -271,6 +417,8 @@ def main():
     token = cfg["ingest_token"]
     mode = cfg.get("mode", "excel")
     interval = float(cfg.get("poll_seconds", 5))
+    pos_cfg = cfg.get("positioning") or {}
+    pos_on = mode == "excel" and pos_cfg.get("enabled", bool(pos_cfg.get("workbook")))
     state = {}
 
     print(f"[bridge] mode={mode}  platform={platform_url}  every {interval}s")
@@ -297,6 +445,23 @@ def main():
                       f"@ {time.strftime('%H:%M:%S')}")
         else:
             print("[bridge] no numeric values read — check layout/sheets in config")
+
+        if pos_on:
+            try:
+                pdata = read_positioning_excel(cfg)
+                ninst = len(pdata.get("instruments", []))
+                if ninst:
+                    pres = push_positioning(platform_url, token, pdata,
+                                            cfg.get("source", "bloomberg-bridge"))
+                    if pres.get("error"):
+                        print(f"[bridge] positioning push error: {pres['error']}")
+                    else:
+                        print(f"[bridge] positioning pushed {ninst} instruments "
+                              f"@ {time.strftime('%H:%M:%S')}")
+                else:
+                    print("[bridge] positioning: no instruments parsed — check sheet")
+            except Exception as e:  # noqa: BLE001
+                print(f"[bridge] positioning read error: {e}")
 
         if args.once:
             break

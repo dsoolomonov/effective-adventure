@@ -40,6 +40,30 @@ Reuses your existing Bloomberg Excel formulas — no ticker mapping.
 
 Test without looping: `python bloomberg_bridge.py --once`
 
+## Live positioning (order-level model grid)
+
+The bridge can *also* stream a second workbook — the order-level positioning
+sheet (WTI / Brent / ULSD / Gasoil / RBOB / NatGas …) — into the platform's
+**Money Positioning** tab, shown live above the COT data. Keep that workbook
+open in Excel alongside your prices workbook; the bridge reads it by name.
+
+Configure it in `bridge_config.json`:
+
+```json
+"positioning": {
+  "enabled": true,
+  "workbook": "FinFlows_Stacked_Order_Levels_Bloomberg.xlsx",
+  "sheet": "Energy"
+}
+```
+
+- `workbook` — the file name of the positioning workbook (must be open in Excel).
+- `sheet` — the tab to read (e.g. `"Energy"`).
+- Set `"enabled": false` (or remove the block) to turn positioning off.
+
+The sheet is read relative to each `MSET` header block, so extra rows/columns
+don't matter. Each poll prints `positioning pushed N instruments @ hh:mm:ss`.
+
 ## blpapi mode (optional, no Excel)
 
 Set `"mode": "blpapi"` and fill `"securities"` with `label → "TICKER Comdty"`.

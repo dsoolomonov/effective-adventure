@@ -131,9 +131,9 @@ class PasswordGateMiddleware(BaseHTTPMiddleware):
         token = request.cookies.get("coa_session")
         if token and _verify_session_token(token):
             return await call_next(request)
-        # Live price ingest from the local Bloomberg bridge authenticates with a
-        # shared token header instead of a browser session cookie.
-        if path == "/api/pricing/live" and request.method == "POST":
+        # Live price / positioning ingest from the local Bloomberg bridge
+        # authenticates with a shared token header instead of a session cookie.
+        if path in ("/api/pricing/live", "/api/positioning/live") and request.method == "POST":
             ingest = request.headers.get("x-ingest-token", "")
             if ingest and _LIVE_INGEST_TOKEN and hmac_compare(ingest, _LIVE_INGEST_TOKEN):
                 return await call_next(request)
@@ -2981,6 +2981,85 @@ async def pricing_live_read():
         "count": len(ticks),
         "generated": gen,
         "source": _LIVE_META.get("source"),
+        "stale_seconds": stale,
+    }
+
+
+# ── Live positioning feed (order-level model grid, pushed by the bridge) ────
+_POS_DATA = None
+_POS_META = {"generated": None, "source": None}
+
+
+def _pos_path():
+    return os.path.join(os.path.dirname(__file__), "live_positioning.json")
+
+
+def _get_positioning():
+    """In-memory structured positioning payload. Loaded from disk once."""
+    global _POS_DATA
+    if _POS_DATA is None:
+        _POS_DATA = {}
+        try:
+            with open(_pos_path()) as f:
+                blob = _json.load(f)
+            _POS_DATA = blob.get("data", {})
+            _POS_META["generated"] = blob.get("generated")
+            _POS_META["source"] = blob.get("source")
+        except FileNotFoundError:
+            pass
+        except Exception:
+            _POS_DATA = {}
+    return _POS_DATA
+
+
+@app.post("/api/positioning/live")
+async def positioning_live_ingest(request: Request):
+    """Ingest the live positioning grid (instruments -> header stats + order-level
+    rows) pushed by the local bridge. Auth via X-Ingest-Token in the gate."""
+    global _POS_DATA
+    body = await request.json()
+    if body.get("clear"):
+        _POS_DATA = {}
+        _POS_META["generated"] = None
+        _POS_META["source"] = None
+        try:
+            os.remove(_pos_path())
+        except FileNotFoundError:
+            pass
+        return {"ok": True, "cleared": True}
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "expected {data: {...}}"}
+    now = datetime.utcnow().isoformat() + "Z"
+    _POS_DATA = data
+    _POS_META["generated"] = now
+    _POS_META["source"] = body.get("source", "bloomberg-bridge")
+    try:
+        with open(_pos_path(), "w") as f:
+            _json.dump({"data": data, "generated": now,
+                        "source": _POS_META["source"]}, f)
+    except Exception:
+        pass
+    n = len(data.get("instruments", [])) if isinstance(data, dict) else 0
+    return {"ok": True, "instruments": n, "generated": now}
+
+
+@app.get("/api/positioning/live")
+async def positioning_live_read():
+    """Return the current live positioning grid (for the Money Positioning panel)."""
+    data = _get_positioning()
+    gen = _POS_META.get("generated")
+    stale = None
+    if gen:
+        try:
+            ts = datetime.fromisoformat(gen.replace("Z", ""))
+            stale = round((datetime.utcnow() - ts).total_seconds(), 1)
+        except ValueError:
+            stale = None
+    return {
+        "data": data,
+        "generated": gen,
+        "source": _POS_META.get("source"),
         "stale_seconds": stale,
     }
 

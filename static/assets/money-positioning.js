@@ -104,6 +104,137 @@
     return b;
   }
 
+  // ========== LIVE POSITIONING (order-level model grid, streamed by bridge) ==========
+  function _posShortName(title) {
+    if (!title) return "";
+    return String(title).split(" (")[0];
+  }
+
+  function _posSummaryCard(insts) {
+    const heads = ["Instrument", "Trend Bias", "Trend %Pos", "Net Lots", "Buy Lvls", "Sell Lvls", "Alerts"];
+    const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11px" } });
+    const hr = el("tr");
+    heads.forEach((h, i) => hr.appendChild(el("th", { style: { color: C.muted, fontSize: "9.5px", fontWeight: "700", padding: "5px 8px", textAlign: i === 0 ? "left" : "right", borderBottom: `1px solid ${C.border}`, textTransform: "uppercase", letterSpacing: ".5px" } }, h)));
+    t.appendChild(hr);
+    insts.forEach(ins => {
+      const f = (ins.families && ins.families.trend) || {};
+      const tp = f.pct;
+      const bias = tp == null ? "—" : tp > 0.33 ? "LONG" : tp < -0.33 ? "SHORT" : "NEUTRAL";
+      const bcol = bias === "LONG" ? C.green : bias === "SHORT" ? C.red : C.muted;
+      let buys = 0, sells = 0, alerts = 0;
+      (ins.rows || []).forEach(r => {
+        const i = (r.inst || "").toUpperCase();
+        if (i.indexOf("BUY") === 0) buys++; else if (i.indexOf("SELL") === 0) sells++;
+        if ((r.alert || "").toUpperCase() === "ALERT") alerts++;
+      });
+      const tr = el("tr");
+      const td = (v, opt) => el("td", { style: { padding: "5px 8px", textAlign: (opt && opt.left) ? "left" : "right", color: (opt && opt.color) || C.text, borderBottom: `1px solid #121a2c`, whiteSpace: "nowrap", ...(opt && opt.style || {}) } }, v);
+      tr.appendChild(td(_posShortName(ins.title), { left: true, style: { fontWeight: "600" } }));
+      tr.appendChild(td(bias, { color: bcol, style: { fontWeight: "700" } }));
+      tr.appendChild(td(tp == null ? "—" : (tp * 100).toFixed(0) + "%", { color: bcol }));
+      tr.appendChild(td(fmt(f.net_lots), { color: f.net_lots > 0 ? C.green : f.net_lots < 0 ? C.red : C.text }));
+      tr.appendChild(td(buys ? String(buys) : "—", { color: buys ? C.green : C.muted }));
+      tr.appendChild(td(sells ? String(sells) : "—", { color: sells ? C.red : C.muted }));
+      tr.appendChild(td(alerts ? "⚠ " + alerts : "—", { color: alerts ? C.gold : C.muted }));
+      t.appendChild(tr);
+    });
+    return card("Positioning Signal Summary", t);
+  }
+
+  function _posTable(rows) {
+    const wrap = el("div", { style: { maxHeight: "260px", overflow: "auto", border: `1px solid ${C.border}`, borderRadius: "8px" } });
+    const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "10.5px" } });
+    const heads = [["Strat", true], ["Inst", true], ["Level", false], ["Dist $", false], ["Dist %", false], ["Est", false], ["%LS", false], ["New", false]];
+    const thead = el("thead"), hr = el("tr");
+    heads.forEach(([h, left]) => hr.appendChild(el("th", { style: { position: "sticky", top: "0", background: "#0b1220", color: C.muted, fontSize: "9px", fontWeight: "700", padding: "5px 6px", textAlign: left ? "left" : "right", borderBottom: `1px solid ${C.border}` } }, h)));
+    thead.appendChild(hr); t.appendChild(thead);
+    const tb = el("tbody");
+    rows.forEach(rw => {
+      const inst = (rw.inst || "").toUpperCase();
+      const isBuy = inst.indexOf("BUY") === 0, isSell = inst.indexOf("SELL") === 0;
+      const isAlert = (rw.alert || "").toUpperCase() === "ALERT";
+      const bg = isAlert ? "rgba(245,185,15,0.12)" : isBuy ? "rgba(16,185,129,0.08)" : isSell ? "rgba(239,68,68,0.08)" : "transparent";
+      const tr = el("tr", { style: { background: bg, borderLeft: isAlert ? `3px solid ${C.gold}` : "3px solid transparent" } });
+      const famCol = rw.mset === "TREND" ? C.blue : rw.mset === "REVERSION" ? C.purple : rw.mset === "VALUE" ? C.cyan : C.muted;
+      const instCol = isBuy ? C.green : isSell ? C.red : C.muted;
+      const td = (v, opt) => el("td", { style: { padding: "4px 6px", textAlign: (opt && opt.left) ? "left" : "right", color: (opt && opt.color) || C.text, whiteSpace: "nowrap", ...(opt && opt.style || {}) } }, v);
+      tr.appendChild(td(rw.strategy || "", { left: true, color: famCol, style: { fontWeight: "600" } }));
+      tr.appendChild(td((isAlert ? "⚠ " : "") + (rw.inst || ""), { left: true, color: instCol, style: { fontWeight: "700" } }));
+      tr.appendChild(td(rw.level == null ? "—" : fmt(rw.level)));
+      tr.appendChild(td(rw.dist_usd == null ? "—" : fmt(rw.dist_usd)));
+      tr.appendChild(td(rw.dist_pct == null ? "—" : (rw.dist_pct * 100).toFixed(1) + "%"));
+      tr.appendChild(td(rw.est_lots == null ? "—" : fmt(rw.est_lots)));
+      tr.appendChild(td(rw.new_pct_ls == null ? "—" : (rw.new_pct_ls * 100).toFixed(0) + "%"));
+      tr.appendChild(td(rw.new_lots == null ? "—" : fmt(rw.new_lots), { color: rw.new_lots > 0 ? C.green : rw.new_lots < 0 ? C.red : C.text }));
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); wrap.appendChild(t); return wrap;
+  }
+
+  function _posCard(ins) {
+    const c = el("div", { style: { background: "linear-gradient(180deg,#0d1322 0%,#0a0f1b 100%)", border: `1px solid ${C.border}`, borderRadius: "12px", padding: "14px" } });
+    c.appendChild(el("div", { style: { fontSize: "12.5px", fontWeight: "700", color: C.text, marginBottom: "8px" } }, _posShortName(ins.title)));
+    const fam = ins.families || {};
+    const famRow = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "6px", marginBottom: "8px" } });
+    [["TREND", fam.trend], ["REVERSION", fam.reversion], ["VALUE", fam.value]].forEach(([lab, f]) => {
+      f = f || {}; const pct = f.pct;
+      const col = pct > 0.02 ? C.green : pct < -0.02 ? C.red : C.muted;
+      const b = el("div", { style: { textAlign: "center", padding: "6px", background: "#0b1220", borderRadius: "8px", border: `1px solid ${C.border}` } });
+      b.appendChild(el("div", { style: { fontSize: "8.5px", color: C.muted, letterSpacing: ".5px" } }, lab));
+      b.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: col } }, pct == null ? "—" : (pct * 100).toFixed(0) + "%"));
+      b.appendChild(el("div", { style: { fontSize: "9.5px", color: C.muted } }, "net " + fmt(f.net_lots)));
+      famRow.appendChild(b);
+    });
+    c.appendChild(famRow);
+    const pr = el("div", { style: { display: "flex", gap: "14px", fontSize: "11px", marginBottom: "8px", flexWrap: "wrap" } });
+    [["Last", ins.last], ["High", ins.high], ["Low", ins.low], ["Settle", ins.settle]].forEach(([l, v]) => {
+      pr.appendChild(el("span", {}, [el("span", { style: { color: C.muted } }, l + " "), el("b", { style: { color: C.text } }, v == null ? "—" : fmt(v))]));
+    });
+    c.appendChild(pr);
+    c.appendChild(_posTable(ins.rows || []));
+    return c;
+  }
+
+  async function renderLivePositioning(box) {
+    const section = el("div", { id: "live-pos-section", style: { marginBottom: "20px", display: "none" } });
+    box.appendChild(section);
+    const badge = el("span", { style: { fontSize: "10px", fontWeight: "800", letterSpacing: ".05em", borderRadius: "999px", padding: "3px 10px", whiteSpace: "nowrap", border: "1px solid #334155", color: C.muted, background: "#0b1220" } }, "○ NO LIVE FEED");
+    const updatedLbl = el("span", { style: { fontSize: "11px", color: C.muted } }, "");
+    section.appendChild(el("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px", flexWrap: "wrap" } }, [
+      el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.gold } }, "⚡ LIVE POSITIONING — Order Levels & Model Signals"),
+      badge, updatedLbl,
+    ]));
+    section.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "12px" } }, "Streamed live from your order-level workbook via the bridge (updates automatically). BUY levels shaded green, SELL red, triggered ALERT levels highlighted. Not investment advice."));
+    const summaryBox = el("div", {});
+    section.appendChild(summaryBox);
+    const grid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(460px,1fr))", gap: "12px" } });
+    section.appendChild(grid);
+
+    async function update() {
+      if (!document.body.contains(section)) return;
+      let d;
+      try { const r = await fetch("/api/positioning/live"); d = await r.json(); }
+      catch (e) { setTimeout(update, 10000); return; }
+      const insts = (d.data && d.data.instruments) || [];
+      if (!insts.length) { section.style.display = "none"; setTimeout(update, 10000); return; }
+      section.style.display = "block";
+      const s = d.stale_seconds;
+      if (s != null && s < 120) {
+        badge.textContent = `● LIVE · ${insts.length} instruments · ${Math.round(s)}s ago`;
+        badge.style.color = "#000"; badge.style.background = C.green; badge.style.borderColor = C.green;
+      } else {
+        const ago = s == null ? "?" : (s > 3600 ? Math.round(s / 3600) + "h" : s > 60 ? Math.round(s / 60) + "m" : Math.round(s) + "s");
+        badge.textContent = `○ STALE · last ${ago} ago`;
+        badge.style.color = C.gold; badge.style.background = "#0b1220"; badge.style.borderColor = C.gold;
+      }
+      updatedLbl.textContent = d.generated ? "updated " + new Date(d.generated).toLocaleTimeString() : "";
+      summaryBox.innerHTML = ""; summaryBox.appendChild(_posSummaryCard(insts));
+      grid.innerHTML = ""; insts.forEach(ins => grid.appendChild(_posCard(ins)));
+      setTimeout(update, 10000);
+    }
+    await update();
+  }
+
   // ========== MONEY POSITIONING ==========
   async function renderMP(box) {
     box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Money Positioning analysis...</div>';
@@ -111,12 +242,14 @@
     try { const r = await fetch("/api/money_positioning"); if (!r.ok) throw new Error(await r.text()); data = await r.json(); }
     catch (e) {
       box.innerHTML = "";
+      await renderLivePositioning(box);
       box.appendChild(el("div", { style: { color: C.muted, padding: "12px", fontSize: "12px", background: C.card, borderRadius: "8px", marginBottom: "16px" } }, "Note: OIES Money Positioning requires COTnew.xlsx upload. Showing multi-commodity COT below."));
       await renderCOTMultiInline(box);
       return;
     }
 
     box.innerHTML = "";
+    await renderLivePositioning(box);
     const s = data.summary || {}, decomp = data.decomposition || [], overlay = data.momentum_overlay || [], meth = data.methodology || {};
 
     // Title

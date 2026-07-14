@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
 app/live_ticks.json
+app/live_positioning.json
 bridge/bridge_config.json
