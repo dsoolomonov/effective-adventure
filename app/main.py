@@ -12939,6 +12939,29 @@ async def get_crude_balances():
     return _load_crude_balances()
 
 
+_CRUDE_BAL_V2_CACHE = None
+
+
+def _load_crude_bal_v2():
+    """Load the multi-sheet Crude Balances workbook export (per-region monthly
+    supply/demand/runs/balance and US PADD stocks & balances)."""
+    global _CRUDE_BAL_V2_CACHE
+    if _CRUDE_BAL_V2_CACHE is None:
+        path = os.path.join(os.path.dirname(__file__), "crude_bal_v2.json")
+        with open(path) as f:
+            _CRUDE_BAL_V2_CACHE = _json.load(f)
+    return _CRUDE_BAL_V2_CACHE
+
+
+@app.get("/api/crude_bal_v2")
+async def get_crude_bal_v2():
+    """Crude Balances by sheet (Med / NW Europe / Asia / Middle East / West
+    Africa / South America / Global / US). Each sheet carries monthly series
+    (kb/d, mb or ratio), an ordered chart/table list, the headline series, and
+    a data-driven recap+outlook. Values are model output, not investment advice."""
+    return _load_crude_bal_v2()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # ═══  PLATTS / S&P GLOBAL COMMODITY INSIGHTS (SPGCI)
 # ═══════════════════════════════════════════════════════════════════════════

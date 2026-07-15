@@ -4498,382 +4498,219 @@
     container.appendChild(el("div", { style: { height: "1px", background: C.border, margin: "10px 0 22px" } }));
   }
 
+  // ─── CRUDE BALANCES TAB (multi-sheet workbook: /api/crude_bal_v2) ───
+  // Dropdown selects a sheet; each view renders analysis → overall table →
+  // total-balance graph (first) → detail/statistical/seasonal charts.
   async function renderCBM(box) {
-    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Crude Balances & Margins…</div>';
-    let sheets, marginsData, marginsSummary;
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Crude Balances…</div>';
+    let blob;
     try {
-      const [sh, mg, ms] = await Promise.all([
-        fetch("/api/ea_bal/sheets").then(r => r.ok ? r.json() : null),
-        fetch("/api/ea_margins/data").then(r => r.ok ? r.json() : null),
-        fetch("/api/ea_margins/summary").then(r => r.ok ? r.json() : null),
-      ]);
-      sheets = sh; marginsData = mg; marginsSummary = ms;
-    } catch(e) { box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load: ${e.message}</div>`; return; }
+      const r = await fetch("/api/crude_bal_v2");
+      if (!r.ok) throw new Error(await r.text());
+      blob = await r.json();
+    } catch (e) {
+      box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load Crude Balances: ${e.message}</div>`;
+      return;
+    }
     box.innerHTML = "";
+    const sheets = (blob.sheets || []);
+    const anchor = blob.anchor || "2026-07";
+    if (!sheets.length) { box.innerHTML = '<div style="color:#94a3b8;padding:40px;">No data.</div>'; return; }
 
-    // Global crude balances dashboard (top of tab)
-    try { await renderCrudeBalances(box); } catch (e) { /* non-fatal */ }
+    const PAL = ["#38bdf8", "#f59e0b", "#22c55e", "#ef4444", "#8b5cf6", "#ec4899", "#22d3ee", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#e11d48"];
+    const YRCOL = { 2015: "#3f4a63", 2016: "#475569", 2017: "#5b6577", 2018: "#64748b", 2019: "#0ea5e9", 2020: "#ef4444", 2021: "#f59e0b", 2022: "#22c55e", 2023: "#3b82f6", 2024: "#8b5cf6", 2025: "#ec4899", 2026: "#ffffff", 2027: "#f5b90f" };
+    const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-    if (!sheets && !marginsData) { return; }
-
-    // ── STATE ──
-    let activeSheet = "demand";
-    let activeRegion = "ALL";
-    let activeMarginsRegion = "ALL";
-    let activeMarginsPeriod = "ALL";
-    const sheetLabels = {
-      demand: "Demand", exports: "Exports", imports: "Imports",
-      production: "Production", runs: "Refinery Runs",
-      statistical_difference: "Statistical Diff", storage: "Storage",
-    };
-
-    // ── MARGINS SUMMARY CARDS ──
-    if (marginsSummary && marginsSummary.margins && marginsSummary.margins.length) {
-      const mTitle = el("div", { style: { fontSize: "16px", fontWeight: "700", color: C.amber, marginBottom: "12px", borderBottom: "1px solid " + C.border, paddingBottom: "8px" } },
-        `🛢️ REFINING MARGINS — CDU/VDU Hydroskimming ($/bbl) — ${marginsSummary.date || ""}`);
-      box.appendChild(mTitle);
-      const cardGrid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "10px", marginBottom: "24px" } });
-      marginsSummary.margins.forEach(m => {
-        const chg = m.change || 0;
-        const arrow = chg >= 0 ? "▲" : "▼";
-        const chgColor = chg >= 0 ? "#22c55e" : "#ef4444";
-        const card = el("div", { style: { background: C.card, borderRadius: "8px", padding: "14px", border: "1px solid " + C.border } });
-        card.innerHTML = `<div style="color:${C.muted};font-size:11px;margin-bottom:6px;font-weight:600">${m.region}</div>
-          <div style="font-size:22px;font-weight:700;color:${C.text}">${m.value.toFixed(2)}</div>
-          <div style="font-size:12px;color:${chgColor}">${arrow} ${chg >= 0 ? "+" : ""}${chg.toFixed(2)} d/d</div>
-          <div style="font-size:11px;color:${C.muted};margin-top:4px">30d avg: ${m.avg_30d != null ? m.avg_30d.toFixed(2) : "N/A"}</div>`;
-        cardGrid.appendChild(card);
-      });
-      box.appendChild(cardGrid);
+    function seriesOf(sheet, grp, lbl) {
+      const g = sheet.groups.find(x => x.code === grp);
+      if (!g) return null;
+      return g.series.find(s => s.label === lbl) || null;
     }
+    function fmtVal(v, unit) {
+      if (v == null) return "—";
+      if (unit === "ratio") return (v * 100).toFixed(1) + "%";
+      return v.toLocaleString(undefined, { maximumFractionDigits: unit === "mb" ? 1 : 0 });
+    }
+    function unitLabel(u) { return u === "ratio" ? "%" : u; }
 
-    // ── MARGINS SECTION ──
-    if (marginsData && marginsData.data && marginsData.data.length) {
-      const margSect = el("div", { style: { marginBottom: "32px" } });
-      const margHead = el("div", { style: { display: "flex", alignItems: "center", gap: "16px", marginBottom: "14px", flexWrap: "wrap" } });
-      margHead.appendChild(el("span", { style: { fontSize: "14px", fontWeight: "700", color: C.amber } }, "📈 FORWARD MARGINS TIME SERIES"));
-      // Region filter
-      const margRegSel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "4px", padding: "4px 10px", fontSize: "12px" } });
-      ["ALL", ...marginsData.regions].forEach(r => {
-        const o = document.createElement("option"); o.value = r; o.textContent = r; margRegSel.appendChild(o);
-      });
-      margRegSel.value = activeMarginsRegion;
-      margHead.appendChild(el("span", { style: { color: C.muted, fontSize: "11px" } }, "Region:"));
-      margHead.appendChild(margRegSel);
-      // Period filter
-      const margPerSel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "4px", padding: "4px 10px", fontSize: "12px" } });
-      ["ALL", "5Y", "3Y", "2Y", "1Y"].forEach(p => {
-        const o = document.createElement("option"); o.value = p; o.textContent = p === "ALL" ? "All Time" : p; margPerSel.appendChild(o);
-      });
-      margPerSel.value = activeMarginsPeriod;
-      margHead.appendChild(el("span", { style: { color: C.muted, fontSize: "11px" } }, "Period:"));
-      margHead.appendChild(margPerSel);
-      margSect.appendChild(margHead);
-
-      const margChartDiv = el("div", { id: "cbm-margins-chart", style: { width: "100%", height: "500px", marginBottom: "16px" } });
-      margSect.appendChild(margChartDiv);
-      // Seasonal overlay chart
-      const margSeasonDiv = el("div", { id: "cbm-margins-seasonal", style: { width: "100%", height: "450px", marginBottom: "16px" } });
-      margSect.appendChild(margSeasonDiv);
-      // YoY comparison bar chart
-      const margYoyDiv = el("div", { id: "cbm-margins-yoy", style: { width: "100%", height: "400px", marginBottom: "16px" } });
-      margSect.appendChild(margYoyDiv);
-
-      box.appendChild(margSect);
-
-      function drawMarginsCharts() {
-        let filteredData = marginsData.data;
-        if (activeMarginsPeriod !== "ALL") {
-          const now = new Date();
-          const daysMap = { "1Y": 365, "2Y": 730, "3Y": 1095, "5Y": 1825 };
-          const cutoff = new Date(now.getTime() - (daysMap[activeMarginsPeriod] || 99999) * 86400000);
-          filteredData = filteredData.filter(d => new Date(d.date) >= cutoff);
-        }
-        let regionsToPlot = marginsData.regions;
-        if (activeMarginsRegion !== "ALL") {
-          regionsToPlot = regionsToPlot.filter(r => r === activeMarginsRegion);
-        }
-        const dates = filteredData.map(d => d.date);
-        const colors = ["#f59e0b", "#3b82f6", "#22c55e", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4"];
-        // Time series
-        const traces = regionsToPlot.map((r, i) => ({
-          x: dates, y: filteredData.map(d => d[r]), name: r, type: "scatter", mode: "lines",
-          line: { width: 2.5, color: colors[i % colors.length] },
-          hovertemplate: "%{x|%Y-%m-%d}<br>" + r + ": %{y:.2f} $/bbl<extra></extra>",
-        }));
-        Plotly.newPlot(margChartDiv, traces, {
-          title: { text: "CDU/VDU Hydroskimming Refining Margins ($/bbl)", font: { color: C.amber, size: 14 } },
-          xaxis: { color: C.muted, gridcolor: C.border, tickfont: { size: 10 } },
-          yaxis: { title: { text: "$/bbl", font: { color: C.muted, size: 11 } }, color: C.muted, gridcolor: C.border, zeroline: true, zerolinecolor: "#475569" },
-          paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-          legend: { font: { color: C.muted, size: 11 }, orientation: "h", y: -0.15 },
-          hovermode: "x unified", margin: { l: 60, r: 20, t: 40, b: 60 },
-        }, { responsive: true });
-
-        // Seasonal overlay
-        const yearData = {};
-        filteredData.forEach(d => {
-          const dt = new Date(d.date);
-          const yr = dt.getFullYear();
-          const doy = Math.floor((dt - new Date(yr, 0, 1)) / 86400000);
-          if (!yearData[yr]) yearData[yr] = [];
-          // Average across selected regions
-          let vals = regionsToPlot.map(r => d[r]).filter(v => v != null);
-          if (vals.length) yearData[yr].push({ doy, val: vals.reduce((a, b) => a + b, 0) / vals.length });
-        });
-        const yearColors = { 2018: "#64748b", 2019: "#64748b", 2020: "#ef4444", 2021: "#f59e0b", 2022: "#22c55e", 2023: "#3b82f6", 2024: "#8b5cf6", 2025: "#ec4899", 2026: "#ffffff" };
-        const seasonTraces = Object.entries(yearData).sort(([a], [b]) => a - b).map(([yr, pts]) => ({
-          x: pts.map(p => { const d2 = new Date(2020, 0, 1); d2.setDate(d2.getDate() + p.doy); return d2.toISOString().slice(5, 10); }),
-          y: pts.map(p => p.val),
-          name: yr, type: "scatter", mode: "lines",
-          line: { width: yr === "2026" || yr === "2025" ? 3 : 1.5, color: yearColors[yr] || "#64748b" },
-          opacity: yr >= "2023" ? 1 : 0.5,
-        }));
-        Plotly.newPlot(margSeasonDiv, seasonTraces, {
-          title: { text: `Margins Seasonal Overlay${activeMarginsRegion !== "ALL" ? " — " + activeMarginsRegion : " — Avg All Regions"} ($/bbl)`, font: { color: C.amber, size: 14 } },
-          xaxis: { color: C.muted, gridcolor: C.border, tickfont: { size: 10 }, title: { text: "Month", font: { color: C.muted } } },
-          yaxis: { title: { text: "$/bbl", font: { color: C.muted, size: 11 } }, color: C.muted, gridcolor: C.border, zeroline: true, zerolinecolor: "#475569" },
-          paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-          legend: { font: { color: C.muted, size: 11 }, orientation: "h", y: -0.18 },
-          hovermode: "x unified", margin: { l: 60, r: 20, t: 40, b: 70 },
-        }, { responsive: true });
-
-        // YoY comparison: average margin by year for each region
-        const yoyYears = [...new Set(filteredData.map(d => new Date(d.date).getFullYear()))].sort();
-        const last3Years = yoyYears.slice(-3);
-        const yoyTraces = last3Years.map((yr, i) => {
-          const yrData = filteredData.filter(d => new Date(d.date).getFullYear() === yr);
-          const vals = regionsToPlot.map(r => {
-            const v = yrData.map(d => d[r]).filter(x => x != null);
-            return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0;
-          });
-          return { x: regionsToPlot, y: vals.map(v => +v.toFixed(2)), name: String(yr), type: "bar",
-            marker: { color: colors[i % colors.length] } };
-        });
-        Plotly.newPlot(margYoyDiv, yoyTraces, {
-          title: { text: "Average Margin by Region — Year-over-Year ($/bbl)", font: { color: C.amber, size: 14 } },
-          xaxis: { color: C.muted }, yaxis: { title: { text: "$/bbl", font: { color: C.muted, size: 11 } }, color: C.muted, gridcolor: C.border },
-          barmode: "group", paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-          legend: { font: { color: C.muted, size: 11 } }, margin: { l: 60, r: 20, t: 40, b: 50 },
-        }, { responsive: true });
+    function baseLayout(title, yTitle, extra, months) {
+      const ly = JSON.parse(JSON.stringify(plotLayout));
+      ly.title = { text: title, font: { color: C.amber, size: 14 } };
+      ly.paper_bgcolor = "transparent"; ly.plot_bgcolor = "transparent";
+      ly.margin = { l: 70, r: 60, t: 44, b: 60 };
+      ly.yaxis = { title: { text: yTitle, font: { color: C.muted, size: 11 } }, gridcolor: "#1e293b", color: C.muted, separatethousands: true, zeroline: true, zerolinecolor: "#334155" };
+      ly.xaxis = { gridcolor: "#1e293b", color: C.muted, tickfont: { size: 10 } };
+      // forecast boundary marker
+      if (months && months.indexOf(anchor) >= 0 && months.indexOf(anchor) < months.length - 1) {
+        const ax = anchor + "-01";
+        ly.shapes = [{ type: "line", x0: ax, x1: ax, yref: "paper", y0: 0, y1: 1, line: { color: C.gold, width: 1, dash: "dot" } }];
+        ly.annotations = [{ x: ax, xanchor: "left", yref: "paper", y: 1.02, text: " forecast ▶", showarrow: false, font: { size: 10, color: C.muted } }];
       }
-
-      margRegSel.addEventListener("change", () => { activeMarginsRegion = margRegSel.value; drawMarginsCharts(); });
-      margPerSel.addEventListener("change", () => { activeMarginsPeriod = margPerSel.value; drawMarginsCharts(); });
-      loadPlotly(() => drawMarginsCharts());
+      return Object.assign(ly, extra || {});
     }
-
-    // ── CRUDE BALANCE SECTION ──
-    if (sheets && sheets.sheets) {
-      const balSect = el("div", { style: { marginBottom: "32px" } });
-      const balTitle = el("div", { style: { fontSize: "16px", fontWeight: "700", color: C.amber, marginBottom: "12px", borderBottom: "1px solid " + C.border, paddingBottom: "8px" } },
-        "📊 NWE / MED CRUDE BALANCE (kb/d)");
-      balSect.appendChild(balTitle);
-
-      // Controls row
-      const ctrlRow = el("div", { style: { display: "flex", gap: "16px", marginBottom: "14px", flexWrap: "wrap", alignItems: "center" } });
-      // Sheet selector
-      ctrlRow.appendChild(el("span", { style: { color: C.muted, fontSize: "11px" } }, "Category:"));
-      const sheetSel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "4px", padding: "6px 12px", fontSize: "12px" } });
-      Object.keys(sheets.sheets).forEach(s => {
-        const o = document.createElement("option"); o.value = s; o.textContent = sheetLabels[s] || s; sheetSel.appendChild(o);
+    function rolling(vals, w) {
+      return vals.map((_, i) => {
+        const s = vals.slice(Math.max(0, i - w + 1), i + 1).filter(v => v != null);
+        return s.length ? s.reduce((a, b) => a + b, 0) / s.length : null;
       });
-      sheetSel.value = activeSheet;
-      ctrlRow.appendChild(sheetSel);
-      // Region filter
-      ctrlRow.appendChild(el("span", { style: { color: C.muted, fontSize: "11px" } }, "Region:"));
-      const regSel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "4px", padding: "6px 12px", fontSize: "12px" } });
-      ["ALL", "NWE", "MED"].forEach(r => {
-        const o = document.createElement("option"); o.value = r; o.textContent = r === "ALL" ? "All Regions" : r; regSel.appendChild(o);
+    }
+    function yoy(vals) { return vals.map((v, i) => (i >= 12 && v != null && vals[i - 12] != null) ? v - vals[i - 12] : null); }
+
+    // ── header + dropdown ──
+    const hdr = el("div", { style: { display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px", flexWrap: "wrap" } });
+    hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "🛢️ Crude Balances"));
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "12px" } }, "Balance set:"));
+    const sel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "7px 14px", fontSize: "13px", fontWeight: "600" } });
+    sheets.forEach(s => { const o = document.createElement("option"); o.value = s.id; o.textContent = s.name; sel.appendChild(o); });
+    const defId = sheets.some(s => s.id === "global") ? "global" : sheets[0].id;
+    sel.value = defId;
+    hdr.appendChild(sel);
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", marginLeft: "auto" } }, "As of July 2026 · model output, not investment advice"));
+    box.appendChild(hdr);
+
+    const view = el("div");
+    box.appendChild(view);
+
+    function plot(div, traces, layout) { try { Plotly.newPlot(div, traces, layout, { responsive: true, displayModeBar: false }); } catch (e) { div.innerHTML = `<div style="color:#ef4444;padding:12px">${e.message}</div>`; } }
+    function chartDiv(h) { return el("div", { style: { width: "100%", height: (h || 420) + "px" } }); }
+
+    // total-balance bar trace (sign-coloured)
+    function balBar(x, vals, name, unit) {
+      return { x, y: vals, name: name, type: "bar", marker: { color: vals.map(v => v == null ? "#334155" : v >= 0 ? C.green : C.red) }, hovertemplate: "%{x|%Y-%m}<br>" + name + ": %{y:,.0f} " + unitLabel(unit) + "<extra></extra>" };
+    }
+    function lineTrace(x, vals, name, color, unit, width) {
+      return { x, y: vals, name, type: "scatter", mode: "lines", line: { width: width || 2, color }, connectgaps: false, hovertemplate: "%{x|%Y-%m}<br>" + name + ": %{y:,.1f} " + unitLabel(unit || "") + "<extra></extra>" };
+    }
+    // seasonal overlay of one series (month-of-year x, one trace per year)
+    function seasonalTraces(months, vals) {
+      const byYr = {};
+      months.forEach((m, i) => {
+        if (vals[i] == null) return;
+        const [y, mo] = m.split("-").map(Number);
+        (byYr[y] = byYr[y] || {})[mo - 1] = vals[i];
       });
-      regSel.value = activeRegion;
-      ctrlRow.appendChild(regSel);
-      balSect.appendChild(ctrlRow);
-
-      // Chart containers
-      const balChartDiv = el("div", { id: "cbm-bal-chart", style: { width: "100%", height: "500px", marginBottom: "16px" } });
-      balSect.appendChild(balChartDiv);
-      // Seasonal overlay
-      const balSeasonDiv = el("div", { id: "cbm-bal-seasonal", style: { width: "100%", height: "450px", marginBottom: "16px" } });
-      balSect.appendChild(balSeasonDiv);
-      // Stacked area for components
-      const balStackDiv = el("div", { id: "cbm-bal-stack", style: { width: "100%", height: "450px", marginBottom: "16px" } });
-      balSect.appendChild(balStackDiv);
-      // Data table
-      const balTableWrap = el("div", { id: "cbm-bal-table", style: { overflowX: "auto", marginBottom: "16px" } });
-      balSect.appendChild(balTableWrap);
-
-      box.appendChild(balSect);
-
-      // Cache fetched data
-      const sheetCache = {};
-
-      async function drawBalCharts() {
-        const sKey = `${activeSheet}_${activeRegion}`;
-        let sData = sheetCache[sKey];
-        if (!sData) {
-          try {
-            const url = activeRegion === "ALL" ? `/api/ea_bal/data?sheet=${activeSheet}` : `/api/ea_bal/data?sheet=${activeSheet}&region=${activeRegion}`;
-            const r = await fetch(url);
-            if (!r.ok) throw new Error(await r.text());
-            sData = await r.json();
-            sheetCache[sKey] = sData;
-          } catch(e) { balChartDiv.innerHTML = `<div style="color:#ef4444;padding:20px">Error: ${e.message}</div>`; return; }
-        }
-        if (!sData.data || !sData.data.length) {
-          balChartDiv.innerHTML = '<div style="color:#94a3b8;padding:20px">No data for this selection.</div>';
-          return;
-        }
-        const dates = sData.data.map(d => d.date);
-        const cols = sData.columns;
-        const colors = ["#f59e0b", "#3b82f6", "#22c55e", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#e11d48"];
-
-        // Time series
-        const traces = cols.map((c, i) => ({
-          x: dates, y: sData.data.map(d => d[c]), name: c, type: "scatter", mode: "lines",
-          line: { width: 2.5, color: colors[i % colors.length] },
-          hovertemplate: "%{x|%Y-%m}<br>" + c + ": %{y:,.0f} kb/d<extra></extra>",
-        }));
-        Plotly.newPlot(balChartDiv, traces, {
-          title: { text: `${sheetLabels[activeSheet] || activeSheet} — ${activeRegion === "ALL" ? "All Regions" : activeRegion} (kb/d)`, font: { color: C.amber, size: 14 } },
-          xaxis: { color: C.muted, gridcolor: C.border, tickfont: { size: 10 } },
-          yaxis: { title: { text: "kb/d", font: { color: C.muted, size: 11 } }, color: C.muted, gridcolor: C.border, separatethousands: true },
-          paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-          legend: { font: { color: C.muted, size: 11 }, orientation: "h", y: -0.15 },
-          hovermode: "x unified", margin: { l: 70, r: 20, t: 40, b: 60 },
-        }, { responsive: true });
-
-        // Seasonal overlay (aggregate all columns for this sheet)
-        const yearData = {};
-        sData.data.forEach(d => {
-          const dt = new Date(d.date);
-          const yr = dt.getFullYear();
-          const mo = dt.getMonth();
-          const total = cols.reduce((sum, c) => sum + (d[c] || 0), 0);
-          if (!yearData[yr]) yearData[yr] = {};
-          yearData[yr][mo] = total;
-        });
-        const yearColors = { 2017: "#64748b", 2018: "#64748b", 2019: "#64748b", 2020: "#ef4444", 2021: "#f59e0b", 2022: "#22c55e", 2023: "#3b82f6", 2024: "#8b5cf6", 2025: "#ec4899", 2026: "#ffffff" };
-        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        const seasonTraces = Object.entries(yearData).sort(([a], [b]) => a - b).map(([yr, moData]) => ({
-          x: Object.keys(moData).map(m => months[m]),
-          y: Object.values(moData),
-          name: yr, type: "scatter", mode: "lines+markers",
-          line: { width: yr >= "2025" ? 3 : 1.5, color: yearColors[yr] || "#64748b" },
-          marker: { size: yr >= "2025" ? 6 : 3 },
-          opacity: yr >= "2022" ? 1 : 0.4,
-        }));
-        Plotly.newPlot(balSeasonDiv, seasonTraces, {
-          title: { text: `${sheetLabels[activeSheet]} — Seasonal Overlay${activeRegion !== "ALL" ? " (" + activeRegion + ")" : ""} (kb/d)`, font: { color: C.amber, size: 14 } },
-          xaxis: { color: C.muted, gridcolor: C.border },
-          yaxis: { title: { text: "kb/d", font: { color: C.muted, size: 11 } }, color: C.muted, gridcolor: C.border, separatethousands: true },
-          paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-          legend: { font: { color: C.muted, size: 11 }, orientation: "h", y: -0.18 },
-          hovermode: "x unified", margin: { l: 70, r: 20, t: 40, b: 70 },
-        }, { responsive: true });
-
-        // Stacked area for multi-column sheets (imports, runs)
-        if (cols.length > 1) {
-          const stackTraces = cols.map((c, i) => ({
-            x: dates, y: sData.data.map(d => d[c] || 0), name: c, stackgroup: "one", type: "scatter",
-            fillcolor: colors[i % colors.length] + "80",
-            line: { width: 0.5, color: colors[i % colors.length] },
-            hovertemplate: "%{x|%Y-%m}<br>" + c + ": %{y:,.0f} kb/d<extra></extra>",
-          }));
-          Plotly.newPlot(balStackDiv, stackTraces, {
-            title: { text: `${sheetLabels[activeSheet]} — Stacked Breakdown (kb/d)`, font: { color: C.amber, size: 14 } },
-            xaxis: { color: C.muted, gridcolor: C.border },
-            yaxis: { title: { text: "kb/d", font: { color: C.muted, size: 11 } }, color: C.muted, gridcolor: C.border, separatethousands: true },
-            paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-            legend: { font: { color: C.muted, size: 10 }, orientation: "h", y: -0.15 },
-            hovermode: "x unified", margin: { l: 70, r: 20, t: 40, b: 60 },
-          }, { responsive: true });
-          balStackDiv.style.display = "block";
-        } else {
-          balStackDiv.style.display = "none";
-        }
-
-        // Data table — last 12 months
-        const last12 = sData.data.slice(-12).reverse();
-        let thtml = '<table style="width:100%;border-collapse:collapse;font-size:11px;color:' + C.text + '">';
-        thtml += '<thead><tr style="background:#1e293b;color:' + C.amber + '"><th style="padding:8px;text-align:left;border:1px solid ' + C.border + '">Date</th>';
-        cols.forEach(c => { thtml += `<th style="padding:8px;text-align:right;border:1px solid ${C.border}">${c}</th>`; });
-        if (cols.length > 1) thtml += `<th style="padding:8px;text-align:right;border:1px solid ${C.border}">Total</th>`;
-        thtml += '</tr></thead><tbody>';
-        last12.forEach((d, i) => {
-          const bg = i % 2 === 0 ? C.card : "#0f172a";
-          thtml += `<tr style="background:${bg}"><td style="padding:6px 8px;border:1px solid ${C.border}">${d.date}</td>`;
-          let total = 0;
-          cols.forEach(c => {
-            const v = d[c];
-            total += v || 0;
-            thtml += `<td style="padding:6px 8px;text-align:right;border:1px solid ${C.border}">${v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—"}</td>`;
-          });
-          if (cols.length > 1) thtml += `<td style="padding:6px 8px;text-align:right;border:1px solid ${C.border};font-weight:700">${total.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>`;
-          thtml += '</tr>';
-        });
-        thtml += '</tbody></table>';
-        balTableWrap.innerHTML = thtml;
-      }
-
-      sheetSel.addEventListener("change", () => { activeSheet = sheetSel.value; loadPlotly(() => drawBalCharts()); });
-      regSel.addEventListener("change", () => { activeRegion = regSel.value; loadPlotly(() => drawBalCharts()); });
-      loadPlotly(() => drawBalCharts());
+      return Object.keys(byYr).sort().map(y => {
+        const idx = Object.keys(byYr[y]).map(Number).sort((a, b) => a - b);
+        return { x: idx.map(i => MON[i]), y: idx.map(i => byYr[y][i]), name: y, type: "scatter", mode: "lines+markers", line: { width: (+y >= 2025 ? 3 : 1.5), color: YRCOL[y] || "#64748b" }, marker: { size: (+y >= 2025 ? 6 : 3) }, opacity: (+y >= 2022 ? 1 : 0.45) };
+      });
     }
 
-    // ── SUPPLY/DEMAND BALANCE OVERVIEW ──
-    if (sheets && sheets.sheets) {
-      const overviewSect = el("div", { style: { marginBottom: "32px" } });
-      overviewSect.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "700", color: C.amber, marginBottom: "12px", borderBottom: "1px solid " + C.border, paddingBottom: "8px" } },
-        "⚖️ SUPPLY vs DEMAND BALANCE — NWE + MED (kb/d)"));
-      const overviewChartDiv = el("div", { id: "cbm-overview-chart", style: { width: "100%", height: "500px", marginBottom: "16px" } });
-      overviewSect.appendChild(overviewChartDiv);
-      box.appendChild(overviewSect);
-
-      // Load all sheets for overview
-      async function drawOverview() {
-        try {
-          const [demandRes, prodRes, importsRes, exportsRes, storageRes] = await Promise.all([
-            fetch("/api/ea_bal/data?sheet=demand").then(r => r.ok ? r.json() : null),
-            fetch("/api/ea_bal/data?sheet=production").then(r => r.ok ? r.json() : null),
-            fetch("/api/ea_bal/data?sheet=imports").then(r => r.ok ? r.json() : null),
-            fetch("/api/ea_bal/data?sheet=exports").then(r => r.ok ? r.json() : null),
-            fetch("/api/ea_bal/data?sheet=storage").then(r => r.ok ? r.json() : null),
-          ]);
-          if (!demandRes || !prodRes) return;
-
-          const dates = demandRes.data.map(d => d.date);
-          // Sum demand columns
-          const totalDemand = demandRes.data.map(d => demandRes.columns.reduce((s, c) => s + (d[c] || 0), 0));
-          const totalProd = prodRes.data.map(d => prodRes.columns.reduce((s, c) => s + (d[c] || 0), 0));
-          // Total imports (sum all origins)
-          const totalImports = importsRes ? importsRes.data.map(d => importsRes.columns.reduce((s, c) => s + (d[c] || 0), 0)) : dates.map(() => 0);
-          const totalExports = exportsRes ? exportsRes.data.map(d => exportsRes.columns.reduce((s, c) => s + (d[c] || 0), 0)) : dates.map(() => 0);
-          // Supply = production + imports - exports
-          const supply = dates.map((_, i) => (totalProd[i] || 0) + (totalImports[i] || 0) - (totalExports[i] || 0));
-          // Balance = supply - demand
-          const balance = dates.map((_, i) => (supply[i] || 0) - (totalDemand[i] || 0));
-
-          const oTraces = [
-            { x: dates, y: supply, name: "Supply (Prod + Imports - Exports)", type: "scatter", mode: "lines", line: { width: 2.5, color: "#22c55e" } },
-            { x: dates, y: totalDemand, name: "Demand", type: "scatter", mode: "lines", line: { width: 2.5, color: "#ef4444" } },
-            { x: dates, y: balance, name: "Balance (Supply - Demand)", type: "bar",
-              marker: { color: balance.map(b => b >= 0 ? "rgba(34,197,94,0.6)" : "rgba(239,68,68,0.6)") }, yaxis: "y2" },
-          ];
-          Plotly.newPlot(overviewChartDiv, oTraces, {
-            title: { text: "NWE + MED Supply vs Demand Balance", font: { color: C.amber, size: 14 } },
-            xaxis: { color: C.muted, gridcolor: C.border },
-            yaxis: { title: { text: "kb/d", font: { color: C.muted, size: 11 } }, color: C.muted, gridcolor: C.border, separatethousands: true },
-            yaxis2: { title: { text: "Balance kb/d", font: { color: C.muted, size: 11 } }, color: C.muted, overlaying: "y", side: "right", gridcolor: "transparent" },
-            paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-            legend: { font: { color: C.muted, size: 11 }, orientation: "h", y: -0.15 },
-            hovermode: "x unified", margin: { l: 70, r: 70, t: 40, b: 60 },
-          }, { responsive: true });
-        } catch(e) { console.error("Overview error:", e); }
-      }
-      loadPlotly(() => drawOverview());
+    function overallTable(sheet, grp, order, maxCols) {
+      const months = sheet.months;
+      const start = Math.max(0, (months.indexOf(anchor) >= 0 ? months.indexOf(anchor) - 11 : months.length - 18));
+      const rows = [];
+      for (let i = months.length - 1; i >= start; i--) rows.push(i);
+      const cols = order.slice(0, maxCols || 8).map(o => ({ o, s: seriesOf(sheet, o.group, o.label) })).filter(x => x.s);
+      let h = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px;color:' + C.text + '">';
+      h += '<thead><tr style="background:#111a2e;color:' + C.amber + '"><th style="padding:7px 9px;text-align:left;border:1px solid ' + C.border + ';position:sticky;left:0;background:#111a2e">Month</th>';
+      cols.forEach(c => { h += `<th style="padding:7px 9px;text-align:right;border:1px solid ${C.border}">${c.s.label}<br><span style="color:${C.muted};font-weight:400">${unitLabel(c.s.unit)}</span></th>`; });
+      h += "</tr></thead><tbody>";
+      rows.forEach((i, ri) => {
+        const bg = ri % 2 ? "#0f172a" : C.card;
+        const fcst = months.indexOf(anchor) >= 0 && i >= months.indexOf(anchor);
+        h += `<tr style="background:${bg}"><td style="padding:5px 9px;border:1px solid ${C.border};position:sticky;left:0;background:${bg}">${months[i]}${fcst ? ' <span style="color:' + C.gold + ';font-size:9px">FCST</span>' : ""}</td>`;
+        cols.forEach(c => {
+          const v = c.s.values[i];
+          let col = C.text;
+          if (c.s.unit !== "ratio" && /balance/i.test(c.s.label) && v != null) col = v >= 0 ? C.green : C.red;
+          h += `<td style="padding:5px 9px;text-align:right;border:1px solid ${C.border};color:${col}">${fmtVal(v, c.s.unit)}</td>`;
+        });
+        h += "</tr>";
+      });
+      h += "</tbody></table></div>";
+      const w = el("div"); w.innerHTML = h; return w;
     }
+
+    function renderRegionalOrGlobal(sheet) {
+      const months = sheet.months, x = months.map(m => m + "-01");
+      const grp = sheet.groups[0];
+      const primary = sheet.primary[0];
+      const ps = seriesOf(sheet, primary.group, primary.label);
+      // analysis
+      view.appendChild(card("Analysis — " + sheet.name + " crude balance", sheet.analysis));
+      // overall table
+      view.appendChild(card("Overall table — recent months & forecast", overallTable(sheet, grp.code, sheet.order, 8)));
+      // 1) total balance (first graph)
+      const d1 = chartDiv(430); view.appendChild(card("Total balance (first) — " + primary.label + " (" + unitLabel(ps.unit) + ")", d1));
+      // detail line charts
+      const others = sheet.order.filter(o => o.label !== primary.label);
+      const ratioS = others.filter(o => (seriesOf(sheet, o.group, o.label) || {}).unit === "ratio");
+      const balS = others.filter(o => /balance/i.test(o.label) && (seriesOf(sheet, o.group, o.label) || {}).unit !== "ratio");
+      const flowS = others.filter(o => !ratioS.includes(o) && !balS.includes(o));
+      const d2 = balS.length ? chartDiv(400) : null; if (d2) view.appendChild(card("Balance breakdown — sweet / sour / total", d2));
+      const flowTitle = sheet.kind === "global" ? "Regional & sweet / sour balances" : "Supply, trade & runs";
+      const d3 = flowS.length ? chartDiv(420) : null; if (d3) view.appendChild(card(flowTitle, d3));
+      const d4 = ratioS.length ? chartDiv(340) : null; if (d4) view.appendChild(card("Refinery utilisation", d4));
+      // statistical
+      const d5 = chartDiv(400); view.appendChild(card("Statistical — 12-month rolling mean vs actual", d5));
+      const d6 = chartDiv(360); view.appendChild(card("Statistical — year-on-year change", d6));
+      // seasonal
+      const d7 = chartDiv(430); view.appendChild(card("Seasonal — " + primary.label + " by month, year overlay", d7));
+
+      plot(d1, [balBar(x, ps.values, primary.label, ps.unit)], baseLayout(sheet.name + " — " + primary.label, unitLabel(ps.unit), { barmode: "relative" }, months));
+      if (d2) plot(d2, balS.map((o, i) => { const s = seriesOf(sheet, o.group, o.label); return lineTrace(x, s.values, s.label, PAL[i % PAL.length], s.unit, 2); }).concat([lineTrace(x, ps.values, ps.label, "#ffffff", ps.unit, 2.5)]), baseLayout("Balance breakdown", unitLabel(ps.unit), {}, months));
+      if (d3) plot(d3, flowS.map((o, i) => { const s = seriesOf(sheet, o.group, o.label); return lineTrace(x, s.values, s.label, PAL[i % PAL.length], s.unit, 2); }), baseLayout(flowTitle, "kb/d", {}, months));
+      if (d4) plot(d4, ratioS.map((o, i) => { const s = seriesOf(sheet, o.group, o.label); return { x, y: s.values.map(v => v == null ? null : v * 100), name: s.label, type: "scatter", mode: "lines", line: { width: 2, color: PAL[i % PAL.length] }, connectgaps: false }; }), baseLayout("Refinery utilisation", "%", {}, months));
+      plot(d5, [lineTrace(x, ps.values, "Actual", "#334155", ps.unit, 1.2), lineTrace(x, rolling(ps.values, 12), "12m rolling mean", C.amber, ps.unit, 3)], baseLayout("Rolling mean", unitLabel(ps.unit), {}, months));
+      plot(d6, [balBar(x, yoy(ps.values), "YoY change", ps.unit)], baseLayout("Year-on-year change", unitLabel(ps.unit), {}, months));
+      plot(d7, seasonalTraces(months, ps.values), baseLayout("Seasonal overlay", unitLabel(ps.unit), { hovermode: "closest" }, null));
+    }
+
+    function renderUS(sheet) {
+      const months = sheet.months, x = months.map(m => m + "-01");
+      const stk = seriesOf(sheet, "US", "Stocks (mb)");
+      const bal = seriesOf(sheet, "US", "Balance");
+      view.appendChild(card("Analysis — United States crude stocks & balances", sheet.analysis));
+      view.appendChild(card("Overall table — US stocks, balance, supply & demand (recent & forecast)", overallTable(sheet, "US", sheet.order.filter(o => o.group === "US"), 9)));
+      // 1) stocks & balance first
+      const d1 = chartDiv(440); view.appendChild(card("Stocks & balance (first) — US crude stocks (mb) vs balance (kb/d)", d1));
+      const d2 = chartDiv(420); view.appendChild(card("Supply, demand, runs & production", d2));
+      const d3 = chartDiv(380); view.appendChild(card("Monthly stock change", d3));
+      const d4 = chartDiv(430); view.appendChild(card("Seasonal — US crude stocks by month, year overlay", d4));
+      const d5 = chartDiv(400); view.appendChild(card("Statistical — stocks 12-month rolling mean vs actual", d5));
+      // PADD / Cushing detail
+      const detHdr = el("div", { style: { display: "flex", gap: "10px", alignItems: "center", margin: "6px 0 4px" } });
+      detHdr.appendChild(el("span", { style: { color: C.muted, fontSize: "12px" } }, "Regional detail:"));
+      const gsel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "6px 12px", fontSize: "12px" } });
+      sheet.groups.filter(g => g.code !== "US").forEach(g => { const o = document.createElement("option"); o.value = g.code; o.textContent = g.name; gsel.appendChild(o); });
+      detHdr.appendChild(gsel);
+      view.appendChild(detHdr);
+      const dDetail = chartDiv(420); view.appendChild(card("Regional detail — stocks & balance", dDetail));
+
+      plot(d1, [
+        { x, y: stk.values, name: "Stocks (mb)", type: "scatter", mode: "lines", line: { width: 3, color: C.amber }, connectgaps: false, hovertemplate: "%{x|%Y-%m}<br>Stocks: %{y:,.1f} mb<extra></extra>" },
+        Object.assign(balBar(x, bal.values, "Balance (kb/d)", "kb/d"), { yaxis: "y2", opacity: 0.55 }),
+      ], baseLayout("US crude stocks & balance", "Stocks (mb)", { yaxis2: { title: { text: "Balance kb/d", font: { color: C.muted, size: 11 } }, overlaying: "y", side: "right", color: C.muted, gridcolor: "transparent", zeroline: true, zerolinecolor: "#334155" } }, months));
+      const flow = ["Supply", "Demand", "Runs", "Production", "Imports"].map((l, i) => { const s = seriesOf(sheet, "US", l); return s ? lineTrace(x, s.values, l, PAL[i % PAL.length], "kb/d", 2) : null; }).filter(Boolean);
+      plot(d2, flow, baseLayout("US supply / demand / runs", "kb/d", {}, months));
+      const sc = seriesOf(sheet, "US", "Stock Change (mb)");
+      if (sc) plot(d3, [balBar(x, sc.values, "Stock change", "mb")], baseLayout("US monthly stock change", "mb", {}, months));
+      plot(d4, seasonalTraces(months, stk.values), baseLayout("US stocks seasonal", "mb", { hovermode: "closest" }, null));
+      plot(d5, [lineTrace(x, stk.values, "Actual", "#334155", "mb", 1.2), lineTrace(x, rolling(stk.values, 12), "12m rolling mean", C.amber, "mb", 3)], baseLayout("US stocks rolling mean", "mb", {}, months));
+
+      function drawDetail() {
+        const g = gsel.value;
+        const gs = seriesOf(sheet, g, "Stocks (mb)");
+        const gb = seriesOf(sheet, g, "Balance");
+        const gname = (sheet.groups.find(x => x.code === g) || {}).name || g;
+        const tr = [];
+        if (gs) tr.push({ x, y: gs.values, name: "Stocks (mb)", type: "scatter", mode: "lines", line: { width: 3, color: C.amber }, connectgaps: false });
+        if (gb) tr.push(Object.assign(balBar(x, gb.values, "Balance (kb/d)", "kb/d"), { yaxis: "y2", opacity: 0.55 }));
+        plot(dDetail, tr, baseLayout(gname + " — stocks & balance", "Stocks (mb)", { yaxis2: { title: { text: "Balance kb/d", font: { color: C.muted, size: 11 } }, overlaying: "y", side: "right", color: C.muted, gridcolor: "transparent" } }, months));
+      }
+      gsel.addEventListener("change", drawDetail);
+      drawDetail();
+    }
+
+    function render(sheet) {
+      view.innerHTML = "";
+      if (sheet.kind === "us") renderUS(sheet); else renderRegionalOrGlobal(sheet);
+    }
+
+    sel.addEventListener("change", () => { const s = sheets.find(z => z.id === sel.value); if (s) loadPlotly(() => render(s)); });
+    loadPlotly(() => render(sheets.find(s => s.id === defId) || sheets[0]));
   }
+
 
 
   // ─── GENSCAPE EUROPE TAB ───
@@ -7260,7 +7097,7 @@
       { name: "Balances & Stocks", items: [
         { id: "gb", label: "Gasoline Balances", icon: "⛽" },
         { id: "jodi", label: "JODI Global", icon: "🌍" },
-        { id: "cbm", label: "Crude Bal & Margins", icon: "🛢️" },
+        { id: "cbm", label: "Crude Balances", icon: "🛢️" },
         { id: "lgb", label: "Local Gasoline Bal", icon: "⛽" },
         { id: "eabal", label: "Local Balances", icon: "🌐" },
         { id: "gs", label: "Gasoline Stocks", icon: "📊" },
