@@ -4712,6 +4712,167 @@
   }
 
 
+  // ─── PRODUCT STOCKS TAB (weekly hub stocks: /api/product_stocks) ───
+  // Region dropdown (Fujairah / ARA / Japan / Singapore); each view shows a
+  // retrospective, a latest-figures stats table, a combined history chart, and
+  // per-product history / seasonal / YoY detail.
+  async function renderPS(box) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Product Stocks…</div>';
+    let blob;
+    try {
+      const r = await fetch("/api/product_stocks");
+      if (!r.ok) throw new Error(await r.text());
+      blob = await r.json();
+    } catch (e) {
+      box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load Product Stocks: ${e.message}</div>`;
+      return;
+    }
+    box.innerHTML = "";
+    const regions = blob.regions || [];
+    if (!regions.length) { box.innerHTML = '<div style="color:#94a3b8;padding:40px;">No data.</div>'; return; }
+
+    const PAL = ["#22c55e", "#f59e0b", "#c084fc", "#38bdf8", "#ef4444", "#f9a8d4", "#94a3b8", "#14b8a6", "#f97316"];
+    const YRCOL = { 2019: "#3f4a63", 2020: "#475569", 2021: "#5b6577", 2022: "#64748b", 2023: "#0ea5e9", 2024: "#8b5cf6", 2025: "#ec4899", 2026: "#ffffff" };
+    const unitLbl = u => u === "kt" ? "kt" : "mmbbl";
+    const fmt1 = v => v == null ? "—" : v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const signCol = v => v == null ? C.muted : v >= 0 ? C.green : C.red;
+    const sfmt = v => v == null ? "—" : (v >= 0 ? "+" : "") + fmt1(v);
+
+    function plot(div, traces, layout) { try { Plotly.newPlot(div, traces, layout, { responsive: true, displayModeBar: false }); } catch (e) { div.innerHTML = `<div style="color:#ef4444;padding:12px">${e.message}</div>`; } }
+    function chartDiv(h) { return el("div", { style: { width: "100%", height: (h || 420) + "px" } }); }
+    function baseLayout(title, yTitle, extra) {
+      return Object.assign({
+        title: { text: title, font: { color: C.text, size: 13 } },
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+        font: { color: C.muted, size: 11 }, showlegend: true,
+        legend: { orientation: "h", y: -0.18, font: { size: 10 } },
+        margin: { l: 64, r: 30, t: 40, b: 60 },
+        yaxis: { title: { text: yTitle, font: { color: C.muted, size: 11 } }, gridcolor: "#1e293b", color: C.muted, separatethousands: true },
+        xaxis: { gridcolor: "#1e293b", color: C.muted, tickfont: { size: 10 } },
+      }, extra || {});
+    }
+
+    // stats over the last N points of a product
+    function stats(p) {
+      const pairs = p.dates.map((d, i) => [d, p.values[i]]).filter(x => x[1] != null);
+      if (!pairs.length) return null;
+      const n = pairs.length;
+      const latest = pairs[n - 1][1], latestD = pairs[n - 1][0];
+      const wow = n >= 2 ? latest - pairs[n - 2][1] : null;
+      const w4 = n >= 5 ? latest - pairs[n - 5][1] : null;
+      const yoy = n >= 53 ? latest - pairs[n - 53][1] : null;
+      const last52 = pairs.slice(-52).map(x => x[1]);
+      const lo = Math.min(...last52), hi = Math.max(...last52);
+      const win5 = pairs.slice(-260).map(x => x[1]).sort((a, b) => a - b);
+      const pctile = win5.length ? Math.round(100 * win5.filter(v => v <= latest).length / win5.length) : null;
+      return { latest, latestD, wow, w4, yoy, lo, hi, pctile };
+    }
+
+    function seasonal(p) {
+      const byYr = {};
+      p.dates.forEach((d, i) => {
+        if (p.values[i] == null) return;
+        const y = +d.slice(0, 4);
+        (byYr[y] = byYr[y] || []).push(["2000-" + d.slice(5), p.values[i]]);
+      });
+      return Object.keys(byYr).sort().map(y => ({
+        x: byYr[y].map(z => z[0]), y: byYr[y].map(z => z[1]), name: y,
+        type: "scatter", mode: "lines",
+        line: { width: (+y >= 2026 ? 3 : +y >= 2024 ? 2 : 1.2), color: YRCOL[y] || "#64748b" },
+        opacity: (+y >= 2023 ? 1 : 0.5),
+      }));
+    }
+    function rolling(vals, w) {
+      return vals.map((_, i) => { const s = vals.slice(Math.max(0, i - w + 1), i + 1).filter(v => v != null); return s.length ? s.reduce((a, b) => a + b, 0) / s.length : null; });
+    }
+    function yoyW(dates, vals) {
+      return vals.map((v, i) => (i >= 52 && v != null && vals[i - 52] != null) ? v - vals[i - 52] : null);
+    }
+
+    // ── header + region dropdown ──
+    const hdr = el("div", { style: { display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px", flexWrap: "wrap" } });
+    hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "🛢️ Product Stocks"));
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "12px" } }, "Hub:"));
+    const sel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "7px 14px", fontSize: "13px", fontWeight: "600" } });
+    regions.forEach(rg => { const o = document.createElement("option"); o.value = rg.id; o.textContent = rg.name; sel.appendChild(o); });
+    hdr.appendChild(sel);
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", marginLeft: "auto" } }, "Weekly refined-product stocks · as of " + (blob.as_of || "")));
+    box.appendChild(hdr);
+
+    const view = el("div");
+    box.appendChild(view);
+
+    function latestTable(rg) {
+      let h = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px;color:' + C.text + '">';
+      h += '<thead><tr style="background:#111a2e;color:' + C.amber + '">';
+      ["Product", "Latest (" + unitLbl(rg.unit) + ")", "As of", "WoW", "4-wk Δ", "YoY", "52w low", "52w high", "5y %ile"].forEach((c, i) => {
+        h += `<th style="padding:7px 9px;text-align:${i === 0 ? "left" : "right"};border:1px solid ${C.border}">${c}</th>`;
+      });
+      h += "</tr></thead><tbody>";
+      rg.products.forEach((p, ri) => {
+        const s = stats(p); if (!s) return;
+        const bg = ri % 2 ? "#0f172a" : C.card;
+        h += `<tr style="background:${bg}">`;
+        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:left">${p.name}</td>`;
+        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;font-weight:700">${fmt1(s.latest)}</td>`;
+        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${C.muted}">${s.latestD}</td>`;
+        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${signCol(s.wow)}">${sfmt(s.wow)}</td>`;
+        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${signCol(s.w4)}">${sfmt(s.w4)}</td>`;
+        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${signCol(s.yoy)}">${sfmt(s.yoy)}</td>`;
+        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${C.muted}">${fmt1(s.lo)}</td>`;
+        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${C.muted}">${fmt1(s.hi)}</td>`;
+        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right">${s.pctile == null ? "—" : s.pctile + "%"}</td>`;
+        h += "</tr>";
+      });
+      h += "</tbody></table></div>";
+      const w = el("div"); w.innerHTML = h; return w;
+    }
+
+    function render(rg) {
+      view.innerHTML = "";
+      const u = unitLbl(rg.unit);
+      // retrospective analysis
+      view.appendChild(card("Retrospective — " + rg.name + " product stocks", rg.analysis));
+      // latest figures table
+      view.appendChild(card("Latest figures & stats", latestTable(rg)));
+      // combined history (all products)
+      const dC = chartDiv(460);
+      view.appendChild(card(rg.name + " product stocks history (weekly)", dC));
+      plot(dC, rg.products.map((p, i) => ({
+        x: p.dates, y: p.values, name: p.name, type: "scatter", mode: "lines",
+        line: { width: 1.8, color: PAL[i % PAL.length] }, connectgaps: false,
+        hovertemplate: "%{x}<br>" + p.name + ": %{y:,.1f} " + u + "<extra></extra>",
+      })), baseLayout(rg.name + " — all products", u));
+
+      // per-product detail selector
+      const drow = el("div", { style: { display: "flex", alignItems: "center", gap: "10px", margin: "6px 0 12px" } });
+      drow.appendChild(el("span", { style: { color: C.muted, fontSize: "12px" } }, "Product detail:"));
+      const psel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "6px 12px", fontSize: "12px" } });
+      rg.products.forEach(p => { const o = document.createElement("option"); o.value = p.name; o.textContent = p.name; psel.appendChild(o); });
+      drow.appendChild(psel);
+      view.appendChild(drow);
+
+      const dHist = chartDiv(380); view.appendChild(card("Product history & 4-week average", dHist));
+      const dSeas = chartDiv(400); view.appendChild(card("Seasonal — weekly stocks by year", dSeas));
+      const dYoy = chartDiv(320); view.appendChild(card("Year-on-year change", dYoy));
+
+      function drawDetail() {
+        const p = rg.products.find(z => z.name === psel.value) || rg.products[0];
+        plot(dHist, [
+          { x: p.dates, y: p.values, name: p.name, type: "scatter", mode: "lines", line: { width: 1.5, color: "#334155" }, connectgaps: false },
+          { x: p.dates, y: rolling(p.values, 4), name: "4-wk avg", type: "scatter", mode: "lines", line: { width: 2.5, color: C.amber }, connectgaps: false },
+        ], baseLayout(p.name + " — history", u));
+        plot(dSeas, seasonal(p), baseLayout(p.name + " — seasonal (year overlay)", u, { xaxis: { tickformat: "%b", gridcolor: "#1e293b", color: C.muted }, hovermode: "closest" }));
+        plot(dYoy, [{ x: p.dates, y: yoyW(p.dates, p.values), name: "YoY Δ", type: "bar", marker: { color: yoyW(p.dates, p.values).map(v => v == null ? "#334155" : v >= 0 ? C.green : C.red) } }], baseLayout(p.name + " — YoY change", u));
+      }
+      psel.addEventListener("change", drawDetail);
+      drawDetail();
+    }
+
+    sel.addEventListener("change", () => { const rg = regions.find(z => z.id === sel.value); if (rg) loadPlotly(() => render(rg)); });
+    loadPlotly(() => render(regions[0]));
+  }
+
 
   // ─── GENSCAPE EUROPE TAB ───
   async function renderGspeEurope(box) {
@@ -7101,6 +7262,7 @@
         { id: "lgb", label: "Local Gasoline Bal", icon: "⛽" },
         { id: "eabal", label: "Local Balances", icon: "🌐" },
         { id: "gs", label: "Gasoline Stocks", icon: "📊" },
+        { id: "ps", label: "Product Stocks", icon: "🛢️" },
       ]},
       { name: "Refineries", items: [
         { id: "gspe", label: "Genscape Refinery", icon: "🏭" },
@@ -7164,6 +7326,7 @@
       if (id === "lgb" && !panes.lgb._loaded) { panes.lgb._loaded = true; renderLEM(panes.lgb); }
       if (id === "eabal" && !panes.eabal._loaded) { panes.eabal._loaded = true; renderEABal(panes.eabal); }
       if (id === "gs" && !panes.gs._loaded) { panes.gs._loaded = true; renderGS(panes.gs); }
+      if (id === "ps" && !panes.ps._loaded) { panes.ps._loaded = true; renderPS(panes.ps); }
       if (id === "platts" && !panes.platts._loaded) { panes.platts._loaded = true; renderPlatts(panes.platts); }
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }

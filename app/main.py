@@ -12962,6 +12962,28 @@ async def get_crude_bal_v2():
     return _load_crude_bal_v2()
 
 
+_PRODUCT_STOCKS_CACHE = None
+
+
+def _load_product_stocks():
+    """Load weekly refined-product stocks by hub (Fujairah / ARA / Japan /
+    Singapore), each with per-product weekly history and a data-driven recap."""
+    global _PRODUCT_STOCKS_CACHE
+    if _PRODUCT_STOCKS_CACHE is None:
+        path = os.path.join(os.path.dirname(__file__), "product_stocks.json")
+        with open(path) as f:
+            _PRODUCT_STOCKS_CACHE = _json.load(f)
+    return _PRODUCT_STOCKS_CACHE
+
+
+@app.get("/api/product_stocks")
+async def get_product_stocks():
+    """Weekly refined-product stocks by hub: Fujairah, ARA, Japan (PAJ),
+    Singapore (Enterprise). Each region carries per-product weekly series
+    (million barrels, ARA in kt) plus a data-driven retrospective."""
+    return _load_product_stocks()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # ═══  PLATTS / S&P GLOBAL COMMODITY INSIGHTS (SPGCI)
 # ═══════════════════════════════════════════════════════════════════════════
