@@ -97,15 +97,20 @@ def read_excel(cfg):
     import xlwings as xw
 
     wb_name = cfg.get("workbook", "active")
-    pos_wb = ((cfg.get("positioning") or {}).get("workbook") or "")
-    pos_base = os.path.basename(pos_wb) if pos_wb else ""
+    # Books that are NOT the prices workbook (positioning + volume/OI). When the
+    # prices workbook is auto-selected ("active"), never read prices from these.
+    other_bases = set()
+    for key in ("positioning", "voloi"):
+        w = ((cfg.get(key) or {}).get("workbook") or "")
+        if w:
+            other_bases.add(os.path.basename(w))
     if wb_name in ("active", "", None):
         wb = xw.books.active
-        # If the focused book is the positioning workbook, read prices from a
-        # different open book instead (so having both open doesn't clobber prices).
-        if pos_base and wb is not None and wb.name == pos_base:
+        # If the focused book is one of the non-price books, read prices from a
+        # different open book instead (so having them open doesn't clobber prices).
+        if wb is not None and wb.name in other_bases:
             for b in xw.books:
-                if b.name != pos_base:
+                if b.name not in other_bases:
                     wb = b
                     break
     else:
