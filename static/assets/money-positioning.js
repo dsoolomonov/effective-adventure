@@ -5001,8 +5001,11 @@
         if (oiv[i] == null || px[i] == null) continue;
         if (lastIdx != null) {
           const dOI = oiv[i] - oiv[lastIdx], dP = px[i] - px[lastIdx];
+          const prevOI = oiv[lastIdx];
           let reg = "—";
-          if (dOI > 0 && dP > 0) reg = "New longs";
+          // huge one-day OI jump on the generic front = contract roll, not flow
+          if (prevOI && Math.abs(dOI) > 0.4 * prevOI) reg = "Contract roll";
+          else if (dOI > 0 && dP > 0) reg = "New longs";
           else if (dOI > 0 && dP < 0) reg = "New shorts";
           else if (dOI < 0 && dP > 0) reg = "Short covering";
           else if (dOI < 0 && dP < 0) reg = "Long liquidation";
