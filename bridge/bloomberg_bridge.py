@@ -370,6 +370,35 @@ def _is_dt(v):
     return isinstance(v, (_dt.datetime, _dt.date))
 
 
+def _coerce_dt(v):
+    """Return a datetime from either a real datetime/date OR an Excel serial
+    number. Some sheets hand xlwings the timestamp as a raw serial (float) rather
+    than a date-typed value, which would otherwise be dropped and freeze the feed."""
+    import datetime as _dt
+    if isinstance(v, _dt.datetime):
+        return v
+    if isinstance(v, _dt.date):
+        return _dt.datetime(v.year, v.month, v.day)
+    # Excel 1900 date system: serial days since 1899-12-30. Bound the range so a
+    # plain price (e.g. 88.3) is never mistaken for a date. 30000..80000 ~= 1982..2119.
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and 30000 < v < 80000:
+        return _dt.datetime(1899, 12, 30) + _dt.timedelta(days=float(v))
+    return None
+
+
+def _read_range_retry(sheet, addr, tries=3):
+    """Read a fixed range, retrying transient Excel-busy COM errors. Reading a
+    fixed range (not used_range) avoids UsedRange lag when RTD writes new rows."""
+    last = None
+    for _ in range(tries):
+        try:
+            return sheet.range(addr).value
+        except Exception as e:  # noqa: BLE001
+            last = e
+            time.sleep(0.4)
+    raise last
+
+
 def _fmt_dt(v, with_time):
     return v.strftime("%Y-%m-%dT%H:%M" if with_time else "%Y-%m-%d")
 
@@ -400,18 +429,21 @@ def read_voloi_excel(cfg, tail=800):
     for code, meta in _VOLOI_INTRADAY.items():
         if meta["sheet"] not in names:
             continue
-        vals = wb.sheets[meta["sheet"]].used_range.value
+        vals = _read_range_retry(wb.sheets[meta["sheet"]], "A1:C9000")
         if not isinstance(vals, list):
             continue
         t, p, v = [], [], []
         for r in vals[3:]:
-            if not isinstance(r, list) or not r or not _is_dt(r[0]):
+            if not isinstance(r, list) or len(r) < 3:
+                continue
+            dt = _coerce_dt(r[0])
+            if dt is None:
                 continue
             if not isinstance(r[1], (int, float)) or isinstance(r[1], bool):
                 continue
             if not isinstance(r[2], (int, float)) or isinstance(r[2], bool):
                 continue
-            t.append(_fmt_dt(r[0], True))
+            t.append(_fmt_dt(dt, True))
             p.append(round(float(r[1]), 4))
             v.append(int(r[2]))
         if t:
@@ -422,18 +454,21 @@ def read_voloi_excel(cfg, tail=800):
     for comm, meta in _VOLOI_OI.items():
         if meta["sheet"] not in names:
             continue
-        vals = wb.sheets[meta["sheet"]].used_range.value
+        vals = _read_range_retry(wb.sheets[meta["sheet"]], "A1:H2000")
         if not isinstance(vals, list):
             continue
         contracts = []
         for bcol, ccode in ((0, meta["c1"]), (5, meta["c2"])):
             recs = []
             for r in vals[3:]:
-                if not isinstance(r, list) or bcol >= len(r) or not _is_dt(r[bcol]):
+                if not isinstance(r, list) or bcol >= len(r):
+                    continue
+                d = _coerce_dt(r[bcol])
+                if d is None:
                     continue
                 px = r[bcol + 1] if bcol + 1 < len(r) else None
                 oiv = r[bcol + 2] if bcol + 2 < len(r) else None
-                recs.append((r[bcol],
+                recs.append((d,
                              float(px) if isinstance(px, (int, float)) and not isinstance(px, bool) else None,
                              int(oiv) if isinstance(oiv, (int, float)) and not isinstance(oiv, bool) else None))
             recs.sort(key=lambda x: x[0])
@@ -627,7 +662,10 @@ def main():
                     if vres.get("error"):
                         print(f"[bridge] volume/OI push error: {vres['error']}")
                     else:
-                        print(f"[bridge] volume/OI pushed {nc} contracts "
+                        tails = " ".join(
+                            f"{c}->{(s['t'][-1][11:] if s.get('t') else '--')}"
+                            for c, s in vdata["intraday"].items())
+                        print(f"[bridge] volume/OI pushed {nc} contracts ({tails}) "
                               f"@ {time.strftime('%H:%M:%S')}")
                 else:
                     print("[bridge] volume/OI: no contracts parsed — check workbook")
