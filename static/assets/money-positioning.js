@@ -4874,6 +4874,334 @@
   }
 
 
+  // ─── VOLUME & OI TRACKER TAB (/api/voloi + live /api/voloi/live + COT) ───
+  // 3-min volume anomaly flags vs a rolling baseline, cumulative signed-volume
+  // (buying/selling pressure), daily OI regime (ΔOI vs Δprice), and a
+  // CFTC-COT correlation that produces a potential-direction read.
+  async function renderVOLOI(box) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Volume & OI Tracker…</div>';
+    let base, cot = null;
+    try {
+      const r = await fetch("/api/voloi");
+      if (!r.ok) throw new Error(await r.text());
+      base = await r.json();
+    } catch (e) {
+      box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load Volume & OI: ${e.message}</div>`;
+      return;
+    }
+    try { const rc = await fetch("/api/cot/net-positioning"); if (rc.ok) cot = await rc.json(); } catch (e) { cot = null; }
+
+    box.innerHTML = "";
+    const COMMS = ["Brent", "RBOB", "Gasoil"];
+    const CONTRACTS = { Brent: ["CO1", "CO2"], RBOB: ["XB1", "XB2"], Gasoil: ["QS1", "QS2"] };
+    const Z_ELEV = 2, Z_EXTREME = 3, BASE_WIN = 100, SESSION_BARS = 700;
+
+    const num = v => (typeof v === "number" && isFinite(v)) ? v : null;
+    const fmt = (v, d) => v == null ? "—" : v.toLocaleString(undefined, { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 });
+    const sgn = (v, d) => v == null ? "—" : (v >= 0 ? "+" : "") + fmt(v, d);
+    const sCol = v => v == null ? C.muted : v > 0 ? C.green : v < 0 ? C.red : C.muted;
+
+    function plot(div, traces, layout) { try { Plotly.newPlot(div, traces, layout, { responsive: true, displayModeBar: false }); } catch (e) { div.innerHTML = `<div style="color:#ef4444;padding:12px">${e.message}</div>`; } }
+    function chartDiv(h) { return el("div", { style: { width: "100%", height: (h || 380) + "px" } }); }
+    function baseLayout(title, extra) {
+      return Object.assign({
+        title: { text: title, font: { color: C.text, size: 13 } },
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+        font: { color: C.muted, size: 11 }, showlegend: true,
+        legend: { orientation: "h", y: -0.2, font: { size: 10 } },
+        margin: { l: 60, r: 60, t: 40, b: 55 },
+        xaxis: { gridcolor: "#1e293b", color: C.muted, tickfont: { size: 10 } },
+        yaxis: { gridcolor: "#1e293b", color: C.muted },
+      }, extra || {});
+    }
+
+    // merge live tail bars onto the shipped baseline (append newer timestamps)
+    function mergeLive(baseObj, live) {
+      const out = JSON.parse(JSON.stringify(baseObj));
+      if (!live || !live.data) return out;
+      const ld = live.data;
+      if (ld.intraday) {
+        Object.keys(ld.intraday).forEach(code => {
+          const b = out.intraday[code], l = ld.intraday[code];
+          if (!b) { out.intraday[code] = l; return; }
+          const last = b.t[b.t.length - 1];
+          l.t.forEach((ts, i) => { if (ts > last) { b.t.push(ts); b.p.push(l.p[i]); b.v.push(l.v[i]); } });
+          // update the final (in-progress) bar if same timestamp
+          const li = l.t.indexOf(last);
+          if (li >= 0) { b.p[b.p.length - 1] = l.p[li]; b.v[b.v.length - 1] = l.v[li]; }
+        });
+      }
+      if (ld.oi) out.oi = Object.assign(out.oi, ld.oi);
+      return out;
+    }
+
+    // rolling volume z-score + direction flags for a contract's bars
+    function anomalies(series) {
+      const t = series.t, p = series.p, v = series.v, n = v.length;
+      const z = new Array(n).fill(null), flag = new Array(n).fill(0), dir = new Array(n).fill(0);
+      for (let i = 0; i < n; i++) {
+        const s = v.slice(Math.max(0, i - BASE_WIN), i).filter(x => x != null);
+        if (s.length >= 20) {
+          const m = s.reduce((a, b) => a + b, 0) / s.length;
+          const sd = Math.sqrt(s.reduce((a, b) => a + (b - m) * (b - m), 0) / s.length) || 1;
+          z[i] = (v[i] - m) / sd;
+          flag[i] = Math.abs(z[i]) >= Z_EXTREME ? 2 : Math.abs(z[i]) >= Z_ELEV ? 1 : 0;
+          const dp = i > 0 && p[i] != null && p[i - 1] != null ? p[i] - p[i - 1] : 0;
+          dir[i] = dp > 0 ? 1 : dp < 0 ? -1 : 0;
+        }
+      }
+      return { z, flag, dir };
+    }
+    function sessionOf(ts) { return ts.slice(0, 10); }
+
+    // ── header ──
+    const hdr = el("div", { style: { display: "flex", alignItems: "center", gap: "14px", marginBottom: "14px", flexWrap: "wrap" } });
+    hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "📊 Volume & OI Tracker"));
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "12px" } }, "Contract:"));
+    const csel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "7px 12px", fontSize: "13px", fontWeight: "600" } });
+    COMMS.forEach(cm => CONTRACTS[cm].forEach(code => { const o = document.createElement("option"); o.value = code; o.textContent = (base.intraday[code] || {}).label || code; csel.appendChild(o); }));
+    hdr.appendChild(csel);
+    const liveBadge = el("span", { style: { fontSize: "11px", fontWeight: "700", padding: "3px 9px", borderRadius: "10px", background: "rgba(148,163,184,0.15)", color: C.muted } }, "○ baseline");
+    hdr.appendChild(liveBadge);
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", marginLeft: "auto" } }, "3-min bars · anomaly z-score vs " + BASE_WIN + "-bar baseline · not investment advice"));
+    box.appendChild(hdr);
+
+    const view = el("div");
+    box.appendChild(view);
+
+    let merged = base;
+
+    // ── COT spec signal (single CFTC Managed-Money series loaded on the platform) ──
+    function cotSignal() {
+      if (!cot || !cot.series || !cot.series.length) return null;
+      const s = cot.series, key = "Managed Money";
+      const vals = s.map(r => num(r[key])).filter(x => x != null);
+      if (vals.length < 6) return null;
+      const latest = vals[vals.length - 1];
+      const w1 = latest - vals[vals.length - 2];
+      const w4 = vals.length >= 5 ? latest - vals[vals.length - 5] : null;
+      const win = vals.slice(-104);
+      const lo = Math.min(...win), hi = Math.max(...win);
+      const pctile = Math.round(100 * win.filter(x => x <= latest).length / win.length);
+      const date = s[s.length - 1].date;
+      return { latest, w1, w4, pctile, lo, hi, date };
+    }
+
+    function oiRegime(commodity) {
+      const oi = merged.oi[commodity]; if (!oi) return null;
+      const c = oi.contracts[0]; // front contract
+      const dates = c.dates, px = c.px, oiv = c.oi;
+      // last valid OI (top rows lag / may be null)
+      let li = oiv.length - 1; while (li >= 0 && oiv[li] == null) li--;
+      let pi = li - 1; while (pi >= 0 && oiv[pi] == null) pi--;
+      if (li < 1 || pi < 0) return { oi, c, rows: [] };
+      const rows = [];
+      let lastIdx = null;
+      for (let i = 0; i < oiv.length; i++) {
+        if (oiv[i] == null || px[i] == null) continue;
+        if (lastIdx != null) {
+          const dOI = oiv[i] - oiv[lastIdx], dP = px[i] - px[lastIdx];
+          let reg = "—";
+          if (dOI > 0 && dP > 0) reg = "New longs";
+          else if (dOI > 0 && dP < 0) reg = "New shorts";
+          else if (dOI < 0 && dP > 0) reg = "Short covering";
+          else if (dOI < 0 && dP < 0) reg = "Long liquidation";
+          rows.push({ date: dates[i], px: px[i], oi: oiv[i], dOI, dP, reg });
+        }
+        lastIdx = i;
+      }
+      return { oi, c, rows, latest: rows[rows.length - 1] };
+    }
+
+    function directionCard(commodity, code, flow) {
+      const cs = cotSignal(), reg = oiRegime(commodity);
+      let score = 0; const notes = [];
+      if (cs) {
+        const t = cs.w4 != null ? cs.w4 : cs.w1;
+        if (t > 0) { score += 1; notes.push(`CFTC Managed-Money net ${sgn(cs.latest, 0)} and building (${sgn(t, 0)} over 4w, ${cs.pctile}%ile) — spec longs adding, bullish tilt.`); }
+        else if (t < 0) { score -= 1; notes.push(`CFTC Managed-Money net ${sgn(cs.latest, 0)} and trimming (${sgn(t, 0)} over 4w, ${cs.pctile}%ile) — spec longs cutting, bearish tilt.`); }
+        else notes.push(`CFTC Managed-Money net flat at ${fmt(cs.latest, 0)}.`);
+      }
+      if (reg && reg.latest) {
+        const r = reg.latest;
+        const m = { "New longs": 1, "Short covering": 0.5, "New shorts": -1, "Long liquidation": -0.5 }[r.reg] || 0;
+        score += m;
+        notes.push(`Latest OI regime: <b>${r.reg}</b> (ΔOI ${sgn(r.dOI, 0)}, Δprice ${sgn(r.dP, 2)}) — ${m > 0 ? "supportive" : m < 0 ? "negative" : "neutral"}.`);
+      }
+      if (flow != null) {
+        if (flow > 0) { score += 1; notes.push(`Intraday signed volume net <b>buying</b> this session (${sgn(flow, 0)} lots) — demand at the offer.`); }
+        else if (flow < 0) { score -= 1; notes.push(`Intraday signed volume net <b>selling</b> this session (${sgn(flow, 0)} lots) — supply at the bid.`); }
+      }
+      const lean = score >= 1 ? "BULLISH" : score <= -1 ? "BEARISH" : "MIXED / NEUTRAL";
+      const col = score >= 1 ? C.green : score <= -1 ? C.red : C.gold;
+      const wrap = el("div");
+      wrap.appendChild(el("div", { style: { fontSize: "17px", fontWeight: "800", color: col, marginBottom: "8px" } }, `Potential direction — ${commodity}: ${lean}  (score ${sgn(score, 1)})`));
+      const ul = el("div", { style: { color: C.text, fontSize: "12.5px", lineHeight: "1.7" } });
+      ul.innerHTML = notes.map(n => "• " + n).join("<br>");
+      wrap.appendChild(ul);
+      wrap.appendChild(el("div", { style: { color: C.muted, fontSize: "10.5px", marginTop: "8px" } }, "Blend of CFTC spec positioning + daily OI regime + intraday volume flow. Directional lean, not investment advice."));
+      return wrap;
+    }
+
+    function render(code) {
+      view.innerHTML = "";
+      const s = merged.intraday[code];
+      if (!s) { view.appendChild(card("", "No data for " + code)); return; }
+      const commodity = s.commodity, u = s.unit;
+      const an = anomalies(s);
+      const n = s.t.length;
+      const start = Math.max(0, n - SESSION_BARS);
+      const idx = []; for (let i = start; i < n; i++) idx.push(i);
+      const curSession = sessionOf(s.t[n - 1]);
+
+      // session flow (signed volume) + stats
+      let flow = 0, sessVol = 0, nElev = 0, nExt = 0, maxV = 0, maxVt = null;
+      for (let i = 0; i < n; i++) {
+        if (sessionOf(s.t[i]) === curSession) {
+          sessVol += s.v[i] || 0;
+          if (an.dir[i]) flow += (s.v[i] || 0) * an.dir[i];
+          if (an.flag[i] === 1) nElev++; if (an.flag[i] === 2) nExt++;
+          if ((s.v[i] || 0) > maxV) { maxV = s.v[i]; maxVt = s.t[i]; }
+        }
+      }
+      // direction / COT card first
+      view.appendChild(card("Direction read", directionCard(commodity, code, flow)));
+
+      // stat row
+      const stats = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: "8px" } });
+      const sc = (l, val, c) => { const b = el("div", { style: { background: C.card, border: "1px solid " + C.border, borderRadius: "8px", padding: "10px 12px", textAlign: "center" } }); b.appendChild(el("div", { style: { fontSize: "10px", color: C.muted, marginBottom: "3px" } }, l)); b.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "700", color: c || C.text } }, val)); return b; };
+      stats.appendChild(sc("Latest (" + u + ")", fmt(s.p[n - 1], 2)));
+      stats.appendChild(sc("Session volume", fmt(sessVol, 0)));
+      stats.appendChild(sc("Net signed vol", sgn(flow, 0), sCol(flow)));
+      stats.appendChild(sc("Elevated bars", String(nElev), nElev ? C.gold : C.muted));
+      stats.appendChild(sc("Extreme bars", String(nExt), nExt ? C.red : C.muted));
+      stats.appendChild(sc("Biggest bar", fmt(maxV, 0) + (maxVt ? " @" + maxVt.slice(11) : "")));
+      view.appendChild(card("Session snapshot — " + curSession + " (" + s.label + ")", stats));
+
+      // volume anomaly chart (recent session window)
+      const barCol = idx.map(i => an.flag[i] === 2 ? C.red : an.flag[i] === 1 ? C.gold : "#3b4d6b");
+      const dV = chartDiv(400);
+      view.appendChild(card("3-min volume with anomaly flags + price", dV));
+      plot(dV, [
+        { x: idx.map(i => s.t[i]), y: idx.map(i => s.v[i]), name: "Volume", type: "bar", marker: { color: barCol }, hovertemplate: "%{x}<br>vol %{y:,.0f}<extra></extra>" },
+        { x: idx.map(i => s.t[i]), y: idx.map(i => s.p[i]), name: "Price (" + u + ")", type: "scatter", mode: "lines", line: { color: "#38bdf8", width: 1.5 }, yaxis: "y2", hovertemplate: "%{x}<br>px %{y:,.2f}<extra></extra>" },
+      ], baseLayout(s.label + " — volume & price (last " + idx.length + " bars)", {
+        yaxis: { title: { text: "Volume (lots)", font: { size: 10, color: C.muted } }, gridcolor: "#1e293b", color: C.muted },
+        yaxis2: { title: { text: u, font: { size: 10, color: C.muted } }, overlaying: "y", side: "right", color: "#38bdf8", showgrid: false },
+      }));
+
+      // cumulative signed volume (buying/selling pressure) vs price
+      const cum = []; let acc = 0;
+      idx.forEach(i => { if (an.dir[i]) acc += (s.v[i] || 0) * an.dir[i]; cum.push(acc); });
+      const dOBV = chartDiv(320);
+      view.appendChild(card("Cumulative signed volume (buying vs selling pressure) vs price", dOBV));
+      plot(dOBV, [
+        { x: idx.map(i => s.t[i]), y: cum, name: "Cum. signed vol", type: "scatter", mode: "lines", line: { color: C.amber, width: 2 }, fill: "tozeroy", fillcolor: "rgba(245,158,11,0.10)" },
+        { x: idx.map(i => s.t[i]), y: idx.map(i => s.p[i]), name: "Price", type: "scatter", mode: "lines", line: { color: "#38bdf8", width: 1.4 }, yaxis: "y2" },
+      ], baseLayout("Pressure vs price — divergence flags absorption/exhaustion", {
+        yaxis: { title: { text: "Σ signed vol", font: { size: 10, color: C.muted } }, gridcolor: "#1e293b", color: C.muted, zeroline: true, zerolinecolor: "#334155" },
+        yaxis2: { title: { text: u, font: { size: 10, color: C.muted } }, overlaying: "y", side: "right", color: "#38bdf8", showgrid: false },
+      }));
+
+      // anomaly table (most recent flagged bars)
+      const flagged = [];
+      for (let i = n - 1; i >= 0 && flagged.length < 25; i--) if (an.flag[i]) flagged.push(i);
+      let h = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px;color:' + C.text + '">';
+      h += '<thead><tr style="background:#111a2e;color:' + C.amber + '">';
+      ["Time", "Price", "Δpx", "Volume", "×avg", "z", "Flag", "Flow"].forEach((c, i) => { h += `<th style="padding:6px 8px;text-align:${i === 0 ? "left" : "right"};border:1px solid ${C.border}">${c}</th>`; });
+      h += "</tr></thead><tbody>";
+      flagged.forEach((i, ri) => {
+        const bg = ri % 2 ? "#0f172a" : C.card;
+        const dp = i > 0 ? s.p[i] - s.p[i - 1] : null;
+        const mult = an.z[i] != null ? (1 + an.z[i] * 0) : null;
+        const s2 = s.v.slice(Math.max(0, i - BASE_WIN), i).filter(x => x != null);
+        const avg = s2.length ? s2.reduce((a, b) => a + b, 0) / s2.length : null;
+        const x = avg ? s.v[i] / avg : null;
+        const fl = an.flag[i] === 2 ? "EXTREME" : "Elevated";
+        const flc = an.flag[i] === 2 ? C.red : C.gold;
+        const flow = an.dir[i] > 0 ? "BUY" : an.dir[i] < 0 ? "SELL" : "—";
+        h += `<tr style="background:${bg}">`;
+        h += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:left">${s.t[i].replace("T", " ")}</td>`;
+        h += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right">${fmt(s.p[i], 2)}</td>`;
+        h += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right;color:${sCol(dp)}">${sgn(dp, 2)}</td>`;
+        h += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right;font-weight:700">${fmt(s.v[i], 0)}</td>`;
+        h += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right">${x == null ? "—" : x.toFixed(1) + "×"}</td>`;
+        h += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right">${an.z[i] == null ? "—" : an.z[i].toFixed(1)}</td>`;
+        h += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right;color:${flc};font-weight:700">${fl}</td>`;
+        h += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right;color:${an.dir[i] > 0 ? C.green : an.dir[i] < 0 ? C.red : C.muted}">${flow}</td>`;
+        h += "</tr>";
+      });
+      h += "</tbody></table></div>";
+      const tw = el("div"); tw.innerHTML = h;
+      view.appendChild(card("Recent volume anomalies (z ≥ " + Z_ELEV + ")", flagged.length ? tw : "No anomalies in the recent window."));
+
+      // ── Open Interest ──
+      const reg = oiRegime(commodity);
+      if (reg && reg.oi) {
+        const oi = reg.oi, cts = oi.contracts;
+        const dOI = chartDiv(360);
+        view.appendChild(card(commodity + " open interest & price (daily, 6 months)", dOI));
+        const traces = [];
+        const oiCol = ["#22c55e", "#8b5cf6"];
+        cts.forEach((c, k) => {
+          traces.push({ x: c.dates, y: c.oi, name: c.code + " OI", type: "scatter", mode: "lines", line: { color: oiCol[k], width: 2 }, connectgaps: false });
+        });
+        traces.push({ x: cts[0].dates, y: cts[0].px, name: cts[0].code + " price", type: "scatter", mode: "lines", line: { color: "#38bdf8", width: 1.4 }, yaxis: "y2", connectgaps: false });
+        plot(dOI, traces, baseLayout(commodity + " — OI (front/2nd) vs front price", {
+          yaxis: { title: { text: "Open interest", font: { size: 10, color: C.muted } }, gridcolor: "#1e293b", color: C.muted },
+          yaxis2: { title: { text: oi.unit, font: { size: 10, color: C.muted } }, overlaying: "y", side: "right", color: "#38bdf8", showgrid: false },
+        }));
+
+        // OI regime table (recent 15 days)
+        const rr = reg.rows.slice(-15).reverse();
+        let oh = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px;color:' + C.text + '">';
+        oh += '<thead><tr style="background:#111a2e;color:' + C.amber + '">';
+        ["Date", "Price", "ΔPrice", "OI", "ΔOI", "Regime"].forEach((c, i) => { oh += `<th style="padding:6px 8px;text-align:${i === 0 ? "left" : "right"};border:1px solid ${C.border}">${c}</th>`; });
+        oh += "</tr></thead><tbody>";
+        const regCol = { "New longs": C.green, "Short covering": "#4ade80", "New shorts": C.red, "Long liquidation": "#f87171" };
+        rr.forEach((r, ri) => {
+          const bg = ri % 2 ? "#0f172a" : C.card;
+          oh += `<tr style="background:${bg}">`;
+          oh += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:left">${r.date}</td>`;
+          oh += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right">${fmt(r.px, 2)}</td>`;
+          oh += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right;color:${sCol(r.dP)}">${sgn(r.dP, 2)}</td>`;
+          oh += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right">${fmt(r.oi, 0)}</td>`;
+          oh += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right;color:${sCol(r.dOI)}">${sgn(r.dOI, 0)}</td>`;
+          oh += `<td style="padding:4px 8px;border:1px solid ${C.border};text-align:right;color:${regCol[r.reg] || C.muted};font-weight:700">${r.reg}</td>`;
+          oh += "</tr>";
+        });
+        oh += "</tbody></table></div>";
+        const ow = el("div"); ow.innerHTML = oh;
+        view.appendChild(card("OI regime — ΔOI vs Δprice (front contract, last 15 days)", ow));
+      }
+    }
+
+    // live polling
+    async function refreshLive() {
+      try {
+        const r = await fetch("/api/voloi/live");
+        if (!r.ok) return;
+        const live = await r.json();
+        const fresh = live && live.stale_seconds != null && live.stale_seconds < 120 && live.data && live.data.intraday && Object.keys(live.data.intraday).length;
+        if (fresh) {
+          merged = mergeLive(base, live);
+          liveBadge.textContent = "● LIVE";
+          liveBadge.style.background = "rgba(34,197,94,0.18)"; liveBadge.style.color = C.green;
+        } else {
+          merged = base;
+          liveBadge.textContent = "○ baseline";
+          liveBadge.style.background = "rgba(148,163,184,0.15)"; liveBadge.style.color = C.muted;
+        }
+      } catch (e) { /* keep baseline */ }
+    }
+
+    csel.addEventListener("change", () => loadPlotly(() => render(csel.value)));
+    await refreshLive();
+    loadPlotly(() => render(csel.value));
+    setInterval(async () => { await refreshLive(); loadPlotly(() => render(csel.value)); }, 20000);
+  }
+
+
   // ─── GENSCAPE EUROPE TAB ───
   async function renderGspeEurope(box) {
     box.innerHTML = "";
@@ -7252,6 +7580,7 @@
       ]},
       { name: "Positioning & Pricing", items: [
         { id: "mp", label: "Money Positioning", icon: "💰" },
+        { id: "voloi", label: "Volume & OI Tracker", icon: "📊" },
         { id: "pricing", label: "Pricing", icon: "🏷️" },
         { id: "margins", label: "Refinery Margins", icon: "📈" },
       ]},
@@ -7327,6 +7656,7 @@
       if (id === "eabal" && !panes.eabal._loaded) { panes.eabal._loaded = true; renderEABal(panes.eabal); }
       if (id === "gs" && !panes.gs._loaded) { panes.gs._loaded = true; renderGS(panes.gs); }
       if (id === "ps" && !panes.ps._loaded) { panes.ps._loaded = true; renderPS(panes.ps); }
+      if (id === "voloi" && !panes.voloi._loaded) { panes.voloi._loaded = true; renderVOLOI(panes.voloi); }
       if (id === "platts" && !panes.platts._loaded) { panes.platts._loaded = true; renderPlatts(panes.platts); }
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }

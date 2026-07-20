@@ -325,6 +325,122 @@ def read_positioning_excel(cfg):
     return parse_positioning(vals)
 
 
+def push_voloi(platform_url, token, data, source="bloomberg-bridge"):
+    """POST the latest 3-min volume/price bars + daily OI to the platform."""
+    url = platform_url.rstrip("/") + "/api/voloi/live"
+    body = json.dumps({"data": data, "source": source}).encode()
+    req = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"Content-Type": "application/json", "X-Ingest-Token": token},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}: {e.read().decode()[:200]}"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+
+# ─── Volume & OI workbook (3-min bars + daily OI) parsing ───────────────────
+# Intraday sheets carry [timestamp, last_price, volume] from row 4; daily OI
+# sheets carry two contracts side-by-side (cols 0-2 and 5-7), newest-first.
+_VOLOI_INTRADAY = {
+    "CO1": {"sheet": "CO1_3min", "commodity": "Brent", "label": "Brent CO1 (front)", "unit": "$/bbl"},
+    "CO2": {"sheet": "CO2_3min", "commodity": "Brent", "label": "Brent CO2 (2nd)", "unit": "$/bbl"},
+    "XB1": {"sheet": "XB1_3min", "commodity": "RBOB", "label": "RBOB XB1 (front)", "unit": "\u00a2/gal"},
+    "XB2": {"sheet": "XB2_3min", "commodity": "RBOB", "label": "RBOB XB2 (2nd)", "unit": "\u00a2/gal"},
+    "QS1": {"sheet": "QS1_3min", "commodity": "Gasoil", "label": "Gasoil QS1 (front)", "unit": "$/t"},
+    "QS2": {"sheet": "QS2_3min", "commodity": "Gasoil", "label": "Gasoil QS2 (2nd)", "unit": "$/t"},
+}
+_VOLOI_OI = {
+    "Brent": {"sheet": "Brent_Daily_OI", "unit": "$/bbl", "c1": "CO1", "c2": "CO2"},
+    "RBOB": {"sheet": "RBOB_Daily_OI", "unit": "\u00a2/gal", "c1": "XB1", "c2": "XB2"},
+    "Gasoil": {"sheet": "Gasoil_Daily_OI", "unit": "$/t", "c1": "QS1", "c2": "QS2"},
+}
+
+
+def _is_dt(v):
+    import datetime as _dt
+    return isinstance(v, (_dt.datetime, _dt.date))
+
+
+def _fmt_dt(v, with_time):
+    return v.strftime("%Y-%m-%dT%H:%M" if with_time else "%Y-%m-%d")
+
+
+def read_voloi_excel(cfg, tail=800):
+    """Read the Volume/OI workbook (by name, open alongside the others) and
+    return {intraday:{code:{...,t,p,v}}, oi:{commodity:{contracts:[...]}}}.
+    Only the last `tail` intraday bars per contract are sent to keep pushes small."""
+    import xlwings as xw
+
+    vcfg = cfg.get("voloi") or {}
+    wb_name = vcfg.get("workbook", "")
+    wb = None
+    base = os.path.basename(wb_name) if wb_name else ""
+    if base:
+        for app_ in xw.apps:
+            for b in app_.books:
+                if b.name == base or b.name == wb_name:
+                    wb = b
+                    break
+            if wb:
+                break
+    if wb is None:
+        raise RuntimeError(f"volume/OI workbook not open: {base or '(name missing)'}")
+
+    names = {s.name for s in wb.sheets}
+    intraday = {}
+    for code, meta in _VOLOI_INTRADAY.items():
+        if meta["sheet"] not in names:
+            continue
+        vals = wb.sheets[meta["sheet"]].used_range.value
+        if not isinstance(vals, list):
+            continue
+        t, p, v = [], [], []
+        for r in vals[3:]:
+            if not isinstance(r, list) or not r or not _is_dt(r[0]):
+                continue
+            if not isinstance(r[1], (int, float)) or isinstance(r[1], bool):
+                continue
+            if not isinstance(r[2], (int, float)) or isinstance(r[2], bool):
+                continue
+            t.append(_fmt_dt(r[0], True))
+            p.append(round(float(r[1]), 4))
+            v.append(int(r[2]))
+        if t:
+            intraday[code] = {"commodity": meta["commodity"], "label": meta["label"],
+                              "unit": meta["unit"], "t": t[-tail:], "p": p[-tail:], "v": v[-tail:]}
+
+    oi = {}
+    for comm, meta in _VOLOI_OI.items():
+        if meta["sheet"] not in names:
+            continue
+        vals = wb.sheets[meta["sheet"]].used_range.value
+        if not isinstance(vals, list):
+            continue
+        contracts = []
+        for bcol, ccode in ((0, meta["c1"]), (5, meta["c2"])):
+            recs = []
+            for r in vals[3:]:
+                if not isinstance(r, list) or bcol >= len(r) or not _is_dt(r[bcol]):
+                    continue
+                px = r[bcol + 1] if bcol + 1 < len(r) else None
+                oiv = r[bcol + 2] if bcol + 2 < len(r) else None
+                recs.append((r[bcol],
+                             float(px) if isinstance(px, (int, float)) and not isinstance(px, bool) else None,
+                             int(oiv) if isinstance(oiv, (int, float)) and not isinstance(oiv, bool) else None))
+            recs.sort(key=lambda x: x[0])
+            contracts.append({"code": ccode,
+                              "dates": [_fmt_dt(d, False) for d, _, _ in recs],
+                              "px": [px for _, px, _ in recs],
+                              "oi": [o for _, _, o in recs]})
+        oi[comm] = {"unit": meta["unit"], "contracts": contracts}
+
+    return {"intraday": intraday, "oi": oi}
+
+
 def diagnose_excel(cfg):
     """Print what xlwings can see: which Excel app/workbook is open, its sheet
     names, and a small top-left sample of each sheet. Helps match the config."""
@@ -428,6 +544,9 @@ def main():
     interval = float(cfg.get("poll_seconds", 5))
     pos_cfg = cfg.get("positioning") or {}
     pos_on = mode == "excel" and pos_cfg.get("enabled", bool(pos_cfg.get("workbook")))
+    voloi_cfg = cfg.get("voloi") or {}
+    voloi_on = mode == "excel" and voloi_cfg.get("enabled", bool(voloi_cfg.get("workbook")))
+    voloi_every = int(voloi_cfg.get("every_n_cycles", 10))  # OI/vol change slowly
     state = {}
 
     print(f"[bridge] mode={mode}  platform={platform_url}  every {interval}s")
@@ -436,6 +555,12 @@ def main():
               f"sheet='{pos_cfg.get('sheet', 'Energy')}'")
     else:
         print("[bridge] positioning: OFF (add a \"positioning\" block to "
+              "bridge_config.json to enable)")
+    if voloi_on:
+        print(f"[bridge] volume/OI: ON  workbook='{voloi_cfg.get('workbook')}'  "
+              f"every {voloi_every} cycles")
+    else:
+        print("[bridge] volume/OI: OFF (add a \"voloi\" block to "
               "bridge_config.json to enable)")
     print("[bridge] Keep the Bloomberg Terminal + workbook open. Ctrl+C to stop.\n")
 
@@ -486,6 +611,24 @@ def main():
                     print("[bridge] positioning: no instruments parsed — check sheet")
             except Exception as e:  # noqa: BLE001
                 print(f"[bridge] positioning read error: {e}")
+
+        if voloi_on and (state.get("cycle", 0) % voloi_every == 0):
+            try:
+                vdata = read_voloi_excel(cfg, int(voloi_cfg.get("tail_bars", 800)))
+                nc = len(vdata.get("intraday", {}))
+                if nc:
+                    vres = push_voloi(platform_url, token, vdata,
+                                      cfg.get("source", "bloomberg-bridge"))
+                    if vres.get("error"):
+                        print(f"[bridge] volume/OI push error: {vres['error']}")
+                    else:
+                        print(f"[bridge] volume/OI pushed {nc} contracts "
+                              f"@ {time.strftime('%H:%M:%S')}")
+                else:
+                    print("[bridge] volume/OI: no contracts parsed — check workbook")
+            except Exception as e:  # noqa: BLE001
+                print(f"[bridge] volume/OI read error: {e}")
+        state["cycle"] = state.get("cycle", 0) + 1
 
         if args.once:
             break

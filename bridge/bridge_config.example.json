@@ -21,6 +21,14 @@
     "sheet": "Energy"
   },
 
+  "_comment_voloi": "VOLUME & OI — also stream the Energy Volume/OI workbook (kept open alongside the others). Reads it by name. every_n_cycles: push once every N poll cycles (3-min bars / daily OI change slowly). tail_bars: how many recent 3-min bars per contract to send.",
+  "voloi": {
+    "enabled": true,
+    "workbook": "Energy_Volume_OI_Tracker.xlsx",
+    "every_n_cycles": 10,
+    "tail_bars": 800
+  },
+
   "_comment_blpapi": "BLPAPI MODE — set mode=blpapi and map labels to securities.",
   "blp_host": "localhost",
   "blp_port": 8194,

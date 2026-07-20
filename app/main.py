@@ -133,7 +133,7 @@ class PasswordGateMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         # Live price / positioning ingest from the local Bloomberg bridge
         # authenticates with a shared token header instead of a session cookie.
-        if path in ("/api/pricing/live", "/api/positioning/live") and request.method == "POST":
+        if path in ("/api/pricing/live", "/api/positioning/live", "/api/voloi/live") and request.method == "POST":
             ingest = request.headers.get("x-ingest-token", "")
             if ingest and _LIVE_INGEST_TOKEN and hmac_compare(ingest, _LIVE_INGEST_TOKEN):
                 return await call_next(request)
@@ -12982,6 +12982,98 @@ async def get_product_stocks():
     Singapore (Enterprise). Each region carries per-product weekly series
     (million barrels, ARA in kt) plus a data-driven retrospective."""
     return _load_product_stocks()
+
+
+_VOLOI_CACHE = None
+_VOLOI_LIVE = None
+_VOLOI_META = {"generated": None, "source": None}
+
+
+def _voloi_live_path():
+    return os.path.join(os.path.dirname(__file__), "voloi_live.json")
+
+
+def _load_voloi():
+    """Baseline 3-min volume/price bars (CO1/CO2/XB1/XB2/QS1/QS2) and daily OI
+    (Brent/RBOB/Gasoil) shipped with the app."""
+    global _VOLOI_CACHE
+    if _VOLOI_CACHE is None:
+        path = os.path.join(os.path.dirname(__file__), "voloi.json")
+        with open(path) as f:
+            _VOLOI_CACHE = _json.load(f)
+    return _VOLOI_CACHE
+
+
+def _get_voloi_live():
+    global _VOLOI_LIVE
+    if _VOLOI_LIVE is None:
+        _VOLOI_LIVE = {}
+        try:
+            with open(_voloi_live_path()) as f:
+                blob = _json.load(f)
+            _VOLOI_LIVE = blob.get("data", {})
+            _VOLOI_META["generated"] = blob.get("generated")
+            _VOLOI_META["source"] = blob.get("source")
+        except FileNotFoundError:
+            pass
+        except Exception:
+            _VOLOI_LIVE = {}
+    return _VOLOI_LIVE
+
+
+@app.get("/api/voloi")
+async def get_voloi():
+    """Volume & OI Tracker baseline: intraday 3-min bars per contract and daily
+    open-interest series per commodity. Anomaly/COT analysis is done client-side."""
+    return _load_voloi()
+
+
+@app.post("/api/voloi/live")
+async def voloi_live_ingest(request: Request):
+    """Ingest the latest 3-min volume/price bars and daily OI pushed by the local
+    bridge. Auth via X-Ingest-Token in the gate. Payload: {data: {intraday, oi}}."""
+    global _VOLOI_LIVE
+    body = await request.json()
+    if body.get("clear"):
+        _VOLOI_LIVE = {}
+        _VOLOI_META["generated"] = None
+        _VOLOI_META["source"] = None
+        try:
+            os.remove(_voloi_live_path())
+        except FileNotFoundError:
+            pass
+        return {"ok": True, "cleared": True}
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "expected {data: {...}}"}
+    now = datetime.utcnow().isoformat() + "Z"
+    _VOLOI_LIVE = data
+    _VOLOI_META["generated"] = now
+    _VOLOI_META["source"] = body.get("source", "bloomberg-bridge")
+    try:
+        with open(_voloi_live_path(), "w") as f:
+            _json.dump({"data": data, "generated": now,
+                        "source": _VOLOI_META["source"]}, f)
+    except Exception:
+        pass
+    n = len(data.get("intraday", {})) if isinstance(data, dict) else 0
+    return {"ok": True, "contracts": n, "generated": now}
+
+
+@app.get("/api/voloi/live")
+async def voloi_live_read():
+    """Return the latest live 3-min bars / OI snapshot pushed by the bridge."""
+    data = _get_voloi_live()
+    gen = _VOLOI_META.get("generated")
+    stale = None
+    if gen:
+        try:
+            ts = datetime.fromisoformat(gen.replace("Z", ""))
+            stale = round((datetime.utcnow() - ts).total_seconds(), 1)
+        except ValueError:
+            stale = None
+    return {"data": data, "generated": gen,
+            "source": _VOLOI_META.get("source"), "stale_seconds": stale}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
