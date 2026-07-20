@@ -5179,23 +5179,34 @@
       }
     }
 
-    // live polling
+    // live polling — 3-min volume/OI pushes ~every 50s (vs prices every 5s), so a
+    // single skipped push (transient Excel COM error) can leave the feed >120s old.
+    // Always merge the newer live bars (they are real, strictly-newer 3-min bars);
+    // staleness only drives the badge. Revert to baseline only when there is no
+    // live data at all — never throw away bars just because the last push lagged.
     async function refreshLive() {
       try {
         const r = await fetch("/api/voloi/live");
         if (!r.ok) return;
         const live = await r.json();
-        const fresh = live && live.stale_seconds != null && live.stale_seconds < 120 && live.data && live.data.intraday && Object.keys(live.data.intraday).length;
-        if (fresh) {
+        const hasData = live && live.data && live.data.intraday && Object.keys(live.data.intraday).length;
+        if (hasData) {
           merged = mergeLive(base, live);
-          liveBadge.textContent = "● LIVE";
-          liveBadge.style.background = "rgba(34,197,94,0.18)"; liveBadge.style.color = C.green;
+          const ss = live.stale_seconds;
+          if (ss != null && ss < 600) {
+            liveBadge.textContent = "● LIVE";
+            liveBadge.style.background = "rgba(34,197,94,0.18)"; liveBadge.style.color = C.green;
+          } else {
+            const mins = ss != null ? Math.round(ss / 60) : null;
+            liveBadge.textContent = mins != null ? ("◐ live · " + mins + "m ago") : "◐ live · delayed";
+            liveBadge.style.background = "rgba(245,158,11,0.15)"; liveBadge.style.color = C.gold;
+          }
         } else {
           merged = base;
           liveBadge.textContent = "○ baseline";
           liveBadge.style.background = "rgba(148,163,184,0.15)"; liveBadge.style.color = C.muted;
         }
-      } catch (e) { /* keep baseline */ }
+      } catch (e) { /* keep last merged */ }
     }
 
     csel.addEventListener("change", () => loadPlotly(() => render(csel.value)));
