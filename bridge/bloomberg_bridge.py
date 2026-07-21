@@ -503,9 +503,30 @@ def diagnose_excel(cfg):
     except Exception as e:  # noqa: BLE001
         print(f"[diag] no active workbook: {e}")
         return
-    print(f"[diag] active workbook: {wb.name}")
-    print(f"[diag] sheets: {[s.name for s in wb.sheets]}")
-    for sht in wb.sheets:
+    try:
+        print(f"[diag] active workbook: {wb.name}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[diag] cannot read active workbook name: {e}")
+        return
+    # Listing/iterating sheets hits COM and can raise the transient
+    # "Call was rejected by callee" while Excel is mid-recalc. Retry, and
+    # never let the diagnostic crash the bridge.
+    sheets = None
+    for _ in range(4):
+        try:
+            sheets = list(wb.sheets)
+            break
+        except Exception as e:  # noqa: BLE001
+            last = e
+            time.sleep(0.4)
+    if sheets is None:
+        print(f"[diag] could not enumerate sheets (Excel busy): {last}")
+        return
+    try:
+        print(f"[diag] sheets: {[s.name for s in sheets]}")
+    except Exception:  # noqa: BLE001
+        pass
+    for sht in sheets:
         try:
             vals = sht.used_range.value
         except Exception:
@@ -605,7 +626,10 @@ def main():
     print("[bridge] Keep the Bloomberg Terminal + workbook open. Ctrl+C to stop.\n")
 
     if mode == "excel":
-        diagnose_excel(cfg)
+        try:
+            diagnose_excel(cfg)
+        except Exception as e:  # noqa: BLE001
+            print(f"[diag] skipped (Excel busy): {e}")
         print()
 
     while True:
