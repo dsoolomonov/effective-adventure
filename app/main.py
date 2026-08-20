@@ -8707,6 +8707,22 @@ JODI_FLOW_NAMES = {
 JODI_FLOW_ORDER = ["REFGROUT", "TOTIMPSB", "TOTEXPSB", "RECEIPTS", "PTRANSF",
                     "IPTRANSF", "TOTDEMO", "STOCKCH", "CLOSTLV", "STATDIFF"]
 
+# Unit each flow must be expressed in before it can be summed across countries.
+# JODI publishes every series in several units, including CONVBBL -- which is a
+# barrels-per-tonne conversion factor, not a volume -- so aggregates must only
+# add series that share the canonical unit.
+JODI_CANONICAL_UNIT = {
+    "CLOSTLV": "KBBL",
+    "STOCKCH": "KBBL",
+}
+JODI_DEFAULT_UNIT = "KBD"
+# Units that are never a volume for these flows and must never be selected.
+JODI_INVALID_UNITS = {"CONVBBL"}
+
+
+def _jodi_canonical_unit(flow: str) -> str:
+    return JODI_CANONICAL_UNIT.get(flow, JODI_DEFAULT_UNIT)
+
 jodi_cache: dict = {"data": {}, "ts": 0}
 JODI_CACHE_TTL = 7200  # 2 hours
 
@@ -8762,6 +8778,11 @@ def _load_jodi_region(region_code: str) -> dict:
         if not cdata:
             continue
         for flow, fd in cdata.items():
+            # Only sum series already in the flow's canonical unit -- adding a
+            # KTONS/KL series (or a CONVBBL conversion factor) into a KBD total
+            # silently corrupts the regional aggregate.
+            if fd["unit"] != _jodi_canonical_unit(flow):
+                continue
             if flow not in flow_units:
                 flow_units[flow] = fd["unit"]
             for period, val in fd["entries"]:
@@ -8851,6 +8872,8 @@ def _download_jodi_refresh() -> dict:
                             break
                     if not chosen:
                         for u, entries in units_data.items():
+                            if u in JODI_INVALID_UNITS:
+                                continue
                             if any(v not in ("", "x", "-", "..") for _, v in entries):
                                 chosen = u
                                 break
@@ -8963,6 +8986,13 @@ async def get_jodi_gasoline(
         latest = clean[-1]
         prev = clean[-2]
         chg = latest - prev
+        # Period of the latest actual value -- trailing entries can be blank
+        # when a country stops reporting, and labelling a stale value with the
+        # newest period misstates the vintage.
+        latest_period = next(
+            (e["period"] for e in reversed(sm["entries"]) if e["value"] is not None),
+            sm["entries"][-1]["period"],
+        )
         n60 = min(len(clean), 60)
         avg5 = float(np.mean(clean[-n60:]))
         n12 = min(len(clean), 12)
@@ -8971,7 +9001,7 @@ async def get_jodi_gasoline(
             "flow_name": JODI_FLOW_NAMES.get(flow, flow),
             "units": sm["unit"],
             "latest": round(latest, 1),
-            "latest_period": sm["entries"][-1]["period"],
+            "latest_period": latest_period,
             "previous": round(prev, 1),
             "mom_change": round(chg, 1),
             "pct_change": round(chg / prev * 100, 2) if prev != 0 else 0,
