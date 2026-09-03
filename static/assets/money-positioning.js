@@ -7540,6 +7540,191 @@
     if (injected) return;
     injected = true;
 
+    // ─── SIGNAL OCEAN TAB (/api/signal/*) — DPP Aframax/Suezmax/VLCC strait passages ───
+    async function renderSignal(box) {
+      box.innerHTML = "";
+      const CLASS_COL = { VLCC: C.purple, Suezmax: C.cyan, Aframax: C.gold, All: C.amber, Unknown: C.muted };
+      const PAL = ["#38bdf8", "#8b5cf6", "#22d3ee", "#f5b90f", "#10b981", "#ef4444", "#f472b6", "#a3e635", "#fb923c", "#60a5fa", "#c084fc", "#34d399"];
+      const state = { days: 90, cls: "All", strait: "ALL", data: null, status: null };
+
+      const hdr = el("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "14px", flexWrap: "wrap", gap: "10px" } });
+      const hl = el("div", {});
+      hl.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "📡 Signal — Tanker Strait Passages"));
+      hl.appendChild(el("div", { style: { fontSize: "12px", color: C.muted, marginTop: "3px" } }, "Signal Ocean enterprise feed · Dirty (DPP) Aframax / Suezmax / VLCC · daily transits through key chokepoints"));
+      hdr.appendChild(hl);
+      const statusPill = el("span", { style: { fontSize: "10.5px", fontWeight: "800", letterSpacing: ".05em", borderRadius: "999px", padding: "4px 12px", border: `1px solid ${C.border}`, color: C.muted, background: "#0b1220" } }, "○ CONNECTING…");
+      hdr.appendChild(statusPill);
+      box.appendChild(hdr);
+
+      const ctrl = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" } });
+      const body = el("div", {});
+      box.appendChild(ctrl); box.appendChild(body);
+
+      function pill(label, active, onClick, color) {
+        return el("button", { style: { background: active ? (color || C.amber) : "transparent", color: active ? "#05070e" : (color || C.text), border: `1px solid ${color || C.border}`, borderRadius: "999px", padding: "5px 13px", cursor: "pointer", fontSize: "11.5px", fontWeight: "700" }, onClick }, label);
+      }
+      function setPill(txt, col) { statusPill.textContent = txt; statusPill.style.color = col; statusPill.style.borderColor = col; }
+
+      function renderControls() {
+        ctrl.innerHTML = "";
+        ctrl.appendChild(el("span", { style: { fontSize: "10.5px", color: C.muted, fontWeight: "700", letterSpacing: "1px" } }, "WINDOW"));
+        [30, 90, 180, 365, 730].forEach(d => ctrl.appendChild(pill(d >= 365 ? (d / 365) + "y" : d + "d", state.days === d, () => { state.days = d; load(true); })));
+        ctrl.appendChild(el("span", { style: { width: "14px" } }));
+        ctrl.appendChild(el("span", { style: { fontSize: "10.5px", color: C.muted, fontWeight: "700", letterSpacing: "1px" } }, "CLASS"));
+        const classes = ["All"].concat((state.data && state.data.classes) || ["VLCC", "Suezmax", "Aframax"]);
+        classes.forEach(c => ctrl.appendChild(pill(c, state.cls === c, () => { state.cls = c; draw(); }, CLASS_COL[c])));
+        const refreshBtn = el("button", { style: { marginLeft: "auto", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: "8px", padding: "5px 12px", cursor: "pointer", fontSize: "11.5px" }, onClick: () => load(true, true) }, "↻ Refresh from Signal");
+        ctrl.appendChild(refreshBtn);
+      }
+
+      function seriesFor(st) {
+        if (state.cls === "All") return st.total;
+        return st.by_class[state.cls] || st.total.map(() => 0);
+      }
+      function movAvg(arr, n) { return arr.map((_, i) => { const s = arr.slice(Math.max(0, i - n + 1), i + 1); return s.reduce((a, b) => a + b, 0) / s.length; }); }
+
+      function renderNotConnected(status) {
+        body.innerHTML = "";
+        const c = card("Connection", null);
+        const msg = el("div", { style: { color: C.text, fontSize: "13px", lineHeight: "1.7" } });
+        if (!status || !status.configured) {
+          msg.innerHTML = `Signal SQL credentials are not configured on the server. Set <code>SIGNAL_SQL_SERVER</code>, <code>SIGNAL_SQL_USERNAME</code>, <code>SIGNAL_SQL_PASSWORD</code> (and optional <code>SIGNAL_SQL_DATABASE</code>) as Fly secrets.`;
+        } else {
+          msg.innerHTML = `<div style="color:${C.red};font-weight:700;margin-bottom:6px">Login to Signal SQL Server failed</div>
+            <div><span style="color:${C.muted}">Server:</span> <code>${status.server}</code>${status.database ? ` · <span style="color:${C.muted}">DB:</span> <code>${status.database}</code>` : ""}</div>
+            <div style="margin-top:6px;color:${C.muted};font-family:monospace;font-size:11.5px;white-space:pre-wrap">${(status.error || "").replace(/</g, "&lt;")}</div>
+            <div style="margin-top:10px;color:${C.muted}">The server is reachable and is rejecting the SQL login (error 18456). Ask the Signal team to confirm the login <b>Socar_user</b> is active on this instance, the password, and the database name. This tab will populate automatically once the login is accepted.</div>`;
+        }
+        c.appendChild(msg);
+        body.appendChild(c);
+      }
+
+      async function renderSchemaExplorer(reason) {
+        const c = card("Data explorer", null);
+        c.appendChild(el("div", { style: { color: C.muted, fontSize: "12.5px", marginBottom: "10px" } }, reason || "Browse the tables exposed by the Signal login."));
+        const wrap = el("div", { style: { display: "grid", gridTemplateColumns: "260px 1fr", gap: "14px" } });
+        const list = el("div", { style: { maxHeight: "520px", overflowY: "auto", borderRight: `1px solid ${C.border}`, paddingRight: "8px" } });
+        const view = el("div", { style: { overflowX: "auto", minHeight: "120px" } });
+        view.appendChild(el("div", { style: { color: C.muted, fontSize: "12px" } }, "Select a table to preview its latest rows."));
+        wrap.appendChild(list); wrap.appendChild(view); c.appendChild(wrap); body.appendChild(c);
+        try {
+          const r = await fetch("/api/signal/schema"); const sc = await r.json();
+          if (sc.error) { list.appendChild(el("div", { style: { color: C.red, fontSize: "12px" } }, sc.error)); return; }
+          if (!sc.tables.length) list.appendChild(el("div", { style: { color: C.muted, fontSize: "12px" } }, "No tables visible to this login."));
+          sc.tables.forEach(t => {
+            const key = t.schema + "." + t.name;
+            const b = el("button", { style: { display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", color: C.text, padding: "6px 8px", cursor: "pointer", fontSize: "12px", borderRadius: "6px" }, onClick: async () => {
+              view.innerHTML = `<div style="color:${C.muted};font-size:12px">Loading ${key}…</div>`;
+              const pr = await (await fetch(`/api/signal/preview?table=${encodeURIComponent(key)}&limit=50`)).json();
+              if (pr.error) { view.innerHTML = `<div style="color:${C.red};font-size:12px">${pr.error}</div>`; return; }
+              let h = `<div style="color:${C.muted};font-size:11.5px;margin-bottom:6px">${key} · ${pr.row_count != null ? pr.row_count.toLocaleString() + " rows · " : ""}showing ${pr.rows.length}</div>`;
+              h += `<table style="border-collapse:collapse;font-size:11px;white-space:nowrap"><thead><tr>` + pr.columns.map(cn => `<th style="padding:5px 8px;text-align:left;color:${C.amber};border-bottom:1px solid ${C.border}">${cn}</th>`).join("") + `</tr></thead><tbody>`;
+              pr.rows.forEach(row => { h += "<tr>" + pr.columns.map(cn => `<td style="padding:4px 8px;border-bottom:1px solid #111827;color:${C.text}">${row[cn] == null ? "" : String(row[cn]).slice(0, 60)}</td>`).join("") + "</tr>"; });
+              view.innerHTML = h + "</tbody></table>";
+            } }, `${t.name}`);
+            b.appendChild(el("span", { style: { color: C.muted, fontSize: "10px", marginLeft: "6px" } }, `${t.columns.length} cols`));
+            list.appendChild(b);
+          });
+        } catch (e) { list.appendChild(el("div", { style: { color: C.red, fontSize: "12px" } }, e.message)); }
+      }
+
+      function draw() {
+        renderControls();
+        const d = state.data;
+        body.innerHTML = "";
+        if (!d || !d.available) return;
+        const straits = d.straits.filter(st => seriesFor(st).some(v => v > 0));
+        if (!straits.length) { body.appendChild(card(null, `No ${state.cls} passages in the last ${d.days} days.`)); return; }
+
+        // KPI strip: latest day vs 7d avg vs prior-30d avg per strait
+        const kpi = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "10px", marginBottom: "14px" } });
+        straits.forEach((st, i) => {
+          const s = seriesFor(st); const a7 = s.slice(-7).reduce((a, b) => a + b, 0) / Math.min(7, s.length);
+          const p30 = s.slice(-37, -7); const a30 = p30.length ? p30.reduce((a, b) => a + b, 0) / p30.length : null;
+          const dpct = a30 ? (a7 - a30) / a30 * 100 : null;
+          const k = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${PAL[i % PAL.length]}`, borderRadius: "10px", padding: "10px 12px" } });
+          k.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, fontWeight: "700", letterSpacing: ".5px", textTransform: "uppercase" } }, st.strait));
+          const row = el("div", { style: { display: "flex", alignItems: "baseline", gap: "8px", marginTop: "4px" } });
+          row.appendChild(el("span", { style: { fontSize: "20px", fontWeight: "800", color: C.text } }, a7.toFixed(1)));
+          row.appendChild(el("span", { style: { fontSize: "10.5px", color: C.muted } }, "/day (7d avg)"));
+          k.appendChild(row);
+          k.appendChild(el("div", { style: { fontSize: "11px", color: dpct == null ? C.muted : dpct >= 0 ? C.green : C.red, marginTop: "2px" } }, dpct == null ? `latest ${s[s.length - 1]} on ${d.dates[d.dates.length - 1]}` : `${dpct >= 0 ? "▲" : "▼"} ${Math.abs(dpct).toFixed(0)}% vs prior 30d (${a30.toFixed(1)}) · latest ${s[s.length - 1]}`));
+          kpi.appendChild(k);
+        });
+        body.appendChild(kpi);
+
+        // Main chart: all straits, 7d moving average, stacked bars toggle
+        const mainDiv = el("div", { style: { height: "380px" } });
+        const mainCard = card(`Daily passages by strait — ${state.cls} (7-day moving average, hover for daily)`, mainDiv);
+        body.appendChild(mainCard);
+        loadPlotly(() => {
+          const traces = straits.map((st, i) => ({ x: d.dates, y: movAvg(seriesFor(st), 7), name: st.strait, mode: "lines", line: { color: PAL[i % PAL.length], width: 2 }, customdata: seriesFor(st), hovertemplate: "%{fullData.name}<br>7d avg %{y:.1f} · day %{customdata}<extra></extra>" }));
+          Plotly.newPlot(mainDiv, traces, { ...plotLayout, yaxis: { ...plotLayout.yaxis, title: { text: "transits / day", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 } }, { responsive: true, displayModeBar: false });
+        });
+
+        // Class mix (stacked) for the selected strait or all
+        const straitSel = el("select", { style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "4px 8px", fontSize: "12px" } });
+        ["ALL"].concat(straits.map(s => s.strait)).forEach(sname => { const o = el("option", { value: sname }, sname === "ALL" ? "All straits" : sname); if (sname === state.strait) o.selected = true; straitSel.appendChild(o); });
+        straitSel.addEventListener("change", () => { state.strait = straitSel.value; draw(); });
+        const mixDiv = el("div", { style: { height: "300px" } });
+        const mixWrap = el("div", {}, [el("div", { style: { marginBottom: "8px" } }, straitSel), mixDiv]);
+        body.appendChild(card("Vessel-class mix — daily passages (stacked)", mixWrap));
+        loadPlotly(() => {
+          const sel = state.strait === "ALL" ? straits : straits.filter(s => s.strait === state.strait);
+          const traces = d.classes.map(cl => ({ x: d.dates, y: d.dates.map((_, i) => sel.reduce((a, st) => a + ((st.by_class[cl] || [])[i] || 0), 0)), name: cl, type: "bar", marker: { color: CLASS_COL[cl] || C.muted } }));
+          Plotly.newPlot(mixDiv, traces, { ...plotLayout, barmode: "stack", yaxis: { ...plotLayout.yaxis, title: { text: "transits / day", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 } }, { responsive: true, displayModeBar: false });
+        });
+
+        // Small multiples per strait, with direction split when available
+        const grid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))", gap: "12px" } });
+        straits.forEach((st, i) => {
+          const dv = el("div", { style: { height: "220px" } });
+          grid.appendChild(card(st.strait, dv, { marginBottom: "0" }));
+          loadPlotly(() => {
+            const dirs = Object.keys(st.by_direction || {});
+            let traces;
+            if (dirs.length && state.cls === "All") traces = dirs.map((dn, j) => ({ x: d.dates, y: st.by_direction[dn], name: dn, type: "bar", marker: { color: PAL[(i + j * 3) % PAL.length] } }));
+            else traces = [{ x: d.dates, y: seriesFor(st), name: "daily", type: "bar", marker: { color: PAL[i % PAL.length], opacity: 0.55 } }];
+            traces.push({ x: d.dates, y: movAvg(seriesFor(st), 7), name: "7d avg", mode: "lines", line: { color: "#e8edf8", width: 1.5 } });
+            Plotly.newPlot(dv, traces, { ...plotLayout, barmode: "stack", showlegend: dirs.length > 0, margin: { t: 8, b: 40, l: 36, r: 10 }, legend: { ...plotLayout.legend, y: -0.3 } }, { responsive: true, displayModeBar: false });
+          });
+        });
+        body.appendChild(grid);
+
+        // Source footnote
+        const src = d.source || {};
+        body.appendChild(el("div", { style: { color: C.muted, fontSize: "11px", marginTop: "12px" } },
+          `Source: Signal Ocean SQL · ${src.mode === "auto" ? `${src.table_key} (date=${src.date}, strait=${src.strait}${src.class ? ", class=" + src.class : ""}${src.vessel ? ", vessel=" + src.vessel : ""})` : "custom SQL"} · ${d.rows.toLocaleString()} grouped rows · fetched ${d.fetched_at.slice(0, 16).replace("T", " ")} UTC · cached 15 min`));
+      }
+
+      async function load(reset, force) {
+        if (reset) { body.innerHTML = `<div style="color:${C.muted};padding:30px;text-align:center">Loading ${state.days}-day passages from Signal…</div>`; }
+        try {
+          if (!state.status || force) {
+            state.status = await (await fetch("/api/signal/status")).json();
+          }
+          if (!state.status.connected) { setPill("● OFFLINE", C.red); renderControls(); renderNotConnected(state.status); return; }
+          setPill(`● CONNECTED · ${state.status.database || "SQL"}`, C.green);
+          const r = await fetch(`/api/signal/passages?days=${state.days}${force ? "&refresh=1" : ""}`);
+          const d = await r.json();
+          state.data = d;
+          if (!d.available) {
+            renderControls(); body.innerHTML = "";
+            const why = d.reason === "no_passages_table" ? "Connected, but no table with strait/passage columns was auto-detected — browse the tables below and tell me which one holds the transits (or set SIGNAL_PASSAGES_SQL)." : `Error reading passages: ${d.error || d.reason}`;
+            body.appendChild(card(null, why));
+            await renderSchemaExplorer();
+            return;
+          }
+          draw();
+        } catch (e) {
+          setPill("● ERROR", C.red);
+          body.innerHTML = `<div style="color:${C.red};padding:30px">Failed to load Signal data: ${e.message}</div>`;
+        }
+      }
+      renderControls();
+      load(true);
+    }
+
     // Global theme styles
     const gstyle = document.createElement("style");
     gstyle.textContent = `
@@ -7616,6 +7801,7 @@
         { id: "platts", label: "Platts", icon: "🅿️" },
       ]},
       { name: "Flows & Data", items: [
+        { id: "signal", label: "Signal", icon: "📡" },
         { id: "kpler", label: "Kpler Flows", icon: "🚢" },
         { id: "ktf", label: "Kpler Refinery Flows", icon: "🏭" },
         { id: "kinv", label: "Kpler Inventories", icon: "🛢️" },
@@ -7675,6 +7861,7 @@
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }
       if (id === "ksql" && !panes.ksql._loaded) { panes.ksql._loaded = true; renderKSQL(panes.ksql); }
+      if (id === "signal" && !panes.signal._loaded) { panes.signal._loaded = true; renderSignal(panes.signal); }
     }
 
     document.body.appendChild(overlay);

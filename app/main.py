@@ -12797,6 +12797,288 @@ async def kpler_sync_status():
 
 
 # ============================================================
+# Signal Ocean tanker data (Azure SQL, read-only)
+# Env: SIGNAL_SQL_SERVER (host,port), SIGNAL_SQL_USERNAME, SIGNAL_SQL_PASSWORD,
+#      SIGNAL_SQL_DATABASE (optional), SIGNAL_PASSAGES_SQL (optional override)
+# ============================================================
+import re as _re
+import time as _time
+import threading as _threading
+
+SIGNAL_SCHEMA_TTL = 3600
+SIGNAL_DATA_TTL = 900
+_signal_cache: dict = {"schema": None, "schema_ts": 0, "data": {}}
+_signal_lock = _threading.Lock()
+
+_SIGNAL_STRAIT_HINTS = ("strait", "passage", "chokepoint", "choke_point", "canal", "transit", "waterway", "geo_area", "area_name")
+_SIGNAL_DATE_HINTS = ("passage_date", "transit_date", "date", "timestamp", "datetime", "day")
+_SIGNAL_CLASS_HINTS = ("vessel_class", "vesselclass", "vessel_type", "class", "size", "segment")
+_SIGNAL_VESSEL_HINTS = ("imo", "vessel_id", "vesselid", "vessel_name", "vesselname", "mmsi")
+_SIGNAL_DIR_HINTS = ("direction", "heading", "bound", "north", "south", "east", "west")
+_SIGNAL_CLASS_ALIASES = {
+    "vlcc": "VLCC", "suezmax": "Suezmax", "aframax": "Aframax", "afra": "Aframax",
+}
+
+
+def _signal_configured() -> bool:
+    return bool(os.environ.get("SIGNAL_SQL_SERVER") and os.environ.get("SIGNAL_SQL_USERNAME") and os.environ.get("SIGNAL_SQL_PASSWORD"))
+
+
+def _signal_conn():
+    import pyodbc
+    server = os.environ.get("SIGNAL_SQL_SERVER", "")
+    database = os.environ.get("SIGNAL_SQL_DATABASE", "")
+    driver = os.environ.get("SIGNAL_SQL_DRIVER", "ODBC Driver 18 for SQL Server")
+    cs = (
+        f"DRIVER={{{driver}}};SERVER={server};"
+        + (f"DATABASE={database};" if database else "")
+        + f"UID={os.environ.get('SIGNAL_SQL_USERNAME', '')};"
+        + f"PWD={{{os.environ.get('SIGNAL_SQL_PASSWORD', '')}}};"
+        + "Encrypt=yes;TrustServerCertificate=yes;Connection Timeout=25;ApplicationIntent=ReadOnly;"
+    )
+    return pyodbc.connect(cs, autocommit=True, timeout=60)
+
+
+def _signal_rows(sql: str, params: tuple = ()) -> list[dict]:
+    conn = _signal_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        cols = [d[0] for d in cur.description]
+        out = []
+        for r in cur.fetchall():
+            row = {}
+            for c, v in zip(cols, r):
+                if hasattr(v, "isoformat"):
+                    v = v.isoformat()
+                elif isinstance(v, (bytes, bytearray)):
+                    v = v.hex()
+                elif v is not None and not isinstance(v, (int, float, str, bool)):
+                    v = float(v) if hasattr(v, "__float__") else str(v)
+                row[c] = v
+            out.append(row)
+        return out
+    finally:
+        conn.close()
+
+
+def _signal_schema(force: bool = False) -> dict:
+    now = _time.time()
+    with _signal_lock:
+        if not force and _signal_cache["schema"] and now - _signal_cache["schema_ts"] < SIGNAL_SCHEMA_TTL:
+            return _signal_cache["schema"]
+    rows = _signal_rows(
+        "SELECT c.TABLE_SCHEMA, c.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE, c.ORDINAL_POSITION, t.TABLE_TYPE "
+        "FROM INFORMATION_SCHEMA.COLUMNS c JOIN INFORMATION_SCHEMA.TABLES t "
+        "ON c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME "
+        "ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION"
+    )
+    tables: dict[str, dict] = {}
+    for r in rows:
+        key = f"{r['TABLE_SCHEMA']}.{r['TABLE_NAME']}"
+        t = tables.setdefault(key, {"schema": r["TABLE_SCHEMA"], "name": r["TABLE_NAME"], "type": r["TABLE_TYPE"], "columns": []})
+        t["columns"].append({"name": r["COLUMN_NAME"], "type": r["DATA_TYPE"]})
+    schema = {"database": os.environ.get("SIGNAL_SQL_DATABASE", ""), "tables": list(tables.values()), "fetched_at": datetime.utcnow().isoformat() + "Z"}
+    with _signal_lock:
+        _signal_cache["schema"] = schema
+        _signal_cache["schema_ts"] = now
+    return schema
+
+
+def _signal_pick(cols: list[str], hints: tuple, type_filter=None, types: dict | None = None):
+    lc = {c.lower(): c for c in cols}
+    for h in hints:
+        for lname, orig in lc.items():
+            if h in lname and (type_filter is None or (types and type_filter(types.get(orig, "")))):
+                return orig
+    return None
+
+
+def _signal_discover_passages(schema: dict) -> dict | None:
+    """Heuristically find the table that carries strait/chokepoint transits."""
+    best = None
+    for t in schema["tables"]:
+        cols = [c["name"] for c in t["columns"]]
+        types = {c["name"]: c["type"].lower() for c in t["columns"]}
+        strait = _signal_pick(cols, _SIGNAL_STRAIT_HINTS)
+        if not strait:
+            continue
+        is_date = lambda ty: ("date" in ty) or ("time" in ty)
+        date_col = _signal_pick(cols, _SIGNAL_DATE_HINTS, is_date, types)
+        if not date_col:
+            continue
+        score = 2
+        name_l = t["name"].lower()
+        if any(h in name_l for h in ("passage", "transit", "strait", "chokepoint")):
+            score += 3
+        cls = _signal_pick(cols, _SIGNAL_CLASS_HINTS)
+        vessel = _signal_pick(cols, _SIGNAL_VESSEL_HINTS)
+        direction = _signal_pick(cols, _SIGNAL_DIR_HINTS)
+        score += (1 if cls else 0) + (1 if vessel else 0)
+        cand = {"table": f"[{t['schema']}].[{t['name']}]", "table_key": f"{t['schema']}.{t['name']}", "date": date_col, "strait": strait, "class": cls, "vessel": vessel, "direction": direction, "score": score}
+        if best is None or cand["score"] > best["score"]:
+            best = cand
+    return best
+
+
+def _signal_norm_class(v) -> str:
+    if v is None:
+        return "Unknown"
+    s = str(v).strip()
+    return _SIGNAL_CLASS_ALIASES.get(s.lower(), s)
+
+
+def _signal_passages(days: int, force: bool = False) -> dict:
+    ck = f"passages:{days}"
+    now = _time.time()
+    with _signal_lock:
+        ent = _signal_cache["data"].get(ck)
+        if ent and not force and now - ent["ts"] < SIGNAL_DATA_TTL:
+            return ent["val"]
+
+    override = os.environ.get("SIGNAL_PASSAGES_SQL", "").strip()
+    mapping = None
+    if override:
+        # Override must return columns: day, strait, vessel_class, passages (and optionally direction)
+        rows = _signal_rows(override.replace("{days}", str(int(days))))
+        recs = [{"day": str(r.get("day") or r.get("Day"))[:10], "strait": r.get("strait") or r.get("Strait"),
+                 "vessel_class": _signal_norm_class(r.get("vessel_class") or r.get("VesselClass")),
+                 "direction": r.get("direction"), "passages": int(r.get("passages") or r.get("Passages") or 0)} for r in rows]
+        source = {"mode": "override_sql"}
+    else:
+        schema = _signal_schema()
+        mapping = _signal_discover_passages(schema)
+        if not mapping:
+            val = {"available": False, "reason": "no_passages_table", "tables": [t["schema"] + "." + t["name"] for t in schema["tables"]]}
+            with _signal_lock:
+                _signal_cache["data"][ck] = {"ts": now, "val": val}
+            return val
+        d, s, c, v, dr = mapping["date"], mapping["strait"], mapping["class"], mapping["vessel"], mapping["direction"]
+        cnt = f"COUNT(DISTINCT [{v}])" if v else "COUNT(*)"
+        sel_cls = f"[{c}]" if c else "'All'"
+        sel_dir = f"[{dr}]" if dr else "NULL"
+        grp = f"CAST([{d}] AS date), [{s}]" + (f", [{c}]" if c else "") + (f", [{dr}]" if dr else "")
+        sql = (
+            f"SELECT CAST([{d}] AS date) AS day, [{s}] AS strait, {sel_cls} AS vessel_class, {sel_dir} AS direction, {cnt} AS passages "
+            f"FROM {mapping['table']} WHERE [{d}] >= DATEADD(day, -{int(days)}, CAST(GETUTCDATE() AS date)) AND [{s}] IS NOT NULL "
+            f"GROUP BY {grp} ORDER BY 1"
+        )
+        rows = _signal_rows(sql)
+        recs = [{"day": str(r["day"])[:10], "strait": str(r["strait"]), "vessel_class": _signal_norm_class(r["vessel_class"]),
+                 "direction": (str(r["direction"]) if r["direction"] is not None else None), "passages": int(r["passages"] or 0)} for r in rows]
+        source = {"mode": "auto", **{k: mapping[k] for k in ("table_key", "date", "strait", "class", "vessel", "direction")}}
+
+    # Aggregate into per-strait daily series (all classes + per class)
+    import collections
+    straits: dict[str, dict] = {}
+    all_days = sorted({r["day"] for r in recs})
+    if all_days:
+        from datetime import date as _date, timedelta as _td
+        d0, d1 = _date.fromisoformat(all_days[0]), _date.fromisoformat(all_days[-1])
+        all_days = [(d0 + _td(days=i)).isoformat() for i in range((d1 - d0).days + 1)]
+    for r in recs:
+        st = straits.setdefault(r["strait"], {"total": collections.Counter(), "by_class": collections.defaultdict(collections.Counter), "by_dir": collections.defaultdict(collections.Counter)})
+        st["total"][r["day"]] += r["passages"]
+        st["by_class"][r["vessel_class"]][r["day"]] += r["passages"]
+        if r["direction"]:
+            st["by_dir"][r["direction"]][r["day"]] += r["passages"]
+
+    def _series(counter):
+        return [counter.get(dd, 0) for dd in all_days]
+
+    def _avg(vals):
+        return round(sum(vals) / len(vals), 2) if vals else None
+
+    out_straits = []
+    for name, st in straits.items():
+        tot = _series(st["total"])
+        last7 = _avg(tot[-7:]); prev30 = _avg(tot[-37:-7]) if len(tot) > 7 else None
+        out_straits.append({
+            "strait": name,
+            "total": tot,
+            "by_class": {k: _series(v) for k, v in st["by_class"].items()},
+            "by_direction": {k: _series(v) for k, v in st["by_dir"].items()},
+            "sum_period": sum(tot),
+            "avg_7d": last7, "avg_30d_prior": prev30,
+            "delta_7d_vs_30d_pct": (round((last7 - prev30) / prev30 * 100, 1) if last7 is not None and prev30 else None),
+            "latest_day": all_days[-1] if all_days else None,
+            "latest": tot[-1] if tot else None,
+        })
+    out_straits.sort(key=lambda x: -x["sum_period"])
+    classes = sorted({r["vessel_class"] for r in recs}, key=lambda x: ["VLCC", "Suezmax", "Aframax"].index(x) if x in ("VLCC", "Suezmax", "Aframax") else 99)
+    val = {"available": True, "days": days, "dates": all_days, "classes": classes, "straits": out_straits, "source": source, "rows": len(recs), "fetched_at": datetime.utcnow().isoformat() + "Z"}
+    with _signal_lock:
+        _signal_cache["data"][ck] = {"ts": now, "val": val}
+    return val
+
+
+@app.get("/api/signal/status")
+async def signal_status():
+    """Signal Ocean Azure SQL connectivity check."""
+    server = os.environ.get("SIGNAL_SQL_SERVER", "")
+    if not _signal_configured():
+        return {"configured": False, "connected": False, "server": server, "message": "Set SIGNAL_SQL_SERVER, SIGNAL_SQL_USERNAME, SIGNAL_SQL_PASSWORD (and optionally SIGNAL_SQL_DATABASE)."}
+    try:
+        info = _signal_rows("SELECT DB_NAME() AS db, SUSER_SNAME() AS login, @@VERSION AS version")[0]
+        try:
+            schema = _signal_schema()
+            n_tables = len(schema["tables"])
+        except Exception as e:
+            n_tables = None
+        return {"configured": True, "connected": True, "server": server, "database": info["db"], "login": info["login"],
+                "version": (info["version"] or "").split("\n")[0][:120], "tables": n_tables}
+    except Exception as e:
+        return {"configured": True, "connected": False, "server": server, "database": os.environ.get("SIGNAL_SQL_DATABASE", ""), "error": str(e)[:400]}
+
+
+@app.get("/api/signal/schema")
+async def signal_schema(refresh: bool = Query(False)):
+    """List tables/columns visible to the Signal login (cached 1h)."""
+    if not _signal_configured():
+        return {"error": "Signal SQL not configured"}
+    try:
+        return _signal_schema(force=refresh)
+    except Exception as e:
+        return {"error": str(e)[:400]}
+
+
+_SIGNAL_IDENT_RE = _re.compile(r"^[A-Za-z0-9_ .\-]+$")
+
+
+@app.get("/api/signal/preview")
+async def signal_preview(table: str = Query(...), limit: int = Query(50, ge=1, le=500)):
+    """Read-only TOP-N preview of a table known from the schema listing."""
+    if not _signal_configured():
+        return {"error": "Signal SQL not configured"}
+    if not _SIGNAL_IDENT_RE.match(table):
+        raise HTTPException(status_code=400, detail="invalid table identifier")
+    try:
+        schema = _signal_schema()
+        known = {f"{t['schema']}.{t['name']}": t for t in schema["tables"]}
+        t = known.get(table)
+        if not t:
+            raise HTTPException(status_code=404, detail="unknown table")
+        rows = _signal_rows(f"SELECT TOP ({int(limit)}) * FROM [{t['schema']}].[{t['name']}]")
+        cnt = _signal_rows(f"SELECT COUNT_BIG(*) AS n FROM [{t['schema']}].[{t['name']}]")[0]["n"] if limit <= 100 else None
+        return {"table": table, "columns": [c["name"] for c in t["columns"]], "rows": rows, "row_count": cnt}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"error": str(e)[:400]}
+
+
+@app.get("/api/signal/passages")
+async def signal_passages(days: int = Query(90, ge=7, le=1100), refresh: bool = Query(False)):
+    """Daily tanker passages (DPP Aframax/Suezmax/VLCC) through straits/chokepoints."""
+    if not _signal_configured():
+        return {"available": False, "reason": "not_configured"}
+    try:
+        return _signal_passages(days, force=refresh)
+    except Exception as e:
+        return {"available": False, "reason": "error", "error": str(e)[:400]}
+
+
+# ============================================================
 # Refinery Margins (seasonal %rank method)
 # ============================================================
 _MARGINS_CACHE = None
