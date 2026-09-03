@@ -12818,6 +12818,16 @@ _SIGNAL_DIR_HINTS = ("direction", "heading", "bound", "north", "south", "east", 
 _SIGNAL_CLASS_ALIASES = {
     "vlcc": "VLCC", "suezmax": "Suezmax", "aframax": "Aframax", "afra": "Aframax",
 }
+# Signal Ocean DW schema (DW_Socar): dbo.uvs_WaypointsTracking = one row per vessel/day/waypoint crossing
+_SIGNAL_WP_VIEW = "uvs_waypointstracking"
+_SIGNAL_WP_CLASSES = {84: "VLCC", 85: "Suezmax", 86: "Aframax"}   # uvs_VesselClasses IDs (Tanker)
+_SIGNAL_LOADING = {0: "Ballast", 1: "Laden"}
+_SIGNAL_DIR_LABELS = {"EW": "East→West", "WE": "West→East", "NS": "North→South", "SN": "South→North"}
+_SIGNAL_KEY_STRAITS = (
+    "Strait of Hormuz", "Bab El Mandeb Strait", "Suez Canal", "Malacca Strait", "Cape of Good Hope",
+    "Bosporus Strait", "Canakkale Strait", "Gibraltar Strait", "Danish Strait", "Dover Strait",
+    "Panama Canal", "Sunda Strait", "Lombok Strait", "Magellan Strait", "Torres Strait",
+)
 
 
 def _signal_configured() -> bool:
@@ -12938,6 +12948,14 @@ def _signal_passages(days: int, force: bool = False) -> dict:
 
     override = os.environ.get("SIGNAL_PASSAGES_SQL", "").strip()
     mapping = None
+    if not override:
+        schema = _signal_schema()
+        wp = next((t for t in schema["tables"] if t["name"].lower() == _SIGNAL_WP_VIEW), None)
+        if wp:
+            val = _signal_waypoints(days, wp)
+            with _signal_lock:
+                _signal_cache["data"][ck] = {"ts": now, "val": val}
+            return val
     if override:
         # Override must return columns: day, strait, vessel_class, passages (and optionally direction)
         rows = _signal_rows(override.replace("{days}", str(int(days))))
@@ -13010,6 +13028,117 @@ def _signal_passages(days: int, force: bool = False) -> dict:
     with _signal_lock:
         _signal_cache["data"][ck] = {"ts": now, "val": val}
     return val
+
+
+def _signal_waypoints(days: int, table: dict) -> dict:
+    """Daily crossings from Signal's uvs_WaypointsTracking, DPP classes only, with direction / laden split and year-ago overlay."""
+    import collections
+    from datetime import date as _date, timedelta as _td
+
+    tbl = f"[{table['schema']}].[{table['name']}]"
+    cls_in = ",".join(str(k) for k in _SIGNAL_WP_CLASSES)
+    d = int(days)
+    rows = _signal_rows(
+        f"SELECT DayDate AS day, WaypointDescription AS strait, VesselClassID AS cls, Direction AS dir, LoadingStateID AS ld, COUNT(*) AS n "
+        f"FROM {tbl} WHERE DayDate >= DATEADD(day, -{d}, CAST(GETUTCDATE() AS date)) AND VesselClassID IN ({cls_in}) "
+        f"GROUP BY DayDate, WaypointDescription, VesselClassID, Direction, LoadingStateID ORDER BY 1"
+    )
+    ly_rows = _signal_rows(
+        f"SELECT DayDate AS day, WaypointDescription AS strait, VesselClassID AS cls, COUNT(*) AS n "
+        f"FROM {tbl} WHERE DayDate >= DATEADD(day, -{d + 365}, CAST(GETUTCDATE() AS date)) "
+        f"AND DayDate < DATEADD(day, -365, CAST(GETUTCDATE() AS date)) AND VesselClassID IN ({cls_in}) "
+        f"GROUP BY DayDate, WaypointDescription, VesselClassID"
+    )
+
+    end = _date.today()
+    start = end - _td(days=d)
+    dates = [(start + _td(days=i)).isoformat() for i in range(d + 1)]
+    idx = {dd: i for i, dd in enumerate(dates)}
+    classes = list(_SIGNAL_WP_CLASSES.values())
+
+    straits: dict[str, dict] = {}
+
+    def _st(name):
+        return straits.setdefault(name, {
+            "total": [0] * len(dates),
+            "by_class": {c: [0] * len(dates) for c in classes},
+            "by_direction": collections.defaultdict(lambda: [0] * len(dates)),
+            "by_loading": {l: [0] * len(dates) for l in _SIGNAL_LOADING.values()},
+            "ly_total": [0] * len(dates),
+            "ly_by_class": {c: [0] * len(dates) for c in classes},
+            "cells": [],
+        })
+
+    for r in rows:
+        day = str(r["day"])[:10]
+        if day not in idx:
+            continue
+        i = idx[day]
+        n = int(r["n"] or 0)
+        cls = _SIGNAL_WP_CLASSES.get(int(r["cls"]), "Unknown")
+        ld = _SIGNAL_LOADING.get(int(r["ld"]) if r["ld"] is not None else -1, "Unknown")
+        dr = str(r["dir"] or "")
+        st = _st(str(r["strait"]))
+        st["total"][i] += n
+        if cls in st["by_class"]:
+            st["by_class"][cls][i] += n
+        if dr:
+            st["by_direction"][dr][i] += n
+        if ld in st["by_loading"]:
+            st["by_loading"][ld][i] += n
+        st["cells"].append([i, classes.index(cls) if cls in classes else -1, dr, 1 if ld == "Laden" else 0, n])
+
+    for r in ly_rows:
+        try:
+            shifted = (_date.fromisoformat(str(r["day"])[:10]) + _td(days=365)).isoformat()
+        except ValueError:
+            continue
+        if shifted not in idx:
+            continue
+        i = idx[shifted]
+        n = int(r["n"] or 0)
+        cls = _SIGNAL_WP_CLASSES.get(int(r["cls"]), "Unknown")
+        st = _st(str(r["strait"]))
+        st["ly_total"][i] += n
+        if cls in st["ly_by_class"]:
+            st["ly_by_class"][cls][i] += n
+
+    def _avg(vals):
+        return round(sum(vals) / len(vals), 2) if vals else None
+
+    out = []
+    for name, st in straits.items():
+        tot = st["total"]
+        last7 = _avg(tot[-7:])
+        prev30 = _avg(tot[-37:-7])
+        ly7 = _avg(st["ly_total"][-7:])
+        out.append({
+            "strait": name,
+            "key": name in _SIGNAL_KEY_STRAITS,
+            "total": tot,
+            "by_class": st["by_class"],
+            "by_direction": dict(st["by_direction"]),
+            "by_loading": st["by_loading"],
+            "ly_total": st["ly_total"],
+            "ly_by_class": st["ly_by_class"],
+            "cells": st["cells"],
+            "sum_period": sum(tot),
+            "sum_period_ly": sum(st["ly_total"]),
+            "avg_7d": last7, "avg_30d_prior": prev30, "avg_7d_ly": ly7,
+            "delta_7d_vs_30d_pct": (round((last7 - prev30) / prev30 * 100, 1) if last7 is not None and prev30 else None),
+            "delta_7d_yoy_pct": (round((last7 - ly7) / ly7 * 100, 1) if last7 is not None and ly7 else None),
+            "latest_day": dates[-1],
+            "latest": tot[-1],
+        })
+    out.sort(key=lambda x: (not x["key"], -x["sum_period"]))
+    return {
+        "available": True, "days": d, "dates": dates, "classes": classes,
+        "loading_states": list(_SIGNAL_LOADING.values()), "direction_labels": _SIGNAL_DIR_LABELS,
+        "straits": out,
+        "source": {"mode": "waypoints", "table_key": f"{table['schema']}.{table['name']}", "date": "DayDate", "strait": "WaypointDescription",
+                   "class": "VesselClassID in (84 VLCC, 85 Suezmax, 86 Aframax)", "vessel": "IMO", "direction": "Direction", "loading": "LoadingStateID"},
+        "rows": len(rows), "fetched_at": datetime.utcnow().isoformat() + "Z",
+    }
 
 
 @app.get("/api/signal/status")

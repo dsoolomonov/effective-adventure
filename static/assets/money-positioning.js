@@ -7545,12 +7545,13 @@
       box.innerHTML = "";
       const CLASS_COL = { VLCC: C.purple, Suezmax: C.cyan, Aframax: C.gold, All: C.amber, Unknown: C.muted };
       const PAL = ["#38bdf8", "#8b5cf6", "#22d3ee", "#f5b90f", "#10b981", "#ef4444", "#f472b6", "#a3e635", "#fb923c", "#60a5fa", "#c084fc", "#34d399"];
-      const state = { days: 90, cls: "All", strait: "ALL", data: null, status: null };
+      const state = { days: 90, cls: "All", load: "All", scope: "key", strait: "ALL", data: null, status: null };
+      const LOAD_COL = { All: C.amber, Laden: C.green, Ballast: C.muted };
 
       const hdr = el("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "14px", flexWrap: "wrap", gap: "10px" } });
       const hl = el("div", {});
       hl.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "📡 Signal — Tanker Strait Passages"));
-      hl.appendChild(el("div", { style: { fontSize: "12px", color: C.muted, marginTop: "3px" } }, "Signal Ocean enterprise feed · Dirty (DPP) Aframax / Suezmax / VLCC · daily transits through key chokepoints"));
+      hl.appendChild(el("div", { style: { fontSize: "12px", color: C.muted, marginTop: "3px" } }, "Signal Ocean enterprise feed · Dirty (DPP) Aframax / Suezmax / VLCC · daily vessel crossings of straits & waypoints (AIS), laden vs ballast"));
       hdr.appendChild(hl);
       const statusPill = el("span", { style: { fontSize: "10.5px", fontWeight: "800", letterSpacing: ".05em", borderRadius: "999px", padding: "4px 12px", border: `1px solid ${C.border}`, color: C.muted, background: "#0b1220" } }, "○ CONNECTING…");
       hdr.appendChild(statusPill);
@@ -7573,14 +7574,51 @@
         ctrl.appendChild(el("span", { style: { fontSize: "10.5px", color: C.muted, fontWeight: "700", letterSpacing: "1px" } }, "CLASS"));
         const classes = ["All"].concat((state.data && state.data.classes) || ["VLCC", "Suezmax", "Aframax"]);
         classes.forEach(c => ctrl.appendChild(pill(c, state.cls === c, () => { state.cls = c; draw(); }, CLASS_COL[c])));
+        if (isWp()) {
+          ctrl.appendChild(el("span", { style: { width: "14px" } }));
+          ctrl.appendChild(el("span", { style: { fontSize: "10.5px", color: C.muted, fontWeight: "700", letterSpacing: "1px" } }, "LOAD"));
+          ["All", "Laden", "Ballast"].forEach(l => ctrl.appendChild(pill(l, state.load === l, () => { state.load = l; draw(); }, LOAD_COL[l])));
+          ctrl.appendChild(el("span", { style: { width: "14px" } }));
+          ctrl.appendChild(el("span", { style: { fontSize: "10.5px", color: C.muted, fontWeight: "700", letterSpacing: "1px" } }, "SCOPE"));
+          ctrl.appendChild(pill("Key straits", state.scope === "key", () => { state.scope = "key"; state.strait = "ALL"; draw(); }));
+          ctrl.appendChild(pill("All waypoints", state.scope === "all", () => { state.scope = "all"; state.strait = "ALL"; draw(); }));
+        }
         const refreshBtn = el("button", { style: { marginLeft: "auto", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: "8px", padding: "5px 12px", cursor: "pointer", fontSize: "11.5px" }, onClick: () => load(true, true) }, "↻ Refresh from Signal");
         ctrl.appendChild(refreshBtn);
       }
 
+      function isWp() { return !!(state.data && state.data.source && state.data.source.mode === "waypoints"); }
+      // cells: [dayIdx, classIdx, dirCode, laden(0/1), n] — lets any class × load × direction slice be built client-side
+      function cellsFor(st, dir) {
+        const n = state.data.dates.length, out = new Array(n).fill(0);
+        const ci = state.cls === "All" ? -1 : state.data.classes.indexOf(state.cls);
+        const li = state.load === "All" ? -1 : (state.load === "Laden" ? 1 : 0);
+        for (const c of st.cells) {
+          if (ci >= 0 && c[1] !== ci) continue;
+          if (li >= 0 && c[3] !== li) continue;
+          if (dir && c[2] !== dir) continue;
+          out[c[0]] += c[4];
+        }
+        return out;
+      }
+      function sumCells(sel, dir) {
+        const out = new Array(state.data.dates.length).fill(0);
+        sel.forEach(st => cellsFor(st, dir).forEach((v, i) => { out[i] += v; }));
+        return out;
+      }
       function seriesFor(st) {
+        if (isWp()) {
+          if (state.load === "All") return state.cls === "All" ? st.total : (st.by_class[state.cls] || st.total.map(() => 0));
+          return cellsFor(st, null);
+        }
         if (state.cls === "All") return st.total;
         return st.by_class[state.cls] || st.total.map(() => 0);
       }
+      function lySeriesFor(st) {
+        if (!isWp() || state.load !== "All") return null;
+        return state.cls === "All" ? st.ly_total : (st.ly_by_class[state.cls] || null);
+      }
+      function dirLabel(code) { return (state.data.direction_labels || {})[code] || code; }
       function movAvg(arr, n) { return arr.map((_, i) => { const s = arr.slice(Math.max(0, i - n + 1), i + 1); return s.reduce((a, b) => a + b, 0) / s.length; }); }
 
       function renderNotConnected(status) {
@@ -7633,29 +7671,34 @@
         const d = state.data;
         body.innerHTML = "";
         if (!d || !d.available) return;
-        const straits = d.straits.filter(st => seriesFor(st).some(v => v > 0));
+        let straits = d.straits.filter(st => (isWp() && state.scope === "key") ? st.key : true);
+        if (!isWp() || state.scope === "all") straits = straits.filter(st => seriesFor(st).some(v => v > 0));
         if (!straits.length) { body.appendChild(card(null, `No ${state.cls} passages in the last ${d.days} days.`)); return; }
 
-        // KPI strip: latest day vs 7d avg vs prior-30d avg per strait
-        const kpi = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "10px", marginBottom: "14px" } });
+        // KPI strip: 7d avg vs prior-30d avg and vs same week last year, per strait
+        const kpi = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: "10px", marginBottom: "14px" } });
         straits.forEach((st, i) => {
           const s = seriesFor(st); const a7 = s.slice(-7).reduce((a, b) => a + b, 0) / Math.min(7, s.length);
           const p30 = s.slice(-37, -7); const a30 = p30.length ? p30.reduce((a, b) => a + b, 0) / p30.length : null;
           const dpct = a30 ? (a7 - a30) / a30 * 100 : null;
+          const ly = lySeriesFor(st); const ly7 = ly ? ly.slice(-7).reduce((a, b) => a + b, 0) / Math.min(7, ly.length) : null;
+          const ypct = ly7 ? (a7 - ly7) / ly7 * 100 : null;
           const k = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${PAL[i % PAL.length]}`, borderRadius: "10px", padding: "10px 12px" } });
           k.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, fontWeight: "700", letterSpacing: ".5px", textTransform: "uppercase" } }, st.strait));
           const row = el("div", { style: { display: "flex", alignItems: "baseline", gap: "8px", marginTop: "4px" } });
           row.appendChild(el("span", { style: { fontSize: "20px", fontWeight: "800", color: C.text } }, a7.toFixed(1)));
-          row.appendChild(el("span", { style: { fontSize: "10.5px", color: C.muted } }, "/day (7d avg)"));
+          row.appendChild(el("span", { style: { fontSize: "10.5px", color: C.muted } }, `/day (7d avg) · latest ${s[s.length - 1]}`));
           k.appendChild(row);
-          k.appendChild(el("div", { style: { fontSize: "11px", color: dpct == null ? C.muted : dpct >= 0 ? C.green : C.red, marginTop: "2px" } }, dpct == null ? `latest ${s[s.length - 1]} on ${d.dates[d.dates.length - 1]}` : `${dpct >= 0 ? "▲" : "▼"} ${Math.abs(dpct).toFixed(0)}% vs prior 30d (${a30.toFixed(1)}) · latest ${s[s.length - 1]}`));
+          k.appendChild(el("div", { style: { fontSize: "11px", color: dpct == null ? C.muted : dpct >= 0 ? C.green : C.red, marginTop: "2px" } }, dpct == null ? `no prior-30d base` : `${dpct >= 0 ? "▲" : "▼"} ${Math.abs(dpct).toFixed(0)}% vs prior 30d (${a30.toFixed(1)}/day)`));
+          if (ypct != null) k.appendChild(el("div", { style: { fontSize: "11px", color: ypct >= 0 ? C.green : C.red, marginTop: "1px" } }, `${ypct >= 0 ? "▲" : "▼"} ${Math.abs(ypct).toFixed(0)}% y/y (same week 2025: ${ly7.toFixed(1)}/day)`));
+          else if (ly && ly7 === 0 && a7 > 0) k.appendChild(el("div", { style: { fontSize: "11px", color: C.green, marginTop: "1px" } }, "y/y: none last year"));
           kpi.appendChild(k);
         });
         body.appendChild(kpi);
 
         // Main chart: all straits, 7d moving average, stacked bars toggle
         const mainDiv = el("div", { style: { height: "380px" } });
-        const mainCard = card(`Daily passages by strait — ${state.cls} (7-day moving average, hover for daily)`, mainDiv);
+        const mainCard = card(`Daily passages by strait — ${state.cls}${isWp() && state.load !== "All" ? " · " + state.load : ""} (7-day moving average, hover for daily)`, mainDiv);
         body.appendChild(mainCard);
         loadPlotly(() => {
           const traces = straits.map((st, i) => ({ x: d.dates, y: movAvg(seriesFor(st), 7), name: st.strait, mode: "lines", line: { color: PAL[i % PAL.length], width: 2 }, customdata: seriesFor(st), hovertemplate: "%{fullData.name}<br>7d avg %{y:.1f} · day %{customdata}<extra></extra>" }));
@@ -7664,16 +7707,34 @@
 
         // Class mix (stacked) for the selected strait or all
         const straitSel = el("select", { style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "4px 8px", fontSize: "12px" } });
-        ["ALL"].concat(straits.map(s => s.strait)).forEach(sname => { const o = el("option", { value: sname }, sname === "ALL" ? "All straits" : sname); if (sname === state.strait) o.selected = true; straitSel.appendChild(o); });
+        ["ALL"].concat(straits.map(s => s.strait)).forEach(sname => { const o = el("option", { value: sname }, sname === "ALL" ? (state.scope === "key" ? "All key straits" : "All waypoints") : sname); if (sname === state.strait) o.selected = true; straitSel.appendChild(o); });
         straitSel.addEventListener("change", () => { state.strait = straitSel.value; draw(); });
         const mixDiv = el("div", { style: { height: "300px" } });
         const mixWrap = el("div", {}, [el("div", { style: { marginBottom: "8px" } }, straitSel), mixDiv]);
-        body.appendChild(card("Vessel-class mix — daily passages (stacked)", mixWrap));
+        body.appendChild(card(`Vessel-class mix — daily passages (stacked${isWp() && state.load !== "All" ? ", " + state.load.toLowerCase() + " only" : ""})`, mixWrap));
         loadPlotly(() => {
           const sel = state.strait === "ALL" ? straits : straits.filter(s => s.strait === state.strait);
-          const traces = d.classes.map(cl => ({ x: d.dates, y: d.dates.map((_, i) => sel.reduce((a, st) => a + ((st.by_class[cl] || [])[i] || 0), 0)), name: cl, type: "bar", marker: { color: CLASS_COL[cl] || C.muted } }));
+          const saveCls = state.cls;
+          const traces = d.classes.map(cl => {
+            let y;
+            if (isWp() && state.load !== "All") { state.cls = cl; y = sumCells(sel, null); state.cls = saveCls; }
+            else y = d.dates.map((_, i) => sel.reduce((a, st) => a + ((st.by_class[cl] || [])[i] || 0), 0));
+            return { x: d.dates, y, name: cl, type: "bar", marker: { color: CLASS_COL[cl] || C.muted } };
+          });
           Plotly.newPlot(mixDiv, traces, { ...plotLayout, barmode: "stack", yaxis: { ...plotLayout.yaxis, title: { text: "transits / day", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 } }, { responsive: true, displayModeBar: false });
         });
+
+        // Laden vs ballast split (crude on the water vs repositioning) for the selected scope
+        if (isWp() && state.load === "All") {
+          const ldDiv = el("div", { style: { height: "280px" } });
+          body.appendChild(card(`Laden vs ballast — ${state.strait === "ALL" ? (state.scope === "key" ? "all key straits" : "all waypoints") : state.strait} · ${state.cls}`, ldDiv));
+          loadPlotly(() => {
+            const sel = state.strait === "ALL" ? straits : straits.filter(s => s.strait === state.strait);
+            const saveLoad = state.load;
+            const traces = ["Laden", "Ballast"].map(l => { state.load = l; const y = sumCells(sel, null); state.load = saveLoad; return { x: d.dates, y, name: l, type: "bar", marker: { color: LOAD_COL[l] } }; });
+            Plotly.newPlot(ldDiv, traces, { ...plotLayout, barmode: "stack", yaxis: { ...plotLayout.yaxis, title: { text: "transits / day", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 } }, { responsive: true, displayModeBar: false });
+          });
+        }
 
         // Small multiples per strait, with direction split when available
         const grid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))", gap: "12px" } });
@@ -7681,12 +7742,15 @@
           const dv = el("div", { style: { height: "220px" } });
           grid.appendChild(card(st.strait, dv, { marginBottom: "0" }));
           loadPlotly(() => {
-            const dirs = Object.keys(st.by_direction || {});
+            const dirs = Object.keys(st.by_direction || {}).sort();
             let traces;
-            if (dirs.length && state.cls === "All") traces = dirs.map((dn, j) => ({ x: d.dates, y: st.by_direction[dn], name: dn, type: "bar", marker: { color: PAL[(i + j * 3) % PAL.length] } }));
+            if (dirs.length && isWp()) traces = dirs.map((dn, j) => ({ x: d.dates, y: cellsFor(st, dn), name: dirLabel(dn), type: "bar", marker: { color: PAL[(i + j * 3) % PAL.length] } }));
+            else if (dirs.length && state.cls === "All") traces = dirs.map((dn, j) => ({ x: d.dates, y: st.by_direction[dn], name: dn, type: "bar", marker: { color: PAL[(i + j * 3) % PAL.length] } }));
             else traces = [{ x: d.dates, y: seriesFor(st), name: "daily", type: "bar", marker: { color: PAL[i % PAL.length], opacity: 0.55 } }];
             traces.push({ x: d.dates, y: movAvg(seriesFor(st), 7), name: "7d avg", mode: "lines", line: { color: "#e8edf8", width: 1.5 } });
-            Plotly.newPlot(dv, traces, { ...plotLayout, barmode: "stack", showlegend: dirs.length > 0, margin: { t: 8, b: 40, l: 36, r: 10 }, legend: { ...plotLayout.legend, y: -0.3 } }, { responsive: true, displayModeBar: false });
+            const ly = lySeriesFor(st);
+            if (ly) traces.push({ x: d.dates, y: movAvg(ly, 7), name: "7d avg, year ago", mode: "lines", line: { color: C.muted, width: 1.2, dash: "dot" } });
+            Plotly.newPlot(dv, traces, { ...plotLayout, barmode: "stack", showlegend: true, margin: { t: 8, b: 40, l: 36, r: 10 }, legend: { ...plotLayout.legend, y: -0.3 } }, { responsive: true, displayModeBar: false });
           });
         });
         body.appendChild(grid);
@@ -7694,7 +7758,9 @@
         // Source footnote
         const src = d.source || {};
         body.appendChild(el("div", { style: { color: C.muted, fontSize: "11px", marginTop: "12px" } },
-          `Source: Signal Ocean SQL · ${src.mode === "auto" ? `${src.table_key} (date=${src.date}, strait=${src.strait}${src.class ? ", class=" + src.class : ""}${src.vessel ? ", vessel=" + src.vessel : ""})` : "custom SQL"} · ${d.rows.toLocaleString()} grouped rows · fetched ${d.fetched_at.slice(0, 16).replace("T", " ")} UTC · cached 15 min`));
+          src.mode === "waypoints"
+            ? `Source: Signal Ocean · ${src.table_key} (AIS waypoint crossings, one row per vessel per day) · ${src.class} · direction=${src.direction}, laden/ballast=${src.loading} · data through ${d.dates[d.dates.length - 1]} · fetched ${d.fetched_at.slice(0, 16).replace("T", " ")} UTC · cached 15 min · dotted line = same period one year earlier`
+            : `Source: Signal Ocean SQL · ${src.mode === "auto" ? `${src.table_key} (date=${src.date}, strait=${src.strait}${src.class ? ", class=" + src.class : ""}${src.vessel ? ", vessel=" + src.vessel : ""})` : "custom SQL"} · ${d.rows.toLocaleString()} grouped rows · fetched ${d.fetched_at.slice(0, 16).replace("T", " ")} UTC · cached 15 min`));
       }
 
       async function load(reset, force) {
