@@ -1,0 +1,40 @@
+{
+  "platform_url": "https://crude-oil-analytics.fly.dev",
+  "ingest_token": "PASTE_YOUR_INGEST_TOKEN_HERE",
+  "mode": "excel",
+  "poll_seconds": 5,
+  "source": "bloomberg-bridge",
+
+  "_comment_excel": "EXCEL MODE — reads the open Bloomberg workbook via xlwings.",
+  "workbook": "active",
+  "layout": "row",
+  "sheets": null,
+  "header_row": "auto",
+  "skip_labels": ["date", "dates", ""],
+  "label_col": 1,
+  "value_col": 2,
+
+  "_comment_positioning": "POSITIONING — also stream the Sparta order-level workbook (kept open alongside the prices one). Reads it by name. Set enabled=false to turn off.",
+  "positioning": {
+    "enabled": true,
+    "workbook": "FinFlows_Stacked_Order_Levels_Bloomberg.xlsx",
+    "sheet": "Energy"
+  },
+
+  "_comment_voloi": "VOLUME & OI — also stream the Energy Volume/OI workbook (kept open alongside the others). Reads it by name. every_n_cycles: push once every N poll cycles (3-min bars / daily OI change slowly). tail_bars: how many recent 3-min bars per contract to send.",
+  "voloi": {
+    "enabled": true,
+    "workbook": "Energy_Volume_OI_Tracker.xlsx",
+    "every_n_cycles": 10,
+    "tail_bars": 800
+  },
+
+  "_comment_blpapi": "BLPAPI MODE — set mode=blpapi and map labels to securities.",
+  "blp_host": "localhost",
+  "blp_port": 8194,
+  "securities": {
+    "CO1": "CO1 Comdty",
+    "CL1": "CL1 Comdty",
+    "QS1": "QS1 Comdty"
+  }
+}
