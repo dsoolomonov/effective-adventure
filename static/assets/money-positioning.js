@@ -7545,21 +7545,44 @@
       box.innerHTML = "";
       const CLASS_COL = { VLCC: C.purple, Suezmax: C.cyan, Aframax: C.gold, All: C.amber, Unknown: C.muted };
       const PAL = ["#38bdf8", "#8b5cf6", "#22d3ee", "#f5b90f", "#10b981", "#ef4444", "#f472b6", "#a3e635", "#fb923c", "#60a5fa", "#c084fc", "#34d399"];
-      const state = { days: 90, cls: "All", load: "All", scope: "key", strait: "ALL", data: null, status: null };
+      const state = { days: 90, cls: "All", load: "All", scope: "key", strait: "ALL", data: null, status: null, view: "passages" };
       const LOAD_COL = { All: C.amber, Laden: C.green, Ballast: C.muted };
+      const VIEWS = [["passages", "⛵ Strait passages"], ["fleet", "📍 Fleet tracker"], ["flows", "🛢 Crude flows"], ["tonnage", "⚓ Tonnage lists"]];
+      const TITLES = { passages: "Tanker Strait Passages", fleet: "Fleet Tracker (live AIS)", flows: "Dirty Crude Flows (voyages)", tonnage: "Available Tonnage (supply)" };
+      const SUBS = { passages: "daily vessel crossings of straits & waypoints (AIS), laden vs ballast", fleet: "latest AIS position, voyage status, destination & ETA for every DPP VLCC / Suezmax / Aframax", flows: "weekly dirty loadings by load region, load→discharge matrix and cargo currently on the water (Signal voyage estimates, barrels)", tonnage: "vessels that can reach each configured load port within N days · open/fixed status, ETA buckets, history" };
 
       const hdr = el("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "14px", flexWrap: "wrap", gap: "10px" } });
       const hl = el("div", {});
-      hl.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "📡 Signal — Tanker Strait Passages"));
-      hl.appendChild(el("div", { style: { fontSize: "12px", color: C.muted, marginTop: "3px" } }, "Signal Ocean enterprise feed · Dirty (DPP) Aframax / Suezmax / VLCC · daily vessel crossings of straits & waypoints (AIS), laden vs ballast"));
+      const titleEl = el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "📡 Signal — " + TITLES.passages);
+      const subEl = el("div", { style: { fontSize: "12px", color: C.muted, marginTop: "3px" } }, "Signal Ocean enterprise feed · Dirty (DPP) Aframax / Suezmax / VLCC · " + SUBS.passages);
+      hl.appendChild(titleEl); hl.appendChild(subEl);
       hdr.appendChild(hl);
       const statusPill = el("span", { style: { fontSize: "10.5px", fontWeight: "800", letterSpacing: ".05em", borderRadius: "999px", padding: "4px 12px", border: `1px solid ${C.border}`, color: C.muted, background: "#0b1220" } }, "○ CONNECTING…");
       hdr.appendChild(statusPill);
       box.appendChild(hdr);
 
+      const subnav = el("div", { style: { display: "flex", gap: "4px", borderBottom: `1px solid ${C.border}`, marginBottom: "14px" } });
+      box.appendChild(subnav);
       const ctrl = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" } });
       const body = el("div", {});
       box.appendChild(ctrl); box.appendChild(body);
+      const vstate = { fleet: { cls: "All", load: "All", status: "All", q: "", region: "All", data: null }, flows: { days: 365, src: "ALL", data: null }, tonnage: { days: 90, port: null, data: null } };
+      const AXB = { gridcolor: "#1e293b", tickfont: { size: 11 } }; // fresh axis objects: Plotly mutates the layout it is given, so never share plotLayout.xaxis
+      function renderSubnav() {
+        subnav.innerHTML = "";
+        VIEWS.forEach(([id, label]) => {
+          const active = state.view === id;
+          subnav.appendChild(el("button", { style: { background: "transparent", border: "none", borderBottom: active ? `2px solid ${C.amber}` : "2px solid transparent", color: active ? C.amber : C.muted, padding: "8px 14px", cursor: "pointer", fontSize: "12.5px", fontWeight: "700", marginBottom: "-1px" }, onClick: () => { if (state.view === id) return; state.view = id; titleEl.textContent = "📡 Signal — " + TITLES[id]; subEl.textContent = "Signal Ocean enterprise feed · Dirty (DPP) Aframax / Suezmax / VLCC · " + SUBS[id]; renderSubnav(); showView(); } }, label));
+        });
+      }
+      function showView() {
+        if (state.view === "passages") { ctrl.style.display = "flex"; if (state.data) draw(); else load(true); return; }
+        ctrl.style.display = "none";
+        if (state.status && !state.status.connected) { renderNotConnected(state.status); return; }
+        if (state.view === "fleet") loadFleet(false);
+        else if (state.view === "flows") loadFlows(false);
+        else loadTonnage(false);
+      }
 
       function pill(label, active, onClick, color) {
         return el("button", { style: { background: active ? (color || C.amber) : "transparent", color: active ? "#05070e" : (color || C.text), border: `1px solid ${color || C.border}`, borderRadius: "999px", padding: "5px 13px", cursor: "pointer", fontSize: "11.5px", fontWeight: "700" }, onClick }, label);
@@ -7702,7 +7725,7 @@
         body.appendChild(mainCard);
         loadPlotly(() => {
           const traces = straits.map((st, i) => ({ x: d.dates, y: movAvg(seriesFor(st), 7), name: st.strait, mode: "lines", line: { color: PAL[i % PAL.length], width: 2 }, customdata: seriesFor(st), hovertemplate: "%{fullData.name}<br>7d avg %{y:.1f} · day %{customdata}<extra></extra>" }));
-          Plotly.newPlot(mainDiv, traces, { ...plotLayout, yaxis: { ...plotLayout.yaxis, title: { text: "transits / day", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 } }, { responsive: true, displayModeBar: false });
+          Plotly.newPlot(mainDiv, traces, { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, yaxis: { ...AXB, title: { text: "transits / day", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 } }, { responsive: true, displayModeBar: false });
         });
 
         // Class mix (stacked) for the selected strait or all
@@ -7721,7 +7744,7 @@
             else y = d.dates.map((_, i) => sel.reduce((a, st) => a + ((st.by_class[cl] || [])[i] || 0), 0));
             return { x: d.dates, y, name: cl, type: "bar", marker: { color: CLASS_COL[cl] || C.muted } };
           });
-          Plotly.newPlot(mixDiv, traces, { ...plotLayout, barmode: "stack", yaxis: { ...plotLayout.yaxis, title: { text: "transits / day", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 } }, { responsive: true, displayModeBar: false });
+          Plotly.newPlot(mixDiv, traces, { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, barmode: "stack", yaxis: { ...AXB, title: { text: "transits / day", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 } }, { responsive: true, displayModeBar: false });
         });
 
         // Laden vs ballast split (crude on the water vs repositioning) for the selected scope
@@ -7732,7 +7755,7 @@
             const sel = state.strait === "ALL" ? straits : straits.filter(s => s.strait === state.strait);
             const saveLoad = state.load;
             const traces = ["Laden", "Ballast"].map(l => { state.load = l; const y = sumCells(sel, null); state.load = saveLoad; return { x: d.dates, y, name: l, type: "bar", marker: { color: LOAD_COL[l] } }; });
-            Plotly.newPlot(ldDiv, traces, { ...plotLayout, barmode: "stack", yaxis: { ...plotLayout.yaxis, title: { text: "transits / day", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 } }, { responsive: true, displayModeBar: false });
+            Plotly.newPlot(ldDiv, traces, { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, barmode: "stack", yaxis: { ...AXB, title: { text: "transits / day", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 } }, { responsive: true, displayModeBar: false });
           });
         }
 
@@ -7750,7 +7773,7 @@
             traces.push({ x: d.dates, y: movAvg(seriesFor(st), 7), name: "7d avg", mode: "lines", line: { color: "#e8edf8", width: 1.5 } });
             const ly = lySeriesFor(st);
             if (ly) traces.push({ x: d.dates, y: movAvg(ly, 7), name: "7d avg, year ago", mode: "lines", line: { color: C.muted, width: 1.2, dash: "dot" } });
-            Plotly.newPlot(dv, traces, { ...plotLayout, barmode: "stack", showlegend: true, margin: { t: 8, b: 40, l: 36, r: 10 }, legend: { ...plotLayout.legend, y: -0.3 } }, { responsive: true, displayModeBar: false });
+            Plotly.newPlot(dv, traces, { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, barmode: "stack", showlegend: true, margin: { t: 8, b: 40, l: 36, r: 10 }, legend: { ...plotLayout.legend, y: -0.3 } }, { responsive: true, displayModeBar: false });
           });
         });
         body.appendChild(grid);
@@ -7761,6 +7784,275 @@
           src.mode === "waypoints"
             ? `Source: Signal Ocean · ${src.table_key} (AIS waypoint crossings, one row per vessel per day) · ${src.class} · direction=${src.direction}, laden/ballast=${src.loading} · data through ${d.dates[d.dates.length - 1]} · fetched ${d.fetched_at.slice(0, 16).replace("T", " ")} UTC · cached 15 min · dotted line = same period one year earlier`
             : `Source: Signal Ocean SQL · ${src.mode === "auto" ? `${src.table_key} (date=${src.date}, strait=${src.strait}${src.class ? ", class=" + src.class : ""}${src.vessel ? ", vessel=" + src.vessel : ""})` : "custom SQL"} · ${d.rows.toLocaleString()} grouped rows · fetched ${d.fetched_at.slice(0, 16).replace("T", " ")} UTC · cached 15 min`));
+      }
+
+      // ── shared helpers for the fleet / flows / tonnage views ──
+      function lbl(t) { return el("span", { style: { fontSize: "10.5px", color: C.muted, fontWeight: "700", letterSpacing: "1px" } }, t); }
+      function gap() { return el("span", { style: { width: "14px" } }); }
+      function kpiCard(title, value, sub, color) {
+        const k = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${color || C.amber}`, borderRadius: "10px", padding: "10px 12px" } });
+        k.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, fontWeight: "700", letterSpacing: ".5px", textTransform: "uppercase" } }, title));
+        k.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.text, marginTop: "4px" } }, value));
+        if (sub) k.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "2px" } }, sub));
+        return k;
+      }
+      function table(cols, rows, opts) {
+        opts = opts || {};
+        let h = `<table style="border-collapse:collapse;font-size:11.5px;white-space:nowrap;width:100%"><thead><tr>` + cols.map(c => `<th style="padding:6px 8px;text-align:${c.num ? "right" : "left"};color:${C.amber};border-bottom:1px solid ${C.border};position:sticky;top:0;background:${C.card}">${c.h}</th>`).join("") + `</tr></thead><tbody>`;
+        rows.forEach(r => { h += `<tr>` + cols.map(c => { const v = c.f(r); return `<td style="padding:4px 8px;border-bottom:1px solid #111827;color:${c.color ? c.color(r) : C.text};text-align:${c.num ? "right" : "left"}">${v == null || v === "" ? "<span style='color:#334155'>—</span>" : v}</td>`; }).join("") + `</tr>`; });
+        const w = el("div", { style: { overflow: "auto", maxHeight: (opts.maxH || 420) + "px" } });
+        w.innerHTML = h + "</tbody></table>";
+        return w;
+      }
+      const esc = s => String(s == null ? "" : s).replace(/</g, "&lt;");
+      const failBox = (what, d) => { body.innerHTML = ""; body.appendChild(card(null, `Error reading ${what}: ${d.error || d.reason}`)); };
+      const stamp = (d, extra) => el("div", { style: { color: C.muted, fontSize: "11px", marginTop: "12px" } }, `Source: Signal Ocean · ${d.source.table_key}${extra ? " · " + extra : ""} · fetched ${d.fetched_at.slice(0, 16).replace("T", " ")} UTC · cached 15 min`);
+      function refreshBtn(fn) { return el("button", { style: { marginLeft: "auto", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: "8px", padding: "5px 12px", cursor: "pointer", fontSize: "11.5px" }, onClick: fn }, "↻ Refresh from Signal"); }
+
+      // ── FLEET TRACKER ──
+      const STATUS_ORDER = ["Laden", "Ballast", "Loading", "WaitToLoad", "Discharging", "WaitToDischarge", "Repairs", "Unknown"];
+      const STATUS_COL = { Laden: C.green, Ballast: C.muted, Loading: C.gold, WaitToLoad: "#fb923c", Discharging: C.cyan, WaitToDischarge: "#60a5fa", Repairs: C.red, Unknown: "#475569" };
+      async function loadFleet(force) {
+        const fs = vstate.fleet;
+        if (!fs.data || force) {
+          body.innerHTML = `<div style="color:${C.muted};padding:30px;text-align:center">Loading fleet positions from Signal…</div>`;
+          try { fs.data = await (await fetch(`/api/signal/fleet${force ? "?refresh=1" : ""}`)).json(); }
+          catch (e) { body.innerHTML = `<div style="color:${C.red};padding:30px">${e.message}</div>`; return; }
+        }
+        if (!fs.data.available) return failBox("fleet", fs.data);
+        drawFleet();
+      }
+      function drawFleet() {
+        const fs = vstate.fleet, d = fs.data;
+        body.innerHTML = "";
+        const c = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" } });
+        c.appendChild(lbl("CLASS"));
+        ["All"].concat(d.classes).forEach(cl => c.appendChild(pill(cl, fs.cls === cl, () => { fs.cls = cl; drawFleet(); }, CLASS_COL[cl])));
+        c.appendChild(gap()); c.appendChild(lbl("LOAD"));
+        ["All", "Laden", "Ballast"].forEach(l => c.appendChild(pill(l, fs.load === l, () => { fs.load = l; drawFleet(); }, LOAD_COL[l])));
+        c.appendChild(gap()); c.appendChild(lbl("STATUS"));
+        const stSel = el("select", { style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "4px 8px", fontSize: "12px" } });
+        ["All"].concat(STATUS_ORDER.filter(s => d.vessels.some(v => v.status === s))).forEach(s => { const o = el("option", { value: s }, s); if (s === fs.status) o.selected = true; stSel.appendChild(o); });
+        stSel.addEventListener("change", () => { fs.status = stSel.value; drawFleet(); }); c.appendChild(stSel);
+        c.appendChild(gap()); c.appendChild(lbl("REGION"));
+        const rgSel = el("select", { style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "4px 8px", fontSize: "12px" } });
+        ["All"].concat(d.by_region.map(r => r.region)).forEach(s => { const o = el("option", { value: s }, s); if (s === fs.region) o.selected = true; rgSel.appendChild(o); });
+        rgSel.addEventListener("change", () => { fs.region = rgSel.value; drawFleet(); }); c.appendChild(rgSel);
+        c.appendChild(gap());
+        const q = el("input", { placeholder: "🔍 vessel name / IMO / operator / destination", value: fs.q, style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "5px 10px", fontSize: "12px", width: "300px" } });
+        let qt; q.addEventListener("input", () => { clearTimeout(qt); qt = setTimeout(() => { fs.q = q.value; drawFleet(); const nq = body.querySelector("input"); if (nq) { nq.focus(); nq.setSelectionRange(nq.value.length, nq.value.length); } }, 250); });
+        c.appendChild(q);
+        c.appendChild(refreshBtn(() => loadFleet(true)));
+        body.appendChild(c);
+
+        const ql = fs.q.trim().toLowerCase();
+        const vs = d.vessels.filter(v => (fs.cls === "All" || v.cls === fs.cls) && (fs.load === "All" || (fs.load === "Laden") === v.laden) && (fs.status === "All" || v.status === fs.status) && (fs.region === "All" || v.region === fs.region)
+          && (!ql || [v.name, v.imo, v.op, v.dest, v.dest_area, v.area, v.port, v.next_port].some(x => x != null && String(x).toLowerCase().includes(ql))));
+        const laden = vs.filter(v => v.laden).length, moving = vs.filter(v => v.spd != null && v.spd >= 3).length, repairs = vs.filter(v => v.status === "Repairs").length;
+        const ladenDwt = vs.filter(v => v.laden).reduce((a, v) => a + (v.dwt || 0), 0);
+        const kpi = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: "10px", marginBottom: "14px" } });
+        kpi.appendChild(kpiCard("Vessels tracked", vs.length.toLocaleString(), `of ${d.count.toLocaleString()} DPP ${fs.cls === "All" ? "VLCC/Suez/Afra" : fs.cls} · AIS as of ${(d.as_of || "").replace("T", " ")} UTC`, C.amber));
+        kpi.appendChild(kpiCard("Laden", `${laden} · ${vs.length ? (laden / vs.length * 100).toFixed(0) : 0}%`, `≈ ${(ladenDwt / 1e6).toFixed(1)} m dwt laden · ${vs.length - laden} ballast`, C.green));
+        kpi.appendChild(kpiCard("Under way (≥3 kn)", moving.toLocaleString(), `${vs.length - moving} stationary / at berth / anchorage`, C.cyan));
+        kpi.appendChild(kpiCard("In repairs / yard", repairs.toLocaleString(), `${vs.filter(v => v.status === "WaitToLoad").length} waiting to load · ${vs.filter(v => v.status === "WaitToDischarge").length} waiting to discharge`, C.red));
+        body.appendChild(kpi);
+
+        // world map
+        const mapDiv = el("div", { style: { height: "560px" } });
+        body.appendChild(card(`Live positions — ${vs.length.toLocaleString()} vessels (● laden, ◇ ballast; colour = class; hover for details, drag to pan, toolbar to zoom)`, mapDiv));
+        loadPlotly(() => {
+          const traces = [];
+          d.classes.forEach(cl => [true, false].forEach(ld => {
+            const sub = vs.filter(v => v.cls === cl && v.laden === ld);
+            if (!sub.length) return;
+            traces.push({ type: "scattergeo", mode: "markers", name: `${cl} ${ld ? "laden" : "ballast"}`, lat: sub.map(v => v.lat), lon: sub.map(v => v.lon),
+              marker: { size: cl === "VLCC" ? 8 : cl === "Suezmax" ? 6.5 : 5.5, color: CLASS_COL[cl], symbol: ld ? "circle" : "diamond-open", opacity: ld ? 0.9 : 0.75, line: { width: ld ? 0 : 1.2, color: CLASS_COL[cl] } },
+              customdata: sub.map(v => [v.name || v.imo, v.status, v.spd, v.dest || "—", v.eta ? v.eta.replace("T", " ") : "—", v.area || "—", v.dwt ? v.dwt.toLocaleString() : "—", v.op || "—", v.imo]),
+              hovertemplate: `<b>%{customdata[0]}</b> · ${cl} · %{customdata[6]} dwt<br>%{customdata[1]} · %{customdata[2]} kn · %{customdata[5]}<br>→ %{customdata[3]} ETA %{customdata[4]}<br>%{customdata[7]} · IMO %{customdata[8]}<extra></extra>` });
+          }));
+          Plotly.newPlot(mapDiv, traces, { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, margin: { t: 0, b: 0, l: 0, r: 0 }, legend: { ...plotLayout.legend, orientation: "h", y: 0.02, x: 0.5, xanchor: "center", bgcolor: "rgba(5,7,14,.6)" }, dragmode: "pan",
+            geo: { projection: { type: "natural earth" }, showland: true, landcolor: "#0f172a", showocean: true, oceancolor: "#060a14", showcountries: true, countrycolor: "#1e293b", coastlinecolor: "#334155", showlakes: false, bgcolor: "rgba(0,0,0,0)", showframe: false, lataxis: { range: [-58, 75] }, lonaxis: { range: [-180, 180] } } }, { responsive: true, displayModeBar: true, displaylogo: false, modeBarButtonsToRemove: ["toImage", "select2d", "lasso2d"], scrollZoom: false });
+        });
+
+        // status by class + region distribution
+        const two = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" } });
+        const stDiv = el("div", { style: { height: "280px" } }); two.appendChild(card("Voyage status by class (all tracked vessels)", stDiv, { marginBottom: "0" }));
+        const rgDiv = el("div", { style: { height: "280px" } }); two.appendChild(card("Where the fleet is — laden vs ballast by region", rgDiv, { marginBottom: "0" }));
+        body.appendChild(two);
+        loadPlotly(() => {
+          const sts = STATUS_ORDER.filter(s => d.classes.some(cl => (d.by_status[cl] || {})[s]));
+          Plotly.newPlot(stDiv, sts.map(s => ({ type: "bar", name: s, x: d.classes, y: d.classes.map(cl => (d.by_status[cl] || {})[s] || 0), marker: { color: STATUS_COL[s] } })), { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, barmode: "stack", margin: { t: 10, b: 40, l: 40, r: 10 } }, { responsive: true, displayModeBar: false });
+          const rg = d.by_region.slice(0, 16);
+          Plotly.newPlot(rgDiv, [{ type: "bar", name: "Laden", orientation: "h", y: rg.map(r => r.region), x: rg.map(r => r.Laden), marker: { color: C.green } }, { type: "bar", name: "Ballast", orientation: "h", y: rg.map(r => r.region), x: rg.map(r => r.Ballast), marker: { color: C.muted } }],
+            { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, barmode: "stack", margin: { t: 10, b: 30, l: 150, r: 10 }, yaxis: { ...AXB, autorange: "reversed", tickfont: { size: 10 } } }, { responsive: true, displayModeBar: false });
+        });
+
+        // vessel table
+        const sorted = vs.slice().sort((a, b) => (b.ts || "").localeCompare(a.ts || "") || (b.dwt || 0) - (a.dwt || 0)).slice(0, 400);
+        const tw = table([
+          { h: "Vessel", f: v => `<b>${esc(v.name || v.imo)}</b>` }, { h: "IMO", f: v => v.imo }, { h: "Class", f: v => v.cls, color: v => CLASS_COL[v.cls] }, { h: "DWT", num: true, f: v => v.dwt ? v.dwt.toLocaleString() : null }, { h: "Built", f: v => v.built },
+          { h: "Status", f: v => v.status, color: v => STATUS_COL[v.status] || C.text }, { h: "Kn", num: true, f: v => v.spd }, { h: "Draught", num: true, f: v => v.draught }, { h: "Area", f: v => esc(v.area) }, { h: "Nearest port", f: v => esc(v.port) },
+          { h: "AIS destination", f: v => esc(v.dest) }, { h: "Next port (Signal)", f: v => v.next_port ? esc(v.next_port) + (v.dest_area ? ` <span style="color:${C.muted}">${esc(v.dest_area)}</span>` : "") : null }, { h: "ETA", f: v => v.eta ? v.eta.replace("T", " ") : null },
+          { h: "Operator", f: v => esc(v.op) }, { h: "Lat / Lon", f: v => `${v.lat}, ${v.lon}` }, { h: "AIS (UTC)", f: v => v.ts ? v.ts.replace("T", " ") : null, color: () => C.muted },
+        ], sorted, { maxH: 480 });
+        body.appendChild(card(`Vessel list — ${sorted.length.toLocaleString()}${vs.length > 400 ? ` of ${vs.length.toLocaleString()} (narrow with filters/search)` : ""} · newest AIS first`, tw));
+        body.appendChild(stamp(d, `${d.source.laden_def} · positions older than 30 days excluded`));
+      }
+
+      // ── CRUDE FLOWS (voyages) ──
+      async function loadFlows(force) {
+        const fs = vstate.flows;
+        if (!fs.data || force || fs.data.days !== fs.days) {
+          body.innerHTML = `<div style="color:${C.muted};padding:30px;text-align:center">Loading ${fs.days}-day voyage flows from Signal…</div>`;
+          try { fs.data = await (await fetch(`/api/signal/flows?days=${fs.days}${force ? "&refresh=1" : ""}`)).json(); }
+          catch (e) { body.innerHTML = `<div style="color:${C.red};padding:30px">${e.message}</div>`; return; }
+        }
+        if (!fs.data.available) return failBox("voyages", fs.data);
+        drawFlows();
+      }
+      function drawFlows() {
+        const fs = vstate.flows, d = fs.data;
+        body.innerHTML = "";
+        const c = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" } });
+        c.appendChild(lbl("WINDOW"));
+        [90, 180, 365, 730].forEach(n => c.appendChild(pill(n >= 365 ? (n / 365) + "y" : n + "d", fs.days === n, () => { fs.days = n; loadFlows(false); })));
+        c.appendChild(gap()); c.appendChild(lbl("LOAD REGION"));
+        const srcSel = el("select", { style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "4px 8px", fontSize: "12px" } });
+        const srcs = Object.keys(d.by_source).filter(s => s !== "Other").concat(["Other"]);
+        ["ALL"].concat(srcs).forEach(s => { const o = el("option", { value: s }, s === "ALL" ? "All load regions" : s); if (s === fs.src) o.selected = true; srcSel.appendChild(o); });
+        srcSel.addEventListener("change", () => { fs.src = srcSel.value; drawFlows(); }); c.appendChild(srcSel);
+        c.appendChild(refreshBtn(() => loadFlows(true)));
+        body.appendChild(c);
+
+        const W = d.weeks.length, full = W - 1; // last week is partial
+        const tot = fs.src === "ALL" ? d.total_bbl : (d.by_source[fs.src] || { bbl: [] }).bbl;
+        const last4 = tot.slice(Math.max(0, full - 4), full), prev4 = tot.slice(Math.max(0, full - 8), full - 4);
+        const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+        const l4 = avg(last4) / 7 / 1e3, p4 = avg(prev4) / 7 / 1e3;
+        const ly = tot.slice(Math.max(0, full - 56), full - 48); const lyv = ly.length === 8 ? avg(ly.slice(0, 4)) / 7 / 1e3 : null;
+        const onw = d.on_water.reduce((a, r) => a + r.bbl, 0), onwN = d.on_water.reduce((a, r) => a + r.n, 0), sanc = d.on_water.reduce((a, r) => a + r.sanctioned, 0);
+        const kpi = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "10px", marginBottom: "14px" } });
+        kpi.appendChild(kpiCard(`Dirty loadings · 4-wk avg${fs.src === "ALL" ? "" : " · " + fs.src}`, `${(l4/1000).toFixed(2)} mb/d`, `prior 4 wks ${(p4/1000).toFixed(2)} mb/d (${p4 ? ((l4 - p4) / p4 * 100 >= 0 ? "▲" : "▼") + Math.abs((l4 - p4) / p4 * 100).toFixed(0) + "%" : "—"})${lyv ? ` · yr-ago ${(lyv/1000).toFixed(2)}` : ""}`, C.amber));
+        kpi.appendChild(kpiCard("Last full week", `${(tot[full - 1] / 1e6).toFixed(1)} mb`, `w/c ${d.weeks[full - 1]} · partial current wk ${(tot[W - 1] / 1e6).toFixed(1)} mb`, C.cyan));
+        kpi.appendChild(kpiCard("Dirty cargo on the water", `${(onw / 1e6).toFixed(0)} mb`, `${onwN.toLocaleString()} laden voyages en route · VLCC ${((d.on_water_by_class.VLCC || {}).bbl / 1e6 || 0).toFixed(0)} / Suez ${((d.on_water_by_class.Suezmax || {}).bbl / 1e6 || 0).toFixed(0)} / Afra ${((d.on_water_by_class.Aframax || {}).bbl / 1e6 || 0).toFixed(0)} mb`, C.green));
+        kpi.appendChild(kpiCard("On sanctioned vessels", `${onwN ? (sanc / onwN * 100).toFixed(0) : 0}%`, `${sanc} of ${onwN} en-route voyages flagged EU / OFAC / OFSI`, C.red));
+        body.appendChild(kpi);
+
+        const wkDiv = el("div", { style: { height: "360px" } });
+        body.appendChild(card(`Weekly dirty loadings by load region — ${fs.src === "ALL" ? "top 12 regions, stacked" : fs.src + " by vessel class"} (mb / week; last bar is the partial current week)`, wkDiv));
+        loadPlotly(() => {
+          let traces;
+          if (fs.src === "ALL") traces = srcs.map((s, i) => ({ type: "bar", name: s, x: d.weeks, y: d.by_source[s].bbl.map(v => v / 1e6), marker: { color: s === "Other" ? "#334155" : PAL[i % PAL.length] }, customdata: d.by_source[s].n, hovertemplate: "%{fullData.name}<br>%{y:.1f} mb · %{customdata} voyages<extra></extra>" }));
+          else traces = [{ type: "bar", name: fs.src, x: d.weeks, y: d.by_source[fs.src].bbl.map(v => v / 1e6), marker: { color: C.amber }, customdata: d.by_source[fs.src].n, hovertemplate: "%{y:.1f} mb · %{customdata} voyages<extra></extra>" }];
+          traces.push({ type: "scatter", mode: "lines", name: "4-wk avg (total)", x: d.weeks.slice(0, full), y: movAvg(tot.slice(0, full), 4).map(v => v / 1e6), line: { color: "#e8edf8", width: 1.5 } });
+          Plotly.newPlot(wkDiv, traces, { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, barmode: "stack", yaxis: { ...AXB, title: { text: "mb / week", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 60, l: 50, r: 20 }, legend: { ...plotLayout.legend, font: { size: 10 } } }, { responsive: true, displayModeBar: false });
+        });
+
+        const clsDiv = el("div", { style: { height: "260px" } });
+        const two = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "14px" } });
+        two.appendChild(card("Weekly loadings by vessel class (all regions, mb)", clsDiv, { marginBottom: "0" }));
+        const cgDiv = el("div", { style: { height: "260px" } });
+        two.appendChild(card("Dirty cargo mix — last 90 days of loadings", cgDiv, { marginBottom: "0" }));
+        body.appendChild(two);
+        loadPlotly(() => {
+          Plotly.newPlot(clsDiv, d.classes.map(cl => ({ type: "bar", name: cl, x: d.weeks, y: d.by_class_bbl[cl].map(v => v / 1e6), marker: { color: CLASS_COL[cl] } })), { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, barmode: "stack", margin: { t: 10, b: 50, l: 45, r: 10 } }, { responsive: true, displayModeBar: false });
+          const cg = d.cargo_90d.slice(0, 8);
+          Plotly.newPlot(cgDiv, [{ type: "pie", hole: 0.55, labels: cg.map(x => x.cargo), values: cg.map(x => x.bbl), marker: { colors: PAL }, textinfo: "label+percent", textposition: "inside", insidetextorientation: "horizontal", textfont: { size: 10 }, hovertemplate: "%{label}<br>%{value:,.0f} bbl · %{percent}<extra></extra>" }], { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, showlegend: false, margin: { t: 10, b: 10, l: 10, r: 10 } }, { responsive: true, displayModeBar: false });
+        });
+
+        // origin→destination heatmap (90d)
+        const mx = fs.src === "ALL" ? d.matrix_90d : d.matrix_90d.filter(r => r.src === fs.src);
+        const srcTot = {}, dstTot = {}; mx.forEach(r => { srcTot[r.src] = (srcTot[r.src] || 0) + r.bbl; dstTot[r.dst] = (dstTot[r.dst] || 0) + r.bbl; });
+        const S = Object.keys(srcTot).sort((a, b) => srcTot[b] - srcTot[a]).slice(0, 14), D = Object.keys(dstTot).sort((a, b) => dstTot[b] - dstTot[a]).slice(0, 16);
+        const z = S.map(s => D.map(dd => { const r = mx.find(x => x.src === s && x.dst === dd); return r ? r.bbl / 1e6 : 0; }));
+        const hmDiv = el("div", { style: { height: Math.max(300, 34 * S.length + 120) + "px" } });
+        body.appendChild(card(`Load region → discharge region — last 90 days of loadings (mb; "Unknown / in transit" = discharge not yet declared)`, hmDiv));
+        loadPlotly(() => {
+          Plotly.newPlot(hmDiv, [{ type: "heatmap", z, x: D, y: S, colorscale: [[0, "#0b1220"], [0.25, "#1e3a5f"], [0.6, "#0e7490"], [1, "#f5b90f"]], showscale: true, colorbar: { thickness: 8, tickfont: { color: C.muted, size: 9 } }, hovertemplate: "%{y} → %{x}<br>%{z:.1f} mb<extra></extra>", text: z.map(r => r.map(v => v >= 1 ? v.toFixed(0) : "")), texttemplate: "%{text}", textfont: { size: 9, color: "#e8edf8" } }],
+            { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, margin: { t: 10, b: 120, l: 160, r: 20 }, xaxis: { ...AXB, tickangle: -40, tickfont: { size: 10 } }, yaxis: { ...AXB, autorange: "reversed", tickfont: { size: 10 } } }, { responsive: true, displayModeBar: false });
+        });
+
+        const ow = table([{ h: "Discharge region (declared / estimated)", f: r => esc(r.dst) }, { h: "Voyages", num: true, f: r => r.n }, { h: "mb", num: true, f: r => (r.bbl / 1e6).toFixed(1) }, { h: "Share", num: true, f: r => (r.bbl / onw * 100).toFixed(1) + "%" }, { h: "Sanctioned vessels", num: true, f: r => r.sanctioned || null, color: () => C.red }], d.on_water.slice(0, 30), { maxH: 380 });
+        body.appendChild(card(`Dirty cargo currently on the water by destination — ${(onw / 1e6).toFixed(0)} mb on ${onwN.toLocaleString()} laden voyages (sailed from load port, not yet arrived)`, ow));
+        body.appendChild(stamp(d, `${d.source.filter} · week = ${d.source.date} · quantity = ${d.source.qty}`));
+      }
+
+      // ── TONNAGE LISTS ──
+      const OPS_COL = { "Ballast Unfixed": C.green, "Ballast Fixed": C.cyan, "Discharging": "#60a5fa", "Waiting to Discharge": "#818cf8", "Laden": C.muted, "Loading": C.gold, "Waiting to Load": "#fb923c", "Repairs": C.red };
+      const BUCKET_COL = ["#10b981", "#22d3ee", "#38bdf8", "#8b5cf6", "#475569"];
+      async function loadTonnage(force) {
+        const ts = vstate.tonnage;
+        if (!ts.data || force || ts.data.days !== ts.days) {
+          body.innerHTML = `<div style="color:${C.muted};padding:30px;text-align:center">Loading tonnage lists from Signal…</div>`;
+          try { ts.data = await (await fetch(`/api/signal/tonnage?days=${ts.days}${force ? "&refresh=1" : ""}`)).json(); }
+          catch (e) { body.innerHTML = `<div style="color:${C.red};padding:30px">${e.message}</div>`; return; }
+        }
+        if (!ts.data.available) return failBox("tonnage lists", ts.data);
+        if (!ts.port || !ts.data.ports.some(p => p.port === ts.port)) ts.port = (ts.data.ports.find(p => p.port === "Ras Tanura") || ts.data.ports[0] || {}).port;
+        drawTonnage();
+      }
+      function drawTonnage() {
+        const ts = vstate.tonnage, d = ts.data;
+        body.innerHTML = "";
+        const c = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" } });
+        c.appendChild(lbl("HISTORY"));
+        [30, 90, 180, 365].forEach(n => c.appendChild(pill(n >= 365 ? "1y" : n + "d", ts.days === n, () => { ts.days = n; loadTonnage(false); })));
+        c.appendChild(gap()); c.appendChild(lbl("LOAD PORT"));
+        const pSel = el("select", { style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "4px 8px", fontSize: "12px" } });
+        d.ports.slice().sort((a, b) => a.port.localeCompare(b.port)).forEach(p => { const o = el("option", { value: p.port }, `${p.port} (${p.area}) — ${p.config_classes.join("/")}`); if (p.port === ts.port) o.selected = true; pSel.appendChild(o); });
+        pSel.addEventListener("change", () => { ts.port = pSel.value; drawTonnage(); }); c.appendChild(pSel);
+        c.appendChild(refreshBtn(() => loadTonnage(true)));
+        body.appendChild(c);
+
+        const sumB = (p, cl, bs) => bs.reduce((a, b) => a + ((p.by_class_bucket[cl] || {})[b] || 0), 0);
+        const promptAll = p => d.classes.reduce((a, cl) => a + sumB(p, cl, ["0-5", "6-10", "11-15"]), 0);
+        // overview: prompt-available by port
+        const kpi = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "8px", marginBottom: "14px" } });
+        d.ports.forEach(p => {
+          const h = d.history[p.port]; let delta = null;
+          if (h && d.history_dates.length > 8) { const tot = d.history_dates.map((_, i) => d.classes.reduce((a, cl) => a + (h[cl][i] || 0), 0)); const now = tot.slice(-1)[0], wk = tot[tot.length - 8]; delta = wk ? (now - wk) / wk * 100 : null; }
+          const k = el("div", { style: { background: p.port === ts.port ? "#0f1a2e" : C.card, border: `1px solid ${p.port === ts.port ? C.amber : C.border}`, borderRadius: "10px", padding: "9px 11px", cursor: "pointer" }, onClick: () => { ts.port = p.port; drawTonnage(); } });
+          k.appendChild(el("div", { style: { fontSize: "10.5px", color: C.muted, fontWeight: "700", textTransform: "uppercase", letterSpacing: ".4px" } }, `${p.port} · ${p.config_classes.join("/")}`));
+          const row = el("div", { style: { display: "flex", alignItems: "baseline", gap: "6px", marginTop: "3px" } });
+          row.appendChild(el("span", { style: { fontSize: "19px", fontWeight: "800", color: C.text } }, String(p.prompt_available)));
+          row.appendChild(el("span", { style: { fontSize: "10px", color: C.muted } }, `open ≤15d · ${p.total} ≤30d`));
+          k.appendChild(row);
+          if (delta != null) k.appendChild(el("div", { style: { fontSize: "10.5px", color: delta >= 0 ? C.green : C.red } }, `${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta).toFixed(0)}% vs 7d ago`));
+          kpi.appendChild(k);
+        });
+        body.appendChild(kpi);
+
+        const p = d.ports.find(x => x.port === ts.port); if (!p) return;
+        const hasCls = d.classes.filter(cl => Object.values(p.by_class_bucket[cl] || {}).some(v => v));
+        const two = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "14px" } });
+        const bDiv = el("div", { style: { height: "280px" } }); two.appendChild(card(`${p.port} — vessels by days to ETA and class (all statuses, ${d.as_of})`, bDiv, { marginBottom: "0" }));
+        const oDiv = el("div", { style: { height: "280px" } }); two.appendChild(card(`${p.port} — operational status of vessels within 30 days`, oDiv, { marginBottom: "0" }));
+        body.appendChild(two);
+        loadPlotly(() => {
+          Plotly.newPlot(bDiv, hasCls.map(cl => ({ type: "bar", name: cl, x: d.buckets.map(b => b + " d"), y: d.buckets.map(b => p.by_class_bucket[cl][b] || 0), marker: { color: CLASS_COL[cl] } })), { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, barmode: "group", margin: { t: 10, b: 40, l: 40, r: 10 }, xaxis: { ...AXB, type: "category" }, yaxis: { ...AXB, title: { text: "vessels", font: { size: 10, color: C.muted } } } }, { responsive: true, displayModeBar: false });
+          const ops = Object.entries(p.by_ops).sort((a, b) => b[1] - a[1]);
+          Plotly.newPlot(oDiv, [{ type: "bar", orientation: "h", y: ops.map(o => o[0]), x: ops.map(o => o[1]), marker: { color: ops.map(o => OPS_COL[o[0]] || C.muted) }, text: ops.map(o => o[1]), textposition: "outside", textfont: { color: C.text, size: 10 } }], { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, margin: { t: 10, b: 30, l: 140, r: 40 }, xaxis: { ...AXB, type: "linear" }, yaxis: { ...AXB, type: "category", autorange: "reversed" } }, { responsive: true, displayModeBar: false });
+        });
+
+        const h = d.history[p.port];
+        const hDiv = el("div", { style: { height: "300px" } });
+        body.appendChild(card(`${p.port} — open tonnage able to arrive within 15 days, daily history (${d.history_def})`, hDiv));
+        loadPlotly(() => {
+          const traces = h ? d.classes.filter(cl => h[cl].some(v => v)).map(cl => ({ type: "bar", name: cl, x: d.history_dates, y: h[cl], marker: { color: CLASS_COL[cl] } })) : [];
+          if (h) { const tot = d.history_dates.map((_, i) => d.classes.reduce((a, cl) => a + (h[cl][i] || 0), 0)); traces.push({ type: "scatter", mode: "lines", name: "7d avg", x: d.history_dates, y: movAvg(tot, 7), line: { color: "#e8edf8", width: 1.5 } }); }
+          Plotly.newPlot(hDiv, traces, { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB }, barmode: "stack", margin: { t: 10, b: 50, l: 40, r: 10 }, yaxis: { ...AXB, title: { text: "open vessels ≤15d", font: { size: 10, color: C.muted } } } }, { responsive: true, displayModeBar: false });
+        });
+
+        // all-ports summary table
+        const tw = table([
+          { h: "Load port", f: r => `<b>${esc(r.port)}</b> <span style="color:${C.muted}">${esc(r.area)}</span>` }, { h: "List class", f: r => r.config_classes.join(" / ") },
+          { h: "Open ≤15d", num: true, f: r => r.prompt_available, color: () => C.green }, { h: "Total ≤30d", num: true, f: r => r.total },
+          ...d.classes.map(cl => ({ h: cl + " ≤15d", num: true, f: r => sumB(r, cl, ["0-5", "6-10", "11-15"]) || null, color: () => CLASS_COL[cl] })),
+          { h: "Ballast unfixed", num: true, f: r => r.by_ops["Ballast Unfixed"] || null }, { h: "Ballast fixed", num: true, f: r => r.by_ops["Ballast Fixed"] || null }, { h: "Laden", num: true, f: r => r.by_ops["Laden"] || null }, { h: "On subs / poss. fixed", num: true, f: r => ((r.by_com["On Subs"] || 0) + (r.by_com["Poss Fixed"] || 0)) || null },
+          { h: "Spot", num: true, f: r => r.by_dep["Spot"] || null }, { h: "Programme / TC", num: true, f: r => ((r.by_dep["Program"] || 0) + (r.by_dep["Contract"] || 0) + (r.by_dep["Relet"] || 0)) || null },
+        ], d.ports, { maxH: 460 });
+        body.appendChild(card(`All configured load ports — tonnage list ${d.as_of}`, tw));
+        body.appendChild(stamp(d, `configurations from ${d.source.config} · distinct vessels per port/day · negative DaysToETA (already passed) excluded`));
       }
 
       async function load(reset, force) {
@@ -7774,6 +8066,7 @@
           const r = await fetch(`/api/signal/passages?days=${state.days}${force ? "&refresh=1" : ""}`);
           const d = await r.json();
           state.data = d;
+          if (state.view !== "passages") return;
           if (!d.available) {
             renderControls(); body.innerHTML = "";
             const why = d.reason === "no_passages_table" ? "Connected, but no table with strait/passage columns was auto-detected — browse the tables below and tell me which one holds the transits (or set SIGNAL_PASSAGES_SQL)." : `Error reading passages: ${d.error || d.reason}`;
@@ -7787,6 +8080,7 @@
           body.innerHTML = `<div style="color:${C.red};padding:30px">Failed to load Signal data: ${e.message}</div>`;
         }
       }
+      renderSubnav();
       renderControls();
       load(true);
     }

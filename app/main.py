@@ -13,6 +13,7 @@ import secrets as _secrets_mod
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from collections import defaultdict
 import glob as glob_mod
 
 # Load .env file if present (for Kpler credentials etc.)
@@ -13203,6 +13204,224 @@ async def signal_passages(days: int = Query(90, ge=7, le=1100), refresh: bool = 
         return {"available": False, "reason": "not_configured"}
     try:
         return _signal_passages(days, force=refresh)
+    except Exception as e:
+        return {"available": False, "reason": "error", "error": str(e)[:400]}
+
+
+def _signal_cached(key: str, ttl: int, force: bool, fn):
+    now = _time.time()
+    with _signal_lock:
+        c = _signal_cache["data"].get(key)
+        if c and not force and now - c["ts"] < ttl:
+            return c["val"]
+    val = fn()
+    with _signal_lock:
+        _signal_cache["data"][key] = {"ts": now, "val": val}
+    return val
+
+
+_SIGNAL_CLS_IN = ",".join(str(k) for k in _SIGNAL_WP_CLASSES)
+
+
+def _signal_fleet() -> dict:
+    """Latest AIS position + voyage status for every DPP VLCC/Suezmax/Aframax (uvs_LatestVesselState ⋈ uvs_Vessels ⋈ uvs_Ports)."""
+    rows = _signal_rows(
+        "SELECT s.IMO AS imo, v.VesselName AS name, s.VesselClassID AS cls, s.Latitude AS lat, s.Longitude AS lon, s.Speed AS spd, s.Heading AS hdg, "
+        "s.Draught AS draught, v.Deadweight AS dwt, v.YearBuilt AS built, v.CommercialOperator AS op, s.VesselVoyageStatus AS status, "
+        "s.AISDestination AS dest, s.AISDestinationETA AS eta, s.AreaName AS area, s.AreaNameLevel1 AS region, s.LastMovementDateTimeUTC AS ts, "
+        "cp.Name AS port, np.Name AS next_port, np.AreaName AS dest_area "
+        "FROM dbo.uvs_LatestVesselState s "
+        "LEFT JOIN dbo.uvs_Vessels v ON v.IMO = s.IMO "
+        "LEFT JOIN dbo.uvs_Ports cp ON cp.PortID = s.ClosestPortID "
+        "LEFT JOIN dbo.uvs_Ports np ON np.PortID = s.NextPortID "
+        f"WHERE s.VesselClassID IN ({_SIGNAL_CLS_IN}) AND s.Latitude IS NOT NULL AND s.LastMovementDateTimeUTC >= DATEADD(day, -30, GETUTCDATE())"
+    )
+    vessels = []
+    by_status: dict = defaultdict(lambda: defaultdict(int))
+    by_region: dict = defaultdict(lambda: {"Laden": 0, "Ballast": 0})
+    for r in rows:
+        cls = _SIGNAL_WP_CLASSES.get(int(r["cls"] or 0), "Unknown")
+        st = r["status"] or "Unknown"
+        laden = st in ("Laden", "WaitToDischarge", "Discharging")
+        vessels.append({
+            "imo": r["imo"], "name": r["name"], "cls": cls, "lat": round(float(r["lat"]), 3), "lon": round(float(r["lon"]), 3),
+            "spd": round(float(r["spd"]), 1) if r["spd"] is not None else None, "hdg": float(r["hdg"]) if r["hdg"] is not None else None,
+            "draught": float(r["draught"]) if r["draught"] is not None else None, "dwt": r["dwt"], "built": r["built"], "op": r["op"],
+            "status": st, "laden": bool(laden), "dest": r["dest"], "dest_area": r["dest_area"], "eta": str(r["eta"])[:16] if r["eta"] else None,
+            "area": r["area"], "region": r["region"], "port": r["port"], "next_port": r["next_port"], "ts": str(r["ts"])[:16] if r["ts"] else None,
+        })
+        by_status[cls][st] += 1
+        by_region[r["region"] or "Unknown"]["Laden" if laden else "Ballast"] += 1
+    regions = sorted(by_region.items(), key=lambda kv: -(kv[1]["Laden"] + kv[1]["Ballast"]))
+    return {
+        "available": True, "count": len(vessels), "vessels": vessels, "classes": list(_SIGNAL_WP_CLASSES.values()),
+        "by_status": {k: dict(v) for k, v in by_status.items()},
+        "by_region": [{"region": k, **v} for k, v in regions],
+        "as_of": max((v["ts"] for v in vessels if v["ts"]), default=None),
+        "source": {"table_key": "dbo.uvs_LatestVesselState ⋈ uvs_Vessels ⋈ uvs_Ports", "class": _SIGNAL_CLS_IN, "laden_def": "VesselVoyageStatus in (Laden, WaitToDischarge, Discharging)"},
+        "fetched_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def _signal_flows(days: int) -> dict:
+    """Weekly dirty loadings by load region → discharge region (uvS_VoyagesSummary, DPP classes, barrels)."""
+    d = max(28, min(int(days), 1100))
+    where = (f"VesselClassID IN ({_SIGNAL_CLS_IN}) AND CargoGroup = 'Dirty' AND FirstLoadPortSailingDate IS NOT NULL "
+             f"AND FirstLoadPortSailingDate >= DATEADD(day, -{d}, CAST(GETUTCDATE() AS date)) AND FirstLoadPortSailingDate < GETUTCDATE()")
+    wk = "DATEADD(week, DATEDIFF(week, 0, FirstLoadPortSailingDate), 0)"
+    rows = _signal_rows(
+        f"SELECT {wk} AS wk, FirstLoadPortLevel0AreaName AS src, VesselClassID AS cls, COUNT(*) AS n, SUM(CAST(QuantityInBarrels AS bigint)) AS bbl "
+        f"FROM dbo.uvS_VoyagesSummary WHERE {where} GROUP BY {wk}, FirstLoadPortLevel0AreaName, VesselClassID ORDER BY 1"
+    )
+    matrix = _signal_rows(
+        f"SELECT FirstLoadPortLevel0AreaName AS src, ISNULL(LastDischargePortLevel0AreaName, 'Unknown / in transit') AS dst, COUNT(*) AS n, "
+        f"SUM(CAST(QuantityInBarrels AS bigint)) AS bbl FROM dbo.uvS_VoyagesSummary WHERE {where} AND FirstLoadPortSailingDate >= DATEADD(day, -90, CAST(GETUTCDATE() AS date)) "
+        f"GROUP BY FirstLoadPortLevel0AreaName, LastDischargePortLevel0AreaName"
+    )
+    cargo = _signal_rows(
+        f"SELECT CargoType AS cargo, COUNT(*) AS n, SUM(CAST(QuantityInBarrels AS bigint)) AS bbl FROM dbo.uvS_VoyagesSummary WHERE {where} "
+        f"AND FirstLoadPortSailingDate >= DATEADD(day, -90, CAST(GETUTCDATE() AS date)) GROUP BY CargoType ORDER BY 3 DESC"
+    )
+    live = _signal_rows(
+        f"SELECT VesselClassID AS cls, ISNULL(LastDischargePortLevel0AreaName, 'Unknown') AS dst, FirstLoadPortLevel0AreaName AS src, COUNT(*) AS n, "
+        f"SUM(CAST(QuantityInBarrels AS bigint)) AS bbl, SUM(CASE WHEN VesselSanctionedBy IS NOT NULL THEN 1 ELSE 0 END) AS sanctioned "
+        f"FROM dbo.uvS_VoyagesSummary WHERE VesselClassID IN ({_SIGNAL_CLS_IN}) AND CargoGroup = 'Dirty' AND Horizon = 'Current' "
+        f"AND FirstLoadPortSailingDate < GETUTCDATE() AND (LastDischargePortArrivalDate IS NULL OR LastDischargePortArrivalDate > GETUTCDATE()) "
+        f"GROUP BY VesselClassID, LastDischargePortLevel0AreaName, FirstLoadPortLevel0AreaName"
+    )
+    weeks = sorted({str(r["wk"])[:10] for r in rows})
+    # drop the current partial week from trend series but keep it in the payload flagged
+    widx = {w: i for i, w in enumerate(weeks)}
+    src_tot: dict = defaultdict(int)
+    for r in rows:
+        src_tot[r["src"] or "Unknown"] += int(r["bbl"] or 0)
+    top_src = [k for k, _ in sorted(src_tot.items(), key=lambda kv: -kv[1])[:12]]
+    series = {s: {"bbl": [0] * len(weeks), "n": [0] * len(weeks)} for s in top_src + ["Other"]}
+    by_cls = {c: [0] * len(weeks) for c in _SIGNAL_WP_CLASSES.values()}
+    total = [0] * len(weeks)
+    for r in rows:
+        i = widx[str(r["wk"])[:10]]
+        s = r["src"] or "Unknown"
+        s = s if s in series else "Other"
+        bbl = int(r["bbl"] or 0)
+        series[s]["bbl"][i] += bbl
+        series[s]["n"][i] += int(r["n"] or 0)
+        total[i] += bbl
+        cls = _SIGNAL_WP_CLASSES.get(int(r["cls"] or 0))
+        if cls:
+            by_cls[cls][i] += bbl
+    on_water: dict = defaultdict(lambda: {"n": 0, "bbl": 0, "sanctioned": 0})
+    on_water_cls: dict = defaultdict(lambda: {"n": 0, "bbl": 0})
+    for r in live:
+        k = r["dst"] or "Unknown"
+        on_water[k]["n"] += int(r["n"] or 0)
+        on_water[k]["bbl"] += int(r["bbl"] or 0)
+        on_water[k]["sanctioned"] += int(r["sanctioned"] or 0)
+        c = _SIGNAL_WP_CLASSES.get(int(r["cls"] or 0), "Unknown")
+        on_water_cls[c]["n"] += int(r["n"] or 0)
+        on_water_cls[c]["bbl"] += int(r["bbl"] or 0)
+    return {
+        "available": True, "days": d, "weeks": weeks, "partial_last_week": True,
+        "total_bbl": total, "by_source": series, "by_class_bbl": by_cls, "classes": list(_SIGNAL_WP_CLASSES.values()),
+        "matrix_90d": [{"src": r["src"] or "Unknown", "dst": r["dst"], "n": int(r["n"] or 0), "bbl": int(r["bbl"] or 0)} for r in matrix],
+        "cargo_90d": [{"cargo": r["cargo"] or "Unknown", "n": int(r["n"] or 0), "bbl": int(r["bbl"] or 0)} for r in cargo],
+        "on_water": sorted(({"dst": k, **v} for k, v in on_water.items()), key=lambda x: -x["bbl"]),
+        "on_water_by_class": dict(on_water_cls),
+        "source": {"table_key": "dbo.uvS_VoyagesSummary", "filter": "CargoGroup='Dirty', VesselClassID in (84,85,86)", "date": "FirstLoadPortSailingDate (week starting Monday)", "qty": "QuantityInBarrels (Signal estimate/lineup/market info)"},
+        "fetched_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def _signal_tonnage(days: int) -> dict:
+    """Available tonnage by configured load port: vessels able to arrive within N days (uvs_TonnageListAvailabilityEnhanced)."""
+    d = max(14, min(int(days), 400))
+    cfg = _signal_rows(f"SELECT VesselClassID AS cls, LoadPortID AS pid, LoadPortName AS port FROM dbo.uvs_TonnageListConfigurations WHERE VesselClassID IN ({_SIGNAL_CLS_IN})")
+    port_cls: dict = defaultdict(list)
+    for r in cfg:
+        port_cls[r["port"]].append(_SIGNAL_WP_CLASSES.get(int(r["cls"]), "?"))
+    latest = _signal_rows(
+        "SELECT t.PortName AS port, t.PortAreaName AS area, v.VesselClassID AS cls, t.OperationalStatus AS ops, t.CommercialStatus AS com, t.MarketDeployment AS dep, "
+        "CASE WHEN t.DaysToETA <= 5 THEN '0-5' WHEN t.DaysToETA <= 10 THEN '6-10' WHEN t.DaysToETA <= 15 THEN '11-15' WHEN t.DaysToETA <= 20 THEN '16-20' ELSE '21-30' END AS bucket, "
+        "COUNT(DISTINCT t.IMO) AS n "
+        "FROM dbo.uvs_TonnageListAvailabilityEnhanced t JOIN dbo.uvs_Vessels v ON v.IMO = t.IMO "
+        "WHERE t.DayDate = (SELECT MAX(DayDate) FROM dbo.uvs_TonnageListAvailabilityEnhanced) AND t.DaysToETA BETWEEN 0 AND 30 "
+        f"AND v.VesselClassID IN ({_SIGNAL_CLS_IN}) "
+        "GROUP BY t.PortName, t.PortAreaName, v.VesselClassID, t.OperationalStatus, t.CommercialStatus, t.MarketDeployment, "
+        "CASE WHEN t.DaysToETA <= 5 THEN '0-5' WHEN t.DaysToETA <= 10 THEN '6-10' WHEN t.DaysToETA <= 15 THEN '11-15' WHEN t.DaysToETA <= 20 THEN '16-20' ELSE '21-30' END"
+    )
+    hist = _signal_rows(
+        "SELECT t.DayDate AS day, t.PortName AS port, v.VesselClassID AS cls, COUNT(DISTINCT t.IMO) AS n "
+        "FROM dbo.uvs_TonnageListAvailabilityEnhanced t JOIN dbo.uvs_Vessels v ON v.IMO = t.IMO "
+        f"WHERE t.DayDate >= DATEADD(day, -{d}, CAST(GETUTCDATE() AS date)) AND t.DaysToETA BETWEEN 0 AND 15 "
+        f"AND v.VesselClassID IN ({_SIGNAL_CLS_IN}) AND t.OperationalStatus IN ('Ballast Unfixed', 'Discharging', 'Waiting to Discharge') AND t.CommercialStatus = 'Available' "
+        "GROUP BY t.DayDate, t.PortName, v.VesselClassID ORDER BY 1"
+    )
+    as_of = _signal_rows("SELECT MAX(DayDate) AS d FROM dbo.uvs_TonnageListAvailabilityEnhanced")[0]["d"]
+    buckets = ["0-5", "6-10", "11-15", "16-20", "21-30"]
+    ports: dict = {}
+    for r in latest:
+        p = ports.setdefault(r["port"], {"port": r["port"], "area": r["area"], "config_classes": port_cls.get(r["port"], []),
+                                         "by_class_bucket": {c: {b: 0 for b in buckets} for c in _SIGNAL_WP_CLASSES.values()},
+                                         "by_ops": defaultdict(int), "by_com": defaultdict(int), "by_dep": defaultdict(int), "total": 0, "prompt_available": 0})
+        cls = _SIGNAL_WP_CLASSES.get(int(r["cls"] or 0))
+        n = int(r["n"] or 0)
+        if cls:
+            p["by_class_bucket"][cls][r["bucket"]] += n
+        p["by_ops"][r["ops"] or "?"] += n
+        p["by_com"][r["com"] or "?"] += n
+        p["by_dep"][r["dep"] or "?"] += n
+        p["total"] += n
+        if r["bucket"] in ("0-5", "6-10", "11-15") and r["com"] == "Available" and r["ops"] in ("Ballast Unfixed", "Discharging", "Waiting to Discharge"):
+            p["prompt_available"] += n
+    for p in ports.values():
+        p["by_ops"] = dict(p["by_ops"]); p["by_com"] = dict(p["by_com"]); p["by_dep"] = dict(p["by_dep"])
+    hdays = sorted({str(r["day"])[:10] for r in hist})
+    hidx = {x: i for i, x in enumerate(hdays)}
+    history: dict = {}
+    for r in hist:
+        h = history.setdefault(r["port"], {c: [0] * len(hdays) for c in _SIGNAL_WP_CLASSES.values()})
+        cls = _SIGNAL_WP_CLASSES.get(int(r["cls"] or 0))
+        if cls:
+            h[cls][hidx[str(r["day"])[:10]]] += int(r["n"] or 0)
+    return {
+        "available": True, "days": d, "as_of": str(as_of)[:10], "buckets": buckets, "classes": list(_SIGNAL_WP_CLASSES.values()),
+        "ports": sorted(ports.values(), key=lambda p: -p["prompt_available"]),
+        "history_dates": hdays, "history": history,
+        "history_def": "distinct vessels with ETA ≤15 days, OperationalStatus in (Ballast Unfixed, Discharging, Waiting to Discharge), CommercialStatus = Available",
+        "source": {"table_key": "dbo.uvs_TonnageListAvailabilityEnhanced ⋈ uvs_Vessels", "config": "uvs_TonnageListConfigurations", "class": _SIGNAL_CLS_IN},
+        "fetched_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/api/signal/fleet")
+async def signal_fleet(refresh: bool = Query(False)):
+    """Latest AIS position/status for the DPP VLCC/Suezmax/Aframax fleet."""
+    if not _signal_configured():
+        return {"available": False, "reason": "not_configured"}
+    try:
+        return _signal_cached("fleet", SIGNAL_DATA_TTL, refresh, _signal_fleet)
+    except Exception as e:
+        return {"available": False, "reason": "error", "error": str(e)[:400]}
+
+
+@app.get("/api/signal/flows")
+async def signal_flows(days: int = Query(365, ge=28, le=1100), refresh: bool = Query(False)):
+    """Weekly dirty loadings by region, load→discharge matrix and cargo on the water."""
+    if not _signal_configured():
+        return {"available": False, "reason": "not_configured"}
+    try:
+        return _signal_cached(f"flows:{days}", SIGNAL_DATA_TTL, refresh, lambda: _signal_flows(days))
+    except Exception as e:
+        return {"available": False, "reason": "error", "error": str(e)[:400]}
+
+
+@app.get("/api/signal/tonnage")
+async def signal_tonnage(days: int = Query(90, ge=14, le=400), refresh: bool = Query(False)):
+    """Available tonnage by load port (ETA buckets) with history."""
+    if not _signal_configured():
+        return {"available": False, "reason": "not_configured"}
+    try:
+        return _signal_cached(f"tonnage:{days}", SIGNAL_DATA_TTL, refresh, lambda: _signal_tonnage(days))
     except Exception as e:
         return {"available": False, "reason": "error", "error": str(e)[:400]}
 
