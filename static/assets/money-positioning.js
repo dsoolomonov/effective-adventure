@@ -5610,6 +5610,8 @@
     const Q = data.quarters;
     const gas = data.gasoline;
     const notes = data.ai_notes || {};
+    const fcIdx = data.forecast_from ? Q.indexOf(data.forecast_from) : Q.findIndex(q => q.endsWith("'26"));
+    const isForecast = qi => fcIdx >= 0 && qi >= fcIdx;
 
     function lemSection(title, subtitle) {
       const s = el("div", { style: { marginBottom: "25px" } });
@@ -5624,7 +5626,7 @@
       const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11px" } });
       const thead = el("tr", {});
       thead.appendChild(el("th", { style: { textAlign: "left", padding: "5px 8px", color: C.muted, borderBottom: `1px solid ${C.border}` } }, o.firstCol || ""));
-      Q.forEach(q => thead.appendChild(el("th", { style: { textAlign: "right", padding: "5px 8px", color: q.endsWith("'26") ? C.gold : C.muted, borderBottom: `1px solid ${C.border}` } }, q)));
+      Q.forEach((q, qi) => thead.appendChild(el("th", { style: { textAlign: "right", padding: "5px 8px", color: isForecast(qi) ? C.gold : C.muted, borderBottom: `1px solid ${C.border}` } }, isForecast(qi) ? q + "f" : q)));
       t.appendChild(thead);
       rows.forEach(row => {
         Object.keys(row.series).forEach((metric, mi) => {
@@ -5632,10 +5634,12 @@
           if (!vals) return;
           const tr = el("tr", {});
           const isBal = metric === "Balance";
-          tr.appendChild(el("td", { style: { padding: "4px 8px", color: mi === 0 ? C.text : C.muted, fontWeight: mi === 0 ? "700" : "400", paddingLeft: mi === 0 ? "8px" : "20px", borderBottom: `1px solid ${C.border}22` } }, mi === 0 ? row.name : metric));
+          const isRev = metric.startsWith("Δ");
+          tr.appendChild(el("td", { style: { padding: "4px 8px", color: mi === 0 ? C.text : C.muted, fontWeight: mi === 0 ? "700" : "400", fontStyle: isRev ? "italic" : "normal", paddingLeft: mi === 0 ? "8px" : "20px", borderBottom: `1px solid ${C.border}22` } }, mi === 0 ? row.name : metric));
           vals.forEach(v => {
-            const col = !isBal ? C.text : v == null ? C.muted : v < 0 ? C.red : C.green;
-            tr.appendChild(el("td", { style: { textAlign: "right", padding: "4px 8px", color: col, fontVariantNumeric: "tabular-nums", borderBottom: `1px solid ${C.border}22` } }, isBal ? eaSign(v) : eaFmt(v)));
+            const signed = isBal || isRev;
+            const col = !signed ? C.text : v == null ? C.muted : v < 0 ? C.red : C.green;
+            tr.appendChild(el("td", { style: { textAlign: "right", padding: "4px 8px", color: col, fontVariantNumeric: "tabular-nums", fontSize: isRev ? "10px" : "11px", opacity: isRev ? 0.8 : 1, borderBottom: `1px solid ${C.border}22` } }, signed ? eaSign(v, o.dec) : eaFmt(v, o.dec)));
           });
           t.appendChild(tr);
         });
@@ -5647,8 +5651,8 @@
 
     // ── Header ──
     const hdr = el("div", { style: { marginBottom: "20px" } });
-    hdr.appendChild(el("h2", { style: { color: C.amber, margin: "0 0 6px 0", fontSize: "20px" } }, "⛽ Local Gasoline Balances — Quarterly (Q1'25 → Q4'26)"));
-    hdr.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: 0 } }, `Quarterly light-ends balances · demand / supply / balance in kb/d · as of ${data.as_of} · '26 quarters include forecast`));
+    hdr.appendChild(el("h2", { style: { color: C.amber, margin: "0 0 6px 0", fontSize: "20px" } }, `⛽ Local Gasoline Balances — Quarterly (${Q[0]} → ${Q[Q.length - 1]})`));
+    hdr.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: 0 } }, `${data.pack || "Quarterly light-ends balances"} · demand / supply / balance in kb/d · as of ${data.as_of}` + (fcIdx >= 0 ? ` · ${Q[fcIdx]} onward = forecast (f)` : "") + (data.previous_pack ? ` · Δ rows = revision vs ${data.previous_pack}` : "")));
     box.appendChild(hdr);
 
     // ── AI Analyst Notes ──
@@ -5675,7 +5679,7 @@
     const regionNames = Object.keys(gas.regions).filter(r => r !== "Global");
     const regRows = regionNames.concat(gas.regions.Global ? ["Global"] : []).map(r => ({
       name: r === "Global" ? "GLOBAL" : r,
-      series: { Balance: gas.regions[r].balance, Demand: gas.regions[r].demand, Supply: gas.regions[r].supply },
+      series: { Balance: gas.regions[r].balance, Demand: gas.regions[r].demand, Supply: gas.regions[r].supply, "Δ balance vs prev. pack": gas.regions[r].rev_balance },
     }));
     regSec.appendChild(card("Regional quarterly table (kb/d)", qTable(regRows, { firstCol: "Region / metric" })));
     box.appendChild(regSec);
@@ -5724,20 +5728,36 @@
     box.appendChild(usSec);
 
     // ── Naphtha ──
-    const napSec = lemSection("🧪 Naphtha Quarterly Balances", "Country-level naphtha balances — Asia Pacific & Europe (source units)");
+    const napSec = lemSection("🧪 Naphtha Quarterly Balances (kt)", "Country-level naphtha balances in thousand tonnes · demand includes petrochemical use and naphtha blended into gasoline · US supply split into refinery and gas-plant (NGL) naphtha");
+    const napRow = (cn, e) => {
+      const series = { Balance: e.balance, Demand: e.demand };
+      if (e.supply) series.Supply = e.supply;
+      if (e.ref_supply) series["· refinery supply"] = e.ref_supply;
+      if (e.gp_supply) series["· gas-plant supply"] = e.gp_supply;
+      return { name: cn.replace(/([a-z])([A-Z])/g, "$1 $2"), series };
+    };
     Object.keys(data.naphtha.countries).forEach(reg => {
       const cs = data.naphtha.countries[reg];
-      const rows = Object.keys(cs).map(cn => ({ name: cn, series: { Balance: cs[cn].balance, Demand: cs[cn].demand, Supply: cs[cn].supply } }));
-      napSec.appendChild(card(`${reg} — naphtha quarterly balances`, qTable(rows, { firstCol: "Country / metric" })));
+      napSec.appendChild(card(`${reg} — naphtha quarterly balances (kt)`, qTable(Object.keys(cs).map(cn => napRow(cn, cs[cn])), { firstCol: "Country / metric" })));
     });
+    if (data.naphtha.us) {
+      const usNap = Object.keys(data.naphtha.us).map(k => napRow(k, data.naphtha.us[k]));
+      Object.keys(data.naphtha.north_america || {}).forEach(k => { if (k !== "Total") usNap.push(napRow(k, data.naphtha.north_america[k])); });
+      napSec.appendChild(card("US / PADD / Canada / Mexico — naphtha quarterly balances (kt)", qTable(usNap, { firstCol: "Area / metric" })));
+    }
     box.appendChild(napSec);
 
     // ── Refinery runs + maintenance ──
-    const refSec = lemSection("🏭 Refinery Runs & Maintenance", "Quarterly crude runs (mb/d) by region · monthly offline capacity (kb/d) May–Nov 2026");
+    const mm = data.maintenance_kbd && data.maintenance_kbd.months || [];
+    const refSec = lemSection("🏭 Refinery Runs, Margins & Maintenance", `Quarterly crude runs (mb/d) by region · refining margins ($/bbl) · monthly offline capacity (kb/d)${mm.length ? ` ${mm[0]}–${mm[mm.length - 1]}` : ""}`);
     const runsChart = el("div", { style: { height: "360px" } });
     const maintChart = el("div", { style: { height: "320px" } });
     refSec.appendChild(card("Refinery runs by region (mb/d)", runsChart));
-    refSec.appendChild(card("Quarterly runs table (mb/d)", qTable(Object.keys(data.refinery_runs_mbd).map(k => ({ name: k, series: { Runs: data.refinery_runs_mbd[k] } })), { firstCol: "Region" })));
+    refSec.appendChild(card("Quarterly runs table (mb/d)", qTable(Object.keys(data.refinery_runs_mbd).map(k => ({ name: k, series: { Runs: data.refinery_runs_mbd[k] } })), { firstCol: "Region", dec: 1 })));
+    if (data.margins_usd_bbl) {
+      const mRows = Object.keys(data.margins_usd_bbl).map(k => ({ name: k, series: data.margins_usd_bbl[k] }));
+      refSec.appendChild(card("Refining margins by hub ($/bbl) — diesel- vs gasoline-oriented configurations", qTable(mRows, { firstCol: "Hub / configuration", dec: 2 })));
+    }
     refSec.appendChild(card("Maintenance — offline capacity by region (kb/d)", maintChart));
     box.appendChild(refSec);
 
@@ -5773,7 +5793,7 @@
   // ========== LOCAL BALANCES (global gasoline) ==========
 
   function eaFmt(n, dec) { return n == null ? "–" : Number(n).toLocaleString(undefined, { maximumFractionDigits: dec == null ? 0 : dec, minimumFractionDigits: dec == null ? 0 : dec }); }
-  function eaSign(n, dec) { return n == null ? "–" : (n > 0 ? "+" : "") + eaFmt(n, dec); }
+  function eaSign(n, dec) { if (n == null) return "–"; const s = eaFmt(n, dec); return s === "-0" ? "0" : (n > 0 ? "+" : "") + s; }
 
   // ═══════════════════════════════════════════════════════════════════════
   // PLATTS / S&P GLOBAL COMMODITY INSIGHTS
