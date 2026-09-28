@@ -5734,7 +5734,7 @@
       if (e.supply) series.Supply = e.supply;
       if (e.ref_supply) series["· refinery supply"] = e.ref_supply;
       if (e.gp_supply) series["· gas-plant supply"] = e.gp_supply;
-      return { name: cn.replace(/([a-z])([A-Z])/g, "$1 $2"), series };
+      return { name: cn.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2"), series };
     };
     Object.keys(data.naphtha.countries).forEach(reg => {
       const cs = data.naphtha.countries[reg];
@@ -5755,7 +5755,10 @@
     refSec.appendChild(card("Refinery runs by region (mb/d)", runsChart));
     refSec.appendChild(card("Quarterly runs table (mb/d)", qTable(Object.keys(data.refinery_runs_mbd).map(k => ({ name: k, series: { Runs: data.refinery_runs_mbd[k] } })), { firstCol: "Region", dec: 1 })));
     if (data.margins_usd_bbl) {
-      const mRows = Object.keys(data.margins_usd_bbl).map(k => ({ name: k, series: data.margins_usd_bbl[k] }));
+      const mRows = Object.keys(data.margins_usd_bbl).map(k => ({
+        name: `${k} — ${Object.keys(data.margins_usd_bbl[k])[0].toLowerCase()}`,
+        series: data.margins_usd_bbl[k],
+      }));
       refSec.appendChild(card("Refining margins by hub ($/bbl) — diesel- vs gasoline-oriented configurations", qTable(mRows, { firstCol: "Hub / configuration", dec: 2 })));
     }
     refSec.appendChild(card("Maintenance — offline capacity by region (kb/d)", maintChart));
