@@ -12835,7 +12835,7 @@ def _signal_configured() -> bool:
     return bool(os.environ.get("SIGNAL_SQL_SERVER") and os.environ.get("SIGNAL_SQL_USERNAME") and os.environ.get("SIGNAL_SQL_PASSWORD"))
 
 
-def _signal_conn():
+def _signal_conn(timeout: int = 60):
     import pyodbc
     server = os.environ.get("SIGNAL_SQL_SERVER", "")
     database = os.environ.get("SIGNAL_SQL_DATABASE", "")
@@ -12847,11 +12847,11 @@ def _signal_conn():
         + f"PWD={{{os.environ.get('SIGNAL_SQL_PASSWORD', '')}}};"
         + "Encrypt=yes;TrustServerCertificate=yes;Connection Timeout=25;ApplicationIntent=ReadOnly;"
     )
-    return pyodbc.connect(cs, autocommit=True, timeout=60)
+    return pyodbc.connect(cs, autocommit=True, timeout=timeout)
 
 
-def _signal_rows(sql: str, params: tuple = ()) -> list[dict]:
-    conn = _signal_conn()
+def _signal_rows(sql: str, params: tuple = (), timeout: int = 60) -> list[dict]:
+    conn = _signal_conn(timeout)
     try:
         cur = conn.cursor()
         cur.execute(sql, params)
@@ -13424,6 +13424,379 @@ async def signal_tonnage(days: int = Query(90, ge=14, le=400), refresh: bool = Q
         return _signal_cached(f"tonnage:{days}", SIGNAL_DATA_TTL, refresh, lambda: _signal_tonnage(days))
     except Exception as e:
         return {"available": False, "reason": "error", "error": str(e)[:400]}
+
+
+# ---------------- Hormuz / Gulf outflow reconstruction (observed + unobserved transits) ----------------
+SIGNAL_HORMUZ_TTL = 3 * 3600
+SIGNAL_HORMUZ_DEFAULT_DAYS = 270
+_HORMUZ_WP = 18            # Strait of Hormuz waypoint; WE = exiting the Gulf, EW = entering
+_HORMUZ_INSIDE_SUBAREA = 11  # uvs_SubAreasFlattened: Arabian Gulf / Inside Hormuz (12 = Outside Hormuz)
+_HORMUZ_WP_MATCH_DAYS = 3
+_HORMUZ_BBL_PER_DWT = 6.3  # ~90% DWT utilisation × ~7 bbl/t, used only when Signal has no cargo estimate
+_HORMUZ_RELAY_PORTS = ("Fujairah", "Khor al Fakkan", "Khor Fakkan", "Sohar")
+_HORMUZ_FUJ_PORTS = ("Fujairah", "Khor al Fakkan", "Khor Fakkan")
+_HORMUZ_OMAN_PORTS = ("Mina Al Fahal", "Duqm", "Sohar", "Sur", "Salalah", "Muscat")
+_HORMUZ_YANBU_PORTS = ("Yanbu",)
+# typical steaming days from Hormuz to the area where a vessel re-appears after an AIS gap (~12.5 kn)
+_HORMUZ_SAIL_DAYS = {
+    "Arabian Gulf": 0, "East Africa": 3, "Pakistan / West Coast India": 3, "Red Sea": 7, "East Coast India": 8,
+    "Singapore / Malaysia": 11, "Indonesia": 13, "Thailand / Vietnam": 13, "Philippines": 16, "South China": 16,
+    "Taiwan": 17, "Central China": 18, "North China": 19, "Korea": 20, "Japan Island": 21, "Australia West": 17,
+    "Australia North": 20, "South Africa": 15, "Africa Atlantic Coast": 20, "East Mediterranean": 10,
+}
+_hormuz_build: dict = {}
+
+
+def _hormuz_day(s) -> str:
+    return str(s or "")[:10]
+
+
+def _hormuz_cargo_bucket(cg, ct) -> str:
+    ct = (ct or "").lower()
+    if "crude" in ct or "condensate" in ct:
+        return "crude"
+    if "fuel" in ct or "vgo" in ct or "residual" in ct or "bitumen" in ct:
+        return "fuel_oil"
+    if cg == "Clean" or ct:
+        return "clean"
+    return "unknown"
+
+
+def _signal_hormuz(days: int) -> dict:
+    """Daily Hormuz exits/entries (Signal waypoint fixes) + reconstructed unobserved transits (zone change across an AIS gap),
+    Gulf outflow by route (Hormuz / dark / Fujairah / Oman STS / Oman / Yanbu) and Red Sea exits north vs south."""
+    from datetime import date as _date, timedelta as _td
+    d = max(60, min(int(days), 400))
+    buf = d + 45
+    cls_in = _SIGNAL_CLS_IN
+    T = 240
+    # 1) AIS-confirmed Hormuz crossings (waypoint fixes) with the voyage Signal attaches to that day
+    wp = _signal_rows(
+        "SELECT w.DayDate AS day, w.Direction AS dir, w.LoadingStateID AS ld, w.VesselClassID AS cls, w.IMO AS imo, w.Deadweight AS dwt, "
+        "e.DaysSinceLastAIS AS gap, vs.QuantityInBarrels AS bbl, vs.CargoGroup AS cg, vs.CargoType AS ct, vs.VesselSanctionedBy AS sanc, "
+        "vs.FirstLoadPortName AS lport, vs.LastDischargePortName AS dport, vs.LastDischargePortCountryName AS dctry, vs.VesselName AS vname "
+        "FROM dbo.uvs_WaypointsTracking w "
+        "LEFT JOIN dbo.uvs_VesselDataPerDayEnhanced e ON e.IMO = w.IMO AND e.DayDate = w.DayDate "
+        "LEFT JOIN dbo.uvS_VoyagesSummary vs ON vs.VoyageID = e.VoyageID "
+        f"WHERE w.WaypointID = {_HORMUZ_WP} AND w.VesselClassID IN ({cls_in}) "
+        f"AND w.DayDate >= DATEADD(day, -{buf}, CAST(GETUTCDATE() AS date)) ORDER BY w.DayDate", timeout=T)
+    # 2) zone changes Inside-Hormuz <-> elsewhere in the daily AIS table (catches transits with no waypoint fix)
+    tr = _signal_rows(
+        "WITH v AS (SELECT DISTINCT IMO FROM dbo.uvs_AISPerDay "
+        f"WHERE VesselClassID IN ({cls_in}) AND SubAreaID = {_HORMUZ_INSIDE_SUBAREA} AND DayDate >= DATEADD(day, -{buf}, CAST(GETUTCDATE() AS date))), "
+        "x AS (SELECT d.IMO, d.DayDate, d.SubAreaID AS sa, d.AreaID AS ar, d.DaysSinceLastAIS AS gap, d.VesselClassID AS cls, "
+        "LAG(d.SubAreaID) OVER (PARTITION BY d.IMO ORDER BY d.DayDate) AS psa, LAG(d.AreaID) OVER (PARTITION BY d.IMO ORDER BY d.DayDate) AS par, "
+        "LAG(d.DayDate) OVER (PARTITION BY d.IMO ORDER BY d.DayDate) AS pday, LAG(d.DaysSinceLastAIS) OVER (PARTITION BY d.IMO ORDER BY d.DayDate) AS pgap "
+        f"FROM dbo.uvs_AISPerDay d JOIN v ON v.IMO = d.IMO WHERE d.VesselClassID IN ({cls_in}) AND d.DayDate >= DATEADD(day, -{buf}, CAST(GETUTCDATE() AS date))), "
+        f"t AS (SELECT * FROM x WHERE (psa = {_HORMUZ_INSIDE_SUBAREA} AND ISNULL(sa, 0) <> {_HORMUZ_INSIDE_SUBAREA}) "
+        f"OR (sa = {_HORMUZ_INSIDE_SUBAREA} AND ISNULL(psa, 0) <> {_HORMUZ_INSIDE_SUBAREA})) "
+        f"SELECT t.IMO AS imo, t.DayDate AS day, t.pday, t.gap, t.pgap, t.cls, t.par, CASE WHEN t.psa = {_HORMUZ_INSIDE_SUBAREA} THEN 'out' ELSE 'in' END AS dir, "
+        "e.AreaName AS ar, e.SubAreaName AS sa, e.LoadingStateID AS ld, e.Deadweight AS dwt, e.VoyageID AS vid, e.IsSTS AS sts, vs.VesselName AS vname, "
+        "vs.QuantityInBarrels AS bbl, vs.CargoGroup AS cg, vs.CargoType AS ct, vs.VesselSanctionedBy AS sanc, vs.FirstLoadPortName AS lport, "
+        "vs.LastDischargePortName AS dport, vs.LastDischargePortCountryName AS dctry "
+        "FROM t JOIN dbo.uvs_VesselDataPerDayEnhanced e ON e.IMO = t.IMO AND e.DayDate = t.DayDate "
+        "LEFT JOIN dbo.uvS_VoyagesSummary vs ON vs.VoyageID = e.VoyageID WHERE t.pday IS NOT NULL ORDER BY t.DayDate", timeout=T)
+    areas = _signal_rows("SELECT DISTINCT AreaIDLevel0 AS id, AreaNameLevel0 AS name FROM dbo.uvs_SubAreasFlattened", timeout=T)
+    area_name = {int(a["id"]): a["name"] for a in areas if a.get("id") is not None}
+    # 3) loadings east of Hormuz (Fujairah / Oman incl. STS) and Yanbu (Red Sea)
+    ports = _HORMUZ_FUJ_PORTS + _HORMUZ_OMAN_PORTS + _HORMUZ_YANBU_PORTS
+    port_in = ",".join("'" + p.replace("'", "''") + "'" for p in ports)
+    ld = _signal_rows(
+        "SELECT FirstLoadPortName AS port, FirstLoadPortSailingDate AS sail, VesselClassID AS cls, StsLoadInd AS sts, CargoGroup AS cg, CargoType AS ct, "
+        "QuantityInBarrels AS bbl, VesselSanctionedBy AS sanc, LastDischargePortName AS dport, LastDischargePortCountryName AS dctry, Deadweight AS dwt "
+        f"FROM dbo.uvS_VoyagesSummary WHERE VesselClassID IN ({cls_in}) AND FirstLoadPortSailingDate >= DATEADD(day, -{buf}, CAST(GETUTCDATE() AS date)) "
+        f"AND FirstLoadPortSailingDate < GETUTCDATE() AND (FirstLoadPortName IN ({port_in}) OR FirstLoadPortCountryName = 'Oman')", timeout=T)
+    # 4) Red Sea laden exits: Suez northbound (SN) / Bab el Mandeb southbound (WE) waypoint fixes + SUMED (Ain Sukhna) discharges
+    rs = _signal_rows(
+        "SELECT w.DayDate AS day, w.WaypointID AS wp, w.VesselClassID AS cls, w.IMO AS imo, w.Deadweight AS dwt, vs.QuantityInBarrels AS bbl, vs.CargoGroup AS cg, "
+        "vs.CargoType AS ct, vs.VesselSanctionedBy AS sanc, vs.FirstLoadPortName AS lport, vs.LastDischargePortName AS dport "
+        "FROM dbo.uvs_WaypointsTracking w LEFT JOIN dbo.uvs_VesselDataPerDayEnhanced e ON e.IMO = w.IMO AND e.DayDate = w.DayDate "
+        "LEFT JOIN dbo.uvS_VoyagesSummary vs ON vs.VoyageID = e.VoyageID "
+        "WHERE w.WaypointID IN (16, 17) AND w.LoadingStateID = 1 AND ((w.WaypointID = 16 AND w.Direction = 'SN') OR (w.WaypointID = 17 AND w.Direction = 'WE')) "
+        f"AND w.VesselClassID IN ({cls_in}) AND w.DayDate >= DATEADD(day, -{buf}, CAST(GETUTCDATE() AS date)) ORDER BY w.DayDate", timeout=T)
+    suk = _signal_rows(
+        "SELECT LastDischargePortArrivalDate AS arr, VesselClassID AS cls, QuantityInBarrels AS bbl, CargoGroup AS cg, CargoType AS ct, VesselSanctionedBy AS sanc, "
+        f"FirstLoadPortName AS lport, Deadweight AS dwt FROM dbo.uvS_VoyagesSummary WHERE VesselClassID IN ({cls_in}) AND LastDischargePortName = 'Ain Sukhna' "
+        f"AND LastDischargePortArrivalDate >= DATEADD(day, -{buf}, CAST(GETUTCDATE() AS date)) AND LastDischargePortArrivalDate < GETUTCDATE()", timeout=T)
+
+    # ---- day axis: end at the latest daily-AIS date Signal has, start d days earlier
+    all_days = [_hormuz_day(r["day"]) for r in wp + tr] or [_date.today().isoformat()]
+    end = _date.fromisoformat(max(all_days))
+    start = end - _td(days=d - 1)
+    days_axis = [(start + _td(days=i)).isoformat() for i in range(d)]
+    idx = {s: i for i, s in enumerate(days_axis)}
+
+    def vol(r):
+        """cargo barrels for a laden crossing: Signal voyage estimate, else DWT proxy (flagged)."""
+        if r.get("bbl"):
+            return float(r["bbl"]), False
+        if r.get("dwt"):
+            return float(r["dwt"]) * _HORMUZ_BBL_PER_DWT, True
+        return 0.0, True
+
+    def zero():
+        return [0.0] * d
+
+    keys_cat = ("mainstream", "sanctioned", "dark_unsanctioned", "dark_sanctioned")
+    exit_vol = {k: zero() for k in keys_cat}
+    exit_vol_cargo = {k: zero() for k in ("crude", "fuel_oil", "clean", "unknown")}
+    exit_n = {k: zero() for k in keys_cat}
+    counts = {k: zero() for k in ("out_laden", "out_ballast", "in_laden", "in_ballast", "out_dark", "in_dark", "out_laden_dark", "in_laden_dark")}
+    by_cls_out = {c: zero() for c in _SIGNAL_WP_CLASSES.values()}
+    routes_keys = ("hormuz", "hormuz_relay", "dark", "sts_oman_uae", "fujairah", "oman", "yanbu")
+    routes = {k: zero() for k in routes_keys}
+    routes_dirty = {k: zero() for k in routes_keys}
+    est_proxy_n = 0
+    dest_out: dict = defaultdict(float)
+    dark_rows = []
+
+    # confirmed crossings (dedupe vessel/day/direction — the waypoint table can carry several fixes)
+    seen = set()
+    wp_days: dict = defaultdict(list)
+    for r in wp:
+        day = _hormuz_day(r["day"])
+        k = (int(r["imo"] or 0), day, r["dir"])
+        if k in seen:
+            continue
+        seen.add(k)
+        wp_days[int(r["imo"] or 0)].append(_date.fromisoformat(day))
+        i = idx.get(day)
+        if i is None:
+            continue
+        out = r["dir"] == "WE"
+        laden = int(r["ld"] or 0) == 1
+        cls = _SIGNAL_WP_CLASSES.get(int(r["cls"] or 0), "Unknown")
+        if out:
+            counts["out_laden" if laden else "out_ballast"][i] += 1
+            if cls in by_cls_out:
+                by_cls_out[cls][i] += 1
+        else:
+            counts["in_laden" if laden else "in_ballast"][i] += 1
+        if not (out and laden):
+            continue
+        v, proxy = vol(r)
+        est_proxy_n += int(proxy)
+        cat = "sanctioned" if r.get("sanc") else "mainstream"
+        exit_vol[cat][i] += v
+        exit_n[cat][i] += 1
+        exit_vol_cargo[_hormuz_cargo_bucket(r.get("cg"), r.get("ct"))][i] += v
+        dest_out[r.get("dctry") or "Unknown / not yet fixed"] += v
+        relay = (r.get("dport") or "") in _HORMUZ_RELAY_PORTS
+        rk = "hormuz_relay" if relay else "hormuz"
+        routes[rk][i] += v
+        if r.get("cg") == "Dirty":
+            routes_dirty[rk][i] += v
+
+    # unobserved transits: zone change with no waypoint fix within ±N days
+    def has_fix(imo, day_a, day_b):
+        lo, hi = day_a - _td(days=_HORMUZ_WP_MATCH_DAYS), day_b + _td(days=_HORMUZ_WP_MATCH_DAYS)
+        return any(lo <= x <= hi for x in wp_days.get(imo, ()))
+
+    for r in tr:
+        imo = int(r["imo"] or 0)
+        day = _date.fromisoformat(_hormuz_day(r["day"]))
+        pday = _date.fromisoformat(_hormuz_day(r["pday"]))
+        if has_fix(imo, pday, day):
+            continue
+        out = r["dir"] == "out"
+        gap = int(r.get("gap") or 0)
+        pgap = int(r.get("pgap") or 0)
+        last_ais = pday - _td(days=pgap)
+        if out:
+            sail = _HORMUZ_SAIL_DAYS.get(r.get("ar") or "", 5)
+            est = max(last_ais + _td(days=1), day - _td(days=sail))
+            est = min(est, day)
+        else:
+            sail = _HORMUZ_SAIL_DAYS.get(area_name.get(int(r["par"]) if r.get("par") is not None else -1, ""), 5)
+            est = min(day, last_ais + _td(days=sail))
+            est = max(est, pday)
+        i = idx.get(est.isoformat())
+        if i is None:
+            continue
+        laden = int(r["ld"] or 0) == 1
+        cls = _SIGNAL_WP_CLASSES.get(int(r["cls"] or 0), "Unknown")
+        counts["out_dark" if out else "in_dark"][i] += 1
+        if laden:
+            counts["out_laden_dark" if out else "in_laden_dark"][i] += 1
+        if out and cls in by_cls_out:
+            by_cls_out[cls][i] += 1
+        if not (out and laden):
+            continue
+        v, proxy = vol(r)
+        est_proxy_n += int(proxy)
+        cat = "dark_sanctioned" if r.get("sanc") else "dark_unsanctioned"
+        exit_vol[cat][i] += v
+        exit_n[cat][i] += 1
+        exit_vol_cargo[_hormuz_cargo_bucket(r.get("cg"), r.get("ct"))][i] += v
+        dest_out[r.get("dctry") or "Unknown / not yet fixed"] += v
+        routes["dark"][i] += v
+        if r.get("cg") == "Dirty":
+            routes_dirty["dark"][i] += v
+        dark_rows.append({
+            "est_day": est.isoformat(), "last_ais": last_ais.isoformat(), "reappeared": day.isoformat(), "gap_days": max(gap, pgap, (day - last_ais).days),
+            "imo": imo, "vessel": r.get("vname"), "cls": cls, "area": r.get("sa") if r.get("sa") and r.get("sa") != "-" else r.get("ar"),
+            "cargo": r.get("ct") or "n/a", "bbl": round(v), "bbl_proxy": proxy, "sanctioned": r.get("sanc"), "load": r.get("lport"), "dest": r.get("dport"), "dest_ctry": r.get("dctry"),
+        })
+    dark_rows.sort(key=lambda x: x["est_day"], reverse=True)
+
+    # loadings east of Hormuz / Red Sea
+    for r in ld:
+        i = idx.get(_hormuz_day(r["sail"]))
+        if i is None:
+            continue
+        port = r.get("port") or ""
+        v, _ = vol(r)
+        sts = bool(r.get("sts"))
+        if port in _HORMUZ_YANBU_PORTS:
+            k = "yanbu"
+        elif sts and (port in _HORMUZ_FUJ_PORTS or port in _HORMUZ_OMAN_PORTS):
+            k = "sts_oman_uae"
+        elif port in _HORMUZ_FUJ_PORTS:
+            k = "fujairah"
+        else:
+            k = "oman"
+        routes[k][i] += v
+        if r.get("cg") == "Dirty":
+            routes_dirty[k][i] += v
+
+    # Red Sea exits (laden), by class
+    cls_names = list(_SIGNAL_WP_CLASSES.values())
+    redsea = {k: {c: zero() for c in cls_names} for k in ("north_suez", "north_sumed", "south_bem")}
+    redsea_n = {k: {c: zero() for c in cls_names} for k in ("north_suez", "north_sumed", "south_bem")}
+    seen_rs = set()
+    for r in rs:
+        day = _hormuz_day(r["day"])
+        k = (int(r["imo"] or 0), day, int(r["wp"]))
+        if k in seen_rs:
+            continue
+        seen_rs.add(k)
+        i = idx.get(day)
+        cls = _SIGNAL_WP_CLASSES.get(int(r["cls"] or 0))
+        if i is None or not cls:
+            continue
+        key = "north_suez" if int(r["wp"]) == 16 else "south_bem"
+        v, _ = vol(r)
+        redsea[key][cls][i] += v
+        redsea_n[key][cls][i] += 1
+    for r in suk:
+        i = idx.get(_hormuz_day(r["arr"]))
+        cls = _SIGNAL_WP_CLASSES.get(int(r["cls"] or 0))
+        if i is None or not cls:
+            continue
+        v, _ = vol(r)
+        redsea["north_sumed"][cls][i] += v
+        redsea_n["north_sumed"][cls][i] += 1
+
+    def mb(series):
+        return [round(x / 1e6, 4) for x in series]
+
+    def ints(series):
+        return [int(x) for x in series]
+
+    k_end = max(7, d - 2)  # waypoint / voyage tables lag AIS by ~2 days
+    last7 = slice(max(0, k_end - 7), k_end)
+    prev7 = slice(max(0, k_end - 14), max(0, k_end - 7))
+    last30 = slice(max(0, k_end - 30), k_end)
+    tot_exit = [sum(exit_vol[k][i] for k in keys_cat) for i in range(d)]
+    conf_exit = [exit_vol["mainstream"][i] + exit_vol["sanctioned"][i] for i in range(d)]
+    dark_exit = [exit_vol["dark_unsanctioned"][i] + exit_vol["dark_sanctioned"][i] for i in range(d)]
+    dest_top = sorted(dest_out.items(), key=lambda kv: -kv[1])[:12]
+    return {
+        "available": True, "days": d, "start": days_axis[0], "end": days_axis[-1], "dates": days_axis,
+        "exit_vol_mb": {k: mb(v) for k, v in exit_vol.items()},
+        "exit_vol_cargo_mb": {k: mb(v) for k, v in exit_vol_cargo.items()},
+        "exit_n": {k: ints(v) for k, v in exit_n.items()},
+        "counts": {k: ints(v) for k, v in counts.items()},
+        "out_by_class": {k: ints(v) for k, v in by_cls_out.items()},
+        "routes_mb": {k: mb(v) for k, v in routes.items()},
+        "routes_dirty_mb": {k: mb(v) for k, v in routes_dirty.items()},
+        "redsea_mb": {k: {c: mb(s) for c, s in v.items()} for k, v in redsea.items()},
+        "redsea_n": {k: {c: ints(s) for c, s in v.items()} for k, v in redsea_n.items()},
+        "dark_transits": dark_rows[:60],
+        "dark_transits_total": len(dark_rows),
+        "dest_90d_mb": [{"dest": k, "mb": round(v / 1e6, 2)} for k, v in dest_top],
+        "kpi": {
+            "exit_7d_mbd": round(sum(tot_exit[last7]) / 7 / 1e6, 3),
+            "exit_confirmed_7d_mbd": round(sum(conf_exit[last7]) / 7 / 1e6, 3),
+            "exit_dark_7d_mbd": round(sum(dark_exit[last7]) / 7 / 1e6, 3),
+            "exit_prev7d_mbd": round(sum(tot_exit[prev7]) / 7 / 1e6, 3),
+            "asof": days_axis[k_end - 1],
+            "exit_first30d_mbd": round(sum(tot_exit[:30]) / 30 / 1e6, 3),
+            "out_7d_per_day": round(sum(counts["out_laden"][last7] + counts["out_ballast"][last7] + counts["out_dark"][last7]) / 7, 1),
+            "in_7d_per_day": round(sum(counts["in_laden"][last7] + counts["in_ballast"][last7] + counts["in_dark"][last7]) / 7, 1),
+            "dark_share_30d": round(sum(dark_exit[last30]) / max(1.0, sum(tot_exit[last30])), 3),
+            "proxy_volume_n": est_proxy_n,
+        },
+        "rows": {"waypoint_fixes": len(wp), "zone_changes": len(tr), "loadings": len(ld), "redsea_fixes": len(rs), "sumed": len(suk)},
+        "classes": cls_names,
+        "method": {
+            "confirmed": "uvs_WaypointsTracking WaypointID=18 (Strait of Hormuz), WE = exit, EW = entry; laden/ballast from Signal; cargo = QuantityInBarrels of the voyage attached to that vessel-day",
+            "dark": f"uvs_AISPerDay zone change Inside Hormuz ↔ elsewhere (SubAreaID {_HORMUZ_INSIDE_SUBAREA}) with no Hormuz waypoint fix within ±{_HORMUZ_WP_MATCH_DAYS} days; "
+                    "crossing dated at the latest date consistent with steaming time from Hormuz to the re-appearance area, bounded by the last AIS fix. "
+                    "An AIS gap is a coverage/visibility gap, not proof of deliberate transponder switching.",
+            "sanctioned": "uvS_VoyagesSummary.VesselSanctionedBy (OFAC / EU / OFSI) on the vessel",
+            "volume": f"Signal voyage barrels (estimate / lineup / market info); DWT×{_HORMUZ_BBL_PER_DWT} proxy when a laden crossing has no voyage quantity",
+            "routes": "Fujairah / Oman / Yanbu = voyages by FirstLoadPortName & sailing date (StsLoadInd → 'STS Oman-UAE'); Hormuz cargoes discharging at Fujairah/Khor Fakkan/Sohar shown separately as relay",
+            "redsea": "Suez SN + Ain Sukhna (SUMED) discharges = north; Bab el Mandeb WE = south; laden waypoint fixes only",
+            "coverage": "Signal DPP subscription: VLCC / Suezmax / Aframax only (no LR/MR product tankers, no LPG/LNG, no non-tankers)",
+        },
+        "fetched_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def _signal_hormuz_get(days: int, refresh: bool) -> dict:
+    """Cached Hormuz payload; the build takes ~1–2 min of SQL so it runs in a thread and callers poll."""
+    key = f"hormuz:{days}"
+    now = _time.time()
+    with _signal_lock:
+        c = _signal_cache["data"].get(key)
+        b = _hormuz_build.get(key)
+    fresh = c and now - c["ts"] < SIGNAL_HORMUZ_TTL
+    if fresh and not refresh:
+        return c["val"]
+    if not b or not b.get("running"):
+        def run():
+            try:
+                val = _signal_hormuz(days)
+                with _signal_lock:
+                    _signal_cache["data"][key] = {"ts": _time.time(), "val": val}
+                    _hormuz_build[key] = {"running": False, "error": None, "ts": _time.time()}
+            except Exception as e:  # noqa: BLE001
+                with _signal_lock:
+                    _hormuz_build[key] = {"running": False, "error": str(e)[:400], "ts": _time.time()}
+        with _signal_lock:
+            _hormuz_build[key] = {"running": True, "error": None, "ts": now}
+        _threading.Thread(target=run, daemon=True, name=f"signal-{key}").start()
+        b = {"running": True, "error": None, "ts": now}
+    if c:
+        return {**c["val"], "refreshing": True}
+    err = None if b.get("running") else b.get("error")
+    return {"available": True, "status": "building" if b.get("running") else "error", "error": err, "started_at": b.get("ts")}
+
+
+@app.get("/api/signal/hormuz")
+async def signal_hormuz(days: int = Query(SIGNAL_HORMUZ_DEFAULT_DAYS, ge=60, le=400), refresh: bool = Query(False)):
+    """Hormuz exits/entries (observed + reconstructed dark transits), Gulf outflow by route, Red Sea exits. Returns status=building until ready."""
+    if not _signal_configured():
+        return {"available": False, "reason": "not_configured"}
+    try:
+        return _signal_hormuz_get(days, refresh)
+    except Exception as e:
+        return {"available": False, "reason": "error", "error": str(e)[:400]}
+
+
+@app.on_event("startup")
+async def _signal_hormuz_warm():
+    if not _signal_configured() or os.environ.get("SIGNAL_HORMUZ_WARM", "1") != "1":
+        return
+
+    def warm():
+        _time.sleep(30)
+        try:
+            _signal_hormuz_get(SIGNAL_HORMUZ_DEFAULT_DAYS, False)
+        except Exception:  # noqa: BLE001
+            pass
+    _threading.Thread(target=warm, daemon=True, name="signal-hormuz-warm").start()
 
 
 # ============================================================

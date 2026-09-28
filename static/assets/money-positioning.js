@@ -7570,9 +7570,9 @@
       const PAL = ["#38bdf8", "#8b5cf6", "#22d3ee", "#f5b90f", "#10b981", "#ef4444", "#f472b6", "#a3e635", "#fb923c", "#60a5fa", "#c084fc", "#34d399"];
       const state = { days: 90, cls: "All", load: "All", scope: "key", strait: "ALL", data: null, status: null, view: "passages" };
       const LOAD_COL = { All: C.amber, Laden: C.green, Ballast: C.muted };
-      const VIEWS = [["passages", "⛵ Strait passages"], ["fleet", "📍 Fleet tracker"], ["flows", "🛢 Crude flows"], ["tonnage", "⚓ Tonnage lists"]];
-      const TITLES = { passages: "Tanker Strait Passages", fleet: "Fleet Tracker (live AIS)", flows: "Dirty Crude Flows (voyages)", tonnage: "Available Tonnage (supply)" };
-      const SUBS = { passages: "daily vessel crossings of straits & waypoints (AIS), laden vs ballast", fleet: "latest AIS position, voyage status, destination & ETA for every DPP VLCC / Suezmax / Aframax", flows: "weekly dirty loadings by load region, load→discharge matrix and cargo currently on the water (Signal voyage estimates, barrels)", tonnage: "vessels that can reach each configured load port within N days · open/fixed status, ETA buckets, history" };
+      const VIEWS = [["passages", "⛵ Strait passages"], ["hormuz", "🚧 Hormuz flows"], ["fleet", "📍 Fleet tracker"], ["flows", "🛢 Crude flows"], ["tonnage", "⚓ Tonnage lists"]];
+      const TITLES = { passages: "Tanker Strait Passages", hormuz: "Hormuz Flows & Dark Transits", fleet: "Fleet Tracker (live AIS)", flows: "Dirty Crude Flows (voyages)", tonnage: "Available Tonnage (supply)" };
+      const SUBS = { passages: "daily vessel crossings of straits & waypoints (AIS), laden vs ballast", hormuz: "oil leaving the Gulf: AIS-confirmed Hormuz exits + reconstructed unobserved (dark) transits, Gulf of Oman by-pass routes, Red Sea exits", fleet: "latest AIS position, voyage status, destination & ETA for every DPP VLCC / Suezmax / Aframax", flows: "weekly dirty loadings by load region, load→discharge matrix and cargo currently on the water (Signal voyage estimates, barrels)", tonnage: "vessels that can reach each configured load port within N days · open/fixed status, ETA buckets, history" };
 
       const hdr = el("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "14px", flexWrap: "wrap", gap: "10px" } });
       const hl = el("div", {});
@@ -7589,7 +7589,7 @@
       const ctrl = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" } });
       const body = el("div", {});
       box.appendChild(ctrl); box.appendChild(body);
-      const vstate = { fleet: { cls: "All", load: "All", status: "All", q: "", region: "All", data: null }, flows: { days: 365, src: "ALL", data: null }, tonnage: { days: 90, port: null, data: null } };
+      const vstate = { fleet: { cls: "All", load: "All", status: "All", q: "", region: "All", data: null }, flows: { days: 365, src: "ALL", data: null }, tonnage: { days: 90, port: null, data: null }, hormuz: { days: 270, cargo: "all", rsCls: "VLCC", split: "status", data: null, timer: null } };
       const AXB = { gridcolor: "#1e293b", tickfont: { size: 11 } }; // fresh axis objects: Plotly mutates the layout it is given, so never share plotLayout.xaxis
       function renderSubnav() {
         subnav.innerHTML = "";
@@ -7604,6 +7604,7 @@
         if (state.status && !state.status.connected) { renderNotConnected(state.status); return; }
         if (state.view === "fleet") loadFleet(false);
         else if (state.view === "flows") loadFlows(false);
+        else if (state.view === "hormuz") loadHormuz(false);
         else loadTonnage(false);
       }
 
@@ -8076,6 +8077,158 @@
         ], d.ports, { maxH: 460 });
         body.appendChild(card(`All configured load ports — tonnage list ${d.as_of}`, tw));
         body.appendChild(stamp(d, `configurations from ${d.source.config} · distinct vessels per port/day · negative DaysToETA (already passed) excluded`));
+      }
+
+      // ── HORMUZ FLOWS (observed + reconstructed dark transits) ──
+      async function loadHormuz(force) {
+        const hs = vstate.hormuz;
+        clearTimeout(hs.timer);
+        const need = !hs.data || force || hs.data.days !== hs.days || hs.data.status === "building";
+        if (need) {
+          if (!hs.data || hs.data.days !== hs.days || force) body.innerHTML = `<div style="color:${C.muted};padding:30px;text-align:center">Loading ${hs.days}-day Hormuz reconstruction from Signal…</div>`;
+          let d;
+          try { d = await (await fetch(`/api/signal/hormuz?days=${hs.days}${force ? "&refresh=1" : ""}`)).json(); }
+          catch (e) { body.innerHTML = `<div style="color:${C.red};padding:30px">${e.message}</div>`; return; }
+          if (state.view !== "hormuz") return;
+          if (d.available && d.status === "building") {
+            hs.data = { days: hs.days, status: "building" };
+            const since = d.started_at ? Math.round(Date.now() / 1000 - d.started_at) : 0;
+            body.innerHTML = `<div style="color:${C.muted};padding:40px;text-align:center;line-height:1.8"><div style="font-size:22px">⏳</div>Signal is rebuilding the Hormuz dataset (waypoint fixes ⋈ daily AIS zone changes ⋈ voyages)…<br><span style="font-size:11.5px">first build takes 1–2 minutes · running for ${since}s · this page refreshes automatically</span></div>`;
+            hs.timer = setTimeout(() => { if (state.view === "hormuz") loadHormuz(false); }, 6000);
+            return;
+          }
+          if (d.available && d.status === "error") { body.innerHTML = ""; body.appendChild(card(null, `Hormuz build failed: ${esc(d.error)} — click Refresh to retry.`)); body.appendChild(refreshBtn(() => loadHormuz(true))); return; }
+          hs.data = d;
+        }
+        if (!hs.data.available) return failBox("Hormuz flows", hs.data);
+        drawHormuz();
+      }
+      function drawHormuz() {
+        const hs = vstate.hormuz, d = hs.data, n = d.dates.length;
+        body.innerHTML = "";
+        const ma = a => movAvg(a, 7);
+        const add = (...arrs) => d.dates.map((_, i) => arrs.reduce((s, a) => s + (a[i] || 0), 0));
+        const fmt = (v, p) => v == null ? "—" : Number(v).toFixed(p == null ? 2 : p);
+        const pct = (a, b) => b ? ((a - b) / b * 100 >= 0 ? "▲" : "▼") + Math.abs((a - b) / b * 100).toFixed(0) + "%" : "—";
+        const c = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" } });
+        c.appendChild(lbl("WINDOW"));
+        [90, 180, 270, 365].forEach(k => c.appendChild(pill(k === 365 ? "1y" : k + "d", hs.days === k, () => { hs.days = k; loadHormuz(false); })));
+        c.appendChild(gap()); c.appendChild(lbl("CARGO"));
+        [["all", "Crude + products"], ["dirty", "Dirty (crude / fuel oil)"]].forEach(([k, l]) => c.appendChild(pill(l, hs.cargo === k, () => { hs.cargo = k; drawHormuz(); })));
+        c.appendChild(refreshBtn(() => loadHormuz(true)));
+        body.appendChild(c);
+
+        const K = d.kpi, ev = d.exit_vol_mb, cnt = d.counts;
+        const total = add(ev.mainstream, ev.sanctioned, ev.dark_unsanctioned, ev.dark_sanctioned);
+        const confirmed = add(ev.mainstream, ev.sanctioned);
+        const dark = add(ev.dark_unsanctioned, ev.dark_sanctioned);
+        const kpi = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "10px", marginBottom: "14px" } });
+        kpi.appendChild(kpiCard(`Hormuz oil exits · 7d to ${K.asof}`, `${fmt(K.exit_7d_mbd)} mb/d`, `prior 7d ${fmt(K.exit_prev7d_mbd)} (${pct(K.exit_7d_mbd, K.exit_prev7d_mbd)}) · first 30d of window ${fmt(K.exit_first30d_mbd)} mb/d`, C.amber));
+        kpi.appendChild(kpiCard("of which AIS-confirmed", `${fmt(K.exit_confirmed_7d_mbd)} mb/d`, `waypoint fix at the strait · laden VLCC / Suezmax / Aframax`, C.green));
+        kpi.appendChild(kpiCard("of which dark / unobserved", `${fmt(K.exit_dark_7d_mbd)} mb/d`, `${(K.dark_share_30d * 100).toFixed(0)}% of exits over the last 30d had no strait fix · ${d.dark_transits_total} reconstructed laden transits in window`, C.red));
+        kpi.appendChild(kpiCard("Crossings · 7d avg / day", `${fmt(K.out_7d_per_day, 1)} out · ${fmt(K.in_7d_per_day, 1)} in`, `all DPP tankers, laden + ballast, confirmed + reconstructed`, C.cyan));
+        body.appendChild(kpi);
+
+        // Fig 1 — exit volume estimate: current (incl. dark) vs what AIS showed
+        const f1 = el("div", { style: { height: "340px" } });
+        body.appendChild(card(`Oil & product volumes exiting Hormuz — 7-day moving average, mb/d (${d.start} → ${d.end}; last 1–2 days incomplete)`, f1));
+        loadPlotly(() => {
+          Plotly.newPlot(f1, [
+            { type: "bar", name: "Daily total (incl. dark)", x: d.dates, y: total, marker: { color: "rgba(245,185,15,.18)" }, hovertemplate: "%{x}<br>%{y:.2f} mb<extra>daily</extra>" },
+            { type: "scatter", mode: "lines", name: "Current estimate (AIS-confirmed + reconstructed dark transits)", x: d.dates, y: ma(total), line: { color: C.amber, width: 2.5 }, hovertemplate: "%{x}<br>%{y:.2f} mb/d<extra>current</extra>" },
+            { type: "scatter", mode: "lines", name: "AIS-confirmed only (what was visible at the strait)", x: d.dates, y: ma(confirmed), line: { color: "#94a3b8", width: 1.8, dash: "dash" }, hovertemplate: "%{x}<br>%{y:.2f} mb/d<extra>confirmed</extra>" },
+            { type: "scatter", mode: "lines", name: "First-30-day average of window", x: [d.dates[0], d.dates[n - 1]], y: [K.exit_first30d_mbd, K.exit_first30d_mbd], line: { color: "#475569", width: 1, dash: "dot" }, hoverinfo: "skip" },
+          ], { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB, title: { text: "mb/d", font: { size: 10, color: C.muted } }, rangemode: "tozero" }, margin: { t: 10, b: 40, l: 45, r: 10 }, legend: { ...plotLayout.legend, orientation: "h", y: 1.08, font: { size: 10 } } }, { responsive: true, displayModeBar: false });
+        });
+
+        // Fig 2 — crossings out / in
+        const f2 = el("div", { style: { height: "320px" } });
+        body.appendChild(card("Daily Hormuz crossings — outbound vs inbound tankers, 7-day moving average (VLCC / Suezmax / Aframax; dashed = laden only)", f2));
+        const outAll = add(cnt.out_laden, cnt.out_ballast, cnt.out_dark), inAll = add(cnt.in_laden, cnt.in_ballast, cnt.in_dark);
+        const outLaden = add(cnt.out_laden, cnt.out_laden_dark), inLaden = add(cnt.in_laden, cnt.in_laden_dark);
+        loadPlotly(() => {
+          Plotly.newPlot(f2, [
+            { type: "bar", name: "Outbound (daily)", x: d.dates, y: outAll, marker: { color: "rgba(56,189,248,.18)" }, hovertemplate: "%{x}<br>%{y} out<extra></extra>" },
+            { type: "bar", name: "Inbound (daily)", x: d.dates, y: inAll.map(v => -v), marker: { color: "rgba(139,92,246,.18)" }, customdata: inAll, hovertemplate: "%{x}<br>%{customdata} in<extra></extra>" },
+            { type: "scatter", mode: "lines", name: "Outbound, all tankers", x: d.dates, y: ma(outAll), line: { color: C.cyan, width: 2.2 } },
+            { type: "scatter", mode: "lines", name: "Outbound, laden", x: d.dates, y: ma(outLaden), line: { color: C.cyan, width: 1.4, dash: "dash" } },
+            { type: "scatter", mode: "lines", name: "Inbound, all tankers", x: d.dates, y: ma(inAll).map(v => -v), customdata: ma(inAll), line: { color: C.purple, width: 2.2 }, hovertemplate: "%{x}<br>%{customdata:.1f}/d in<extra></extra>" },
+            { type: "scatter", mode: "lines", name: "Inbound, laden", x: d.dates, y: ma(inLaden).map(v => -v), customdata: ma(inLaden), line: { color: C.purple, width: 1.4, dash: "dash" }, hovertemplate: "%{x}<br>%{customdata:.1f}/d in laden<extra></extra>" },
+            { type: "scatter", mode: "lines", name: "Outbound with no strait fix (reconstructed)", x: d.dates, y: ma(cnt.out_dark), line: { color: C.red, width: 1.4 } },
+          ], { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB, title: { text: "vessels / day  (in shown below zero)", font: { size: 10, color: C.muted } } }, barmode: "overlay", margin: { t: 10, b: 40, l: 45, r: 10 }, legend: { ...plotLayout.legend, orientation: "h", y: 1.08, font: { size: 10 } } }, { responsive: true, displayModeBar: false });
+        });
+
+        // Fig 3 — exits by visibility / sanction status, or by cargo
+        const f3 = el("div", { style: { height: "340px" } });
+        const f3c = el("div", { style: { display: "flex", gap: "6px", marginBottom: "8px" } });
+        [["status", "Mainstream / sanctioned / dark"], ["cargo", "Crude / fuel oil / clean"]].forEach(([k, l]) => f3c.appendChild(pill(l, hs.split === k, () => { hs.split = k; drawHormuz(); })));
+        const f3w = el("div", {}); f3w.appendChild(f3c); f3w.appendChild(f3);
+        body.appendChild(card("Volumes exiting Hormuz by vessel visibility — 7-day moving average, mb/d (stacked)", f3w));
+        loadPlotly(() => {
+          const S = hs.split === "status"
+            ? [["Mainstream (AIS-visible, not sanctioned)", ev.mainstream, "#38bdf8"], ["Sanctioned vessel, AIS-visible at strait", ev.sanctioned, "#f5b90f"], ["Dark transit, not sanctioned", ev.dark_unsanctioned, "#fb923c"], ["Dark transit, sanctioned", ev.dark_sanctioned, "#ef4444"]]
+            : [["Crude / condensate", d.exit_vol_cargo_mb.crude, "#38bdf8"], ["Fuel oil / VGO / other dirty", d.exit_vol_cargo_mb.fuel_oil, "#8b5cf6"], ["Clean products (naphtha, etc.)", d.exit_vol_cargo_mb.clean, "#10b981"], ["Cargo not identified (DWT proxy)", d.exit_vol_cargo_mb.unknown, "#475569"]];
+          Plotly.newPlot(f3, S.map(([name, y, col]) => ({ type: "scatter", mode: "lines", stackgroup: "a", name, x: d.dates, y: ma(y), line: { width: 0.5, color: col }, fillcolor: col + "bf", hovertemplate: "%{x}<br>%{y:.2f} mb/d<extra>%{fullData.name}</extra>" })),
+            { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB, title: { text: "mb/d", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 40, l: 45, r: 10 }, legend: { ...plotLayout.legend, orientation: "h", y: 1.08, font: { size: 10 } } }, { responsive: true, displayModeBar: false });
+        });
+
+        // Fig 4 — Gulf + Gulf of Oman outflow by route
+        const R = hs.cargo === "dirty" ? d.routes_dirty_mb : d.routes_mb;
+        const f4 = el("div", { style: { height: "420px" } });
+        body.appendChild(card(`Middle East Gulf & Gulf of Oman oil outflows by route — 7-day moving average, mb/d (stacked; ${hs.cargo === "dirty" ? "dirty cargoes only" : "crude + products"})`, f4));
+        const routeTot = add(R.hormuz, R.dark, R.sts_oman_uae, R.fujairah, R.oman);
+        loadPlotly(() => {
+          const S = [["Hormuz — AIS-confirmed transits", R.hormuz, "#38bdf8"], ["Hormuz — dark / unobserved transits (est.)", R.dark, "#ef4444"], ["STS loadings off Oman / UAE (Fujairah, Sohar, Khor Fakkan)", R.sts_oman_uae, "#f472b6"], ["Fujairah / Khor Fakkan terminal loadings (ADCOP by-pass)", R.fujairah, "#f5b90f"], ["Oman loadings (Mina al Fahal, Duqm, Sohar)", R.oman, "#10b981"]];
+          const tr = S.map(([name, y, col]) => ({ type: "scatter", mode: "lines", stackgroup: "r", name, x: d.dates, y: ma(y), line: { width: 0.5, color: col }, fillcolor: col + "bf", hovertemplate: "%{x}<br>%{y:.2f} mb/d<extra>%{fullData.name}</extra>" }));
+          tr.push({ type: "scatter", mode: "lines", name: "Total ex-Gulf + Gulf of Oman", x: d.dates, y: ma(routeTot), line: { color: "#e8edf8", width: 1.8 } });
+          tr.push({ type: "scatter", mode: "lines", name: "Yanbu (Red Sea, East-West pipeline) — not stacked", x: d.dates, y: ma(R.yanbu), line: { color: "#a3e635", width: 1.5, dash: "dot" } });
+          tr.push({ type: "scatter", mode: "lines", name: "Hormuz cargoes relayed to Fujairah / Sohar (excluded from stack)", x: d.dates, y: ma(R.hormuz_relay), line: { color: "#94a3b8", width: 1.2, dash: "dash" } });
+          Plotly.newPlot(f4, tr, { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB, title: { text: "mb/d", font: { size: 10, color: C.muted } } }, margin: { t: 10, b: 40, l: 45, r: 10 }, legend: { ...plotLayout.legend, orientation: "h", y: -0.12, yanchor: "top", font: { size: 10 } } }, { responsive: true, displayModeBar: false });
+        });
+
+        // Fig 5 — Red Sea exits north vs south
+        const f5 = el("div", { style: { height: "320px" } });
+        const f5c = el("div", { style: { display: "flex", gap: "6px", marginBottom: "8px", alignItems: "center" } });
+        f5c.appendChild(lbl("CLASS"));
+        ["VLCC", "Suezmax", "Aframax", "All"].forEach(cl => f5c.appendChild(pill(cl, hs.rsCls === cl, () => { hs.rsCls = cl; drawHormuz(); }, CLASS_COL[cl])));
+        const f5w = el("div", {}); f5w.appendChild(f5c); f5w.appendChild(f5);
+        body.appendChild(card(`Red Sea laden ${hs.rsCls === "All" ? "tanker" : hs.rsCls} exits — north (Suez + SUMED/Ain Sukhna) vs south (Bab el Mandeb), 7-day moving average, mb/d`, f5w));
+        const rsSum = key => { const cls = hs.rsCls === "All" ? d.classes : [hs.rsCls]; return add(...cls.map(cl => d.redsea_mb[key][cl] || [])); };
+        const rsN = key => { const cls = hs.rsCls === "All" ? d.classes : [hs.rsCls]; return add(...cls.map(cl => d.redsea_n[key][cl] || [])); };
+        const north = add(rsSum("north_suez"), rsSum("north_sumed")), south = rsSum("south_bem");
+        const nN = add(rsN("north_suez"), rsN("north_sumed")).reduce((a, b) => a + b, 0), sN = rsN("south_bem").reduce((a, b) => a + b, 0);
+        loadPlotly(() => {
+          Plotly.newPlot(f5, [
+            { type: "bar", name: "North (daily)", x: d.dates, y: north, marker: { color: "rgba(56,189,248,.15)" }, hoverinfo: "skip" },
+            { type: "bar", name: "South (daily)", x: d.dates, y: south, marker: { color: "rgba(245,185,15,.15)" }, hoverinfo: "skip" },
+            { type: "scatter", mode: "lines", name: `Exits north via Suez / SUMED (${nN} voyages)`, x: d.dates, y: ma(north), line: { color: C.cyan, width: 2.4 } },
+            { type: "scatter", mode: "lines", name: `Exits south via Bab el Mandeb (${sN} voyages)`, x: d.dates, y: ma(south), line: { color: C.gold, width: 2.4 } },
+            { type: "scatter", mode: "lines", name: "of north: SUMED discharges at Ain Sukhna", x: d.dates, y: ma(rsSum("north_sumed")), line: { color: C.cyan, width: 1.2, dash: "dot" } },
+          ], { ...plotLayout, xaxis: { ...AXB }, yaxis: { ...AXB, title: { text: "mb/d", font: { size: 10, color: C.muted } }, rangemode: "tozero" }, barmode: "overlay", margin: { t: 10, b: 40, l: 45, r: 10 }, legend: { ...plotLayout.legend, orientation: "h", y: 1.08, font: { size: 10 } } }, { responsive: true, displayModeBar: false });
+        });
+
+        // destinations + dark transit list
+        const dsDiv = el("div", { style: { height: "300px" } });
+        body.appendChild(card("Where Hormuz exits are heading — declared discharge country of the voyages that left the Gulf in this window (mb, confirmed + dark)", dsDiv));
+        const dk = d.dark_transits || [];
+        const tw = table([
+          { h: "Est. exit", f: r => r.est_day }, { h: "Vessel", f: r => `<b>${esc(r.vessel || r.imo)}</b> <span style="color:${C.muted}">${r.imo}</span>` }, { h: "Class", f: r => r.cls, color: r => CLASS_COL[r.cls] },
+          { h: "Cargo", f: r => esc(r.cargo) }, { h: "mb", num: true, f: r => (r.bbl / 1e6).toFixed(2) + (r.bbl_proxy ? "*" : "") },
+          { h: "Sanctioned", f: r => r.sanctioned ? esc(r.sanctioned) : null, color: () => C.red }, { h: "Last AIS inside", f: r => r.last_ais }, { h: "Re-appeared", f: r => `${r.reappeared} · ${esc(r.area)}` }, { h: "Gap d", num: true, f: r => r.gap_days },
+          { h: "Load → discharge", f: r => `${esc(r.load || "?")} → ${esc(r.dest || "?")}${r.dest_ctry ? ` <span style="color:${C.muted}">${esc(r.dest_ctry)}</span>` : ""}` },
+        ], dk, { maxH: 320 });
+        body.appendChild(card(`Reconstructed dark / unobserved laden exits — latest ${dk.length} of ${d.dark_transits_total} (* = DWT proxy volume)`, tw));
+        loadPlotly(() => {
+          const ds = d.dest_90d_mb || [];
+          Plotly.newPlot(dsDiv, [{ type: "bar", x: ds.map(r => r.dest), y: ds.map(r => r.mb), marker: { color: C.amber }, text: ds.map(r => r.mb.toFixed(0)), textposition: "outside", textfont: { size: 10, color: C.muted }, hovertemplate: "%{x}: %{y:.1f} mb<extra></extra>" }], { ...plotLayout, showlegend: false, xaxis: { ...AXB, tickfont: { size: 10 } }, yaxis: { ...AXB, title: { text: "mb", font: { size: 10, color: C.muted } } }, margin: { t: 25, b: 60, l: 45, r: 10 } }, { responsive: true, displayModeBar: false });
+        });
+
+        // methodology
+        const m = d.method || {};
+        const meth = el("div", { style: { color: C.muted, fontSize: "11.5px", lineHeight: "1.7" } });
+        meth.innerHTML = `<div><b style="color:${C.text}">AIS-confirmed:</b> ${esc(m.confirmed)}</div><div><b style="color:${C.text}">Dark / unobserved transit:</b> ${esc(m.dark)}</div><div><b style="color:${C.text}">Sanctioned:</b> ${esc(m.sanctioned)}</div><div><b style="color:${C.text}">Volumes:</b> ${esc(m.volume)} · ${K.proxy_volume_n} crossings used the proxy</div><div><b style="color:${C.text}">Routes:</b> ${esc(m.routes)}</div><div><b style="color:${C.text}">Red Sea:</b> ${esc(m.redsea)}</div><div><b style="color:${C.red}">Coverage:</b> ${esc(m.coverage)} — so absolute levels sit below all-vessel estimates (e.g. Rystad / Kpler); the dark share and the trend are the useful reads.</div>`;
+        body.appendChild(card("How this is built (Signal DW_Socar, not a Rystad feed)", meth));
+        body.appendChild(el("div", { style: { color: C.muted, fontSize: "11px", marginTop: "12px" } }, `Source: Signal Ocean · uvs_WaypointsTracking ⋈ uvs_AISPerDay ⋈ uvs_VesselDataPerDayEnhanced ⋈ uvS_VoyagesSummary · ${d.rows.waypoint_fixes.toLocaleString()} Hormuz fixes, ${d.rows.zone_changes.toLocaleString()} zone changes, ${d.rows.loadings.toLocaleString()} by-pass loadings, ${d.rows.redsea_fixes.toLocaleString()} Red Sea fixes · data through ${d.end} · built ${(d.fetched_at || "").slice(0, 16).replace("T", " ")} UTC · cached 3 h${d.refreshing ? " · refreshing in background" : ""}`));
       }
 
       async function load(reset, force) {
