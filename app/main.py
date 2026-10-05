@@ -12,6 +12,7 @@ import hashlib
 import secrets as _secrets_mod
 import pandas as pd
 import numpy as np
+import asyncio
 from datetime import datetime
 from collections import defaultdict
 import glob as glob_mod
@@ -8434,6 +8435,186 @@ async def get_eia_gasoline_monthly(
         "end_year": end_year,
         "sections": sections,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EIA GASOLINE SEASONAL BALANCE — PSM monthly, month-by-year overlays + 5y range
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_gb_seasonal_cache: dict = {}
+GB_SEASONAL_TTL = 6 * 3600
+GB_SEASONAL_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+GB_SEASONAL_METRICS = [
+    ("production", "Production — refinery & blender net (finished gasoline)", "kb/d"),
+    ("demand", "Demand — product supplied (finished gasoline)", "kb/d"),
+    ("imports", "Imports — finished + blending components", "kb/d"),
+    ("exports", "Exports — finished + blending components", "kb/d"),
+    ("net_exports", "Net exports (exports − imports)", "kb/d"),
+    ("stock_change", "Stock change — finished + blending components", "kb/d"),
+    ("stocks_total", "Stocks — finished + blending components", "mb"),
+    ("stocks_finished", "Stocks — finished gasoline", "mb"),
+    ("stocks_blending", "Stocks — blending components", "mb"),
+    ("days_supply", "Days of supply (total stocks ÷ demand)", "days"),
+    ("adjustment", "Supply adjustment (unaccounted-for, finished)", "kb/d"),
+    ("ethanol_prod", "Fuel ethanol — plant net production", "kb/d"),
+]
+
+
+def _gb_seasonal_series(raw: dict) -> dict:
+    """Derive the balance metrics ({period: value}) from the raw PSM feed."""
+    def g(src, prod, proc, unit="MBBL/D"):
+        return raw.get((src, prod, proc, unit), {})
+
+    prod = g("snd", "EPM0F", "YPR")
+    dem = g("snd", "EPM0F", "VPP")
+    adj = g("snd", "EPM0F", "VUA")
+    imp_f, imp_b = g("imp", "EPM0F", "IM0"), g("imp", "EPOBG", "IM0")
+    exp_f, exp_b = g("exp", "EPM0F", "EEX"), g("exp", "EPOBG", "EEX")
+    scg_f, scg_b = g("snd", "EPM0F", "SCG"), g("snd", "EPOBG", "SCG")
+    st_f, st_b = g("snd", "EPM0F", "SAE", "MBBL"), g("snd", "EPOBG", "SAE", "MBBL")
+    eth = g("snd", "EPOOXE", "YNP")
+    periods = sorted(set(prod) | set(dem))
+
+    def add(*ds):
+        out = {}
+        for p in periods:
+            vals = [d.get(p) for d in ds if p in d]
+            if vals:
+                out[p] = sum(vals)
+        return out
+
+    imports, exports = add(imp_f, imp_b), add(exp_f, exp_b)
+    stocks_total = {p: (st_f[p] + st_b[p]) / 1000 for p in periods if p in st_f and p in st_b}
+    out = {
+        "production": prod,
+        "demand": dem,
+        "imports": imports,
+        "exports": exports,
+        "net_exports": {p: exports[p] - imports[p] for p in periods if p in exports and p in imports},
+        "stock_change": add(scg_f, scg_b),
+        "stocks_total": stocks_total,
+        "stocks_finished": {p: v / 1000 for p, v in st_f.items()},
+        "stocks_blending": {p: v / 1000 for p, v in st_b.items()},
+        "days_supply": {p: stocks_total[p] * 1000 / dem[p] for p in periods if p in stocks_total and dem.get(p)},
+        "adjustment": adj,
+        "ethanol_prod": eth,
+    }
+    return out
+
+
+def _gb_seasonal_metric(key: str, label: str, units: str, series: dict, latest_period: str) -> dict:
+    """Month-by-year overlay, 5y band (5 years before the latest year), latest-month and YTD stats."""
+    by_year: dict = defaultdict(lambda: [None] * 12)
+    for p, v in series.items():
+        y, m = int(p[:4]), int(p[5:7])
+        by_year[y][m - 1] = round(v, 1)
+    if not by_year:
+        return {"key": key, "label": label, "units": units, "months": GB_SEASONAL_MONTHS, "years": {}, "band": None, "latest": None}
+    cur_year = int(latest_period[:4])
+    cur_month = int(latest_period[5:7])
+    ref_years = [y for y in range(cur_year - 5, cur_year) if y in by_year]
+    lo, hi, avg = [], [], []
+    for m in range(12):
+        vals = [by_year[y][m] for y in ref_years if by_year[y][m] is not None]
+        lo.append(round(min(vals), 1) if vals else None)
+        hi.append(round(max(vals), 1) if vals else None)
+        avg.append(round(sum(vals) / len(vals), 1) if vals else None)
+    cur = by_year.get(cur_year, [None] * 12)
+    prev = by_year.get(cur_year - 1, [None] * 12)
+    latest_val = series.get(latest_period)
+    latest = None
+    if latest_val is not None:
+        prev_p = f"{cur_year - 1}-{cur_month:02d}" if cur_month > 1 else None
+        pm = f"{cur_year}-{cur_month - 1:02d}" if cur_month > 1 else f"{cur_year - 1}-12"
+        yoy_v = prev[cur_month - 1]
+        a5 = avg[cur_month - 1]
+        ytd_cur = [v for v in cur[:cur_month] if v is not None]
+        ytd_prev = [v for v in prev[:cur_month] if v is not None]
+        ytd_avg = [v for v in avg[:cur_month] if v is not None]
+        latest = {
+            "period": latest_period,
+            "value": round(latest_val, 1),
+            "mom": round(latest_val - series[pm], 1) if pm in series else None,
+            "yoy": round(latest_val - yoy_v, 1) if yoy_v is not None else None,
+            "vs_5y": round(latest_val - a5, 1) if a5 is not None else None,
+            "ytd": round(sum(ytd_cur) / len(ytd_cur), 1) if ytd_cur else None,
+            "ytd_prev": round(sum(ytd_prev) / len(ytd_prev), 1) if ytd_prev else None,
+            "ytd_5y": round(sum(ytd_avg) / len(ytd_avg), 1) if ytd_avg else None,
+            "rank_5y": None,
+        }
+        band_vals = [by_year[y][cur_month - 1] for y in ref_years if by_year[y][cur_month - 1] is not None]
+        if band_vals:
+            latest["rank_5y"] = sum(1 for v in band_vals if v > latest_val) + 1  # 1 = highest of the window
+            latest["n_5y"] = len(band_vals)
+    return {
+        "key": key, "label": label, "units": units, "months": GB_SEASONAL_MONTHS,
+        "years": {str(y): by_year[y] for y in sorted(by_year)},
+        "band": {"years": [str(y) for y in ref_years], "lo": lo, "hi": hi, "avg": avg},
+        "latest": latest,
+    }
+
+
+def _gb_seasonal_build(api_key: str, area: str, start_year: int) -> dict:
+    duo = GB_AREA_MAP[area]["duo"]
+    end_year = datetime.utcnow().year + 1
+    raw = _fetch_eia_gasoline_area(api_key, duo, f"{start_year}-01", f"{end_year}-12")
+    series = _gb_seasonal_series(raw)
+    anchor = series["demand"] or series["production"]
+    if not anchor:
+        raise RuntimeError("no monthly gasoline data returned")
+    latest_period = max(anchor)
+    metrics = [_gb_seasonal_metric(k, lbl, u, series.get(k, {}), latest_period) for k, lbl, u in GB_SEASONAL_METRICS]
+    return {
+        "area": area,
+        "area_name": GB_AREA_MAP[area]["name"],
+        "source": "EIA Petroleum Supply Monthly (API v2: /petroleum/sum/snd, /move/imp, /move/exp)",
+        "latest_period": latest_period,
+        "start_year": start_year,
+        "metrics": metrics,
+        "generated": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.on_event("startup")
+async def _gb_seasonal_warm():
+    """Pre-build the US seasonal balance so the Gasoline Balances tab doesn't wait ~80s on first open."""
+    api_key = os.environ.get("EIA_API_KEY")
+    if not api_key:
+        return
+
+    def _warm():
+        try:
+            _gb_seasonal_cache["US:2017"] = {"ts": _time.time(), "val": _gb_seasonal_build(api_key, "US", 2017)}
+        except Exception as e:
+            print(f"[GB-Seasonal] warm failed: {e}")
+
+    asyncio.get_event_loop().run_in_executor(None, _warm)
+
+
+@app.get("/api/eia_gasoline_seasonal")
+async def get_eia_gasoline_seasonal(
+    area: str = Query("US", description="Region: US, PADD1-5"),
+    start_year: int = Query(2017, ge=2000, le=2026),
+    refresh: bool = Query(False),
+):
+    """Seasonal (month × year) gasoline balance from the latest EIA PSM: production, demand, imports/exports, stock change, stocks, days of supply."""
+    api_key = os.environ.get("EIA_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="EIA_API_KEY not set")
+    if area not in GB_AREA_MAP:
+        raise HTTPException(status_code=400, detail=f"Invalid area: {list(GB_AREA_MAP.keys())}")
+    key = f"{area}:{start_year}"
+    c = _gb_seasonal_cache.get(key)
+    if c and not refresh and _time.time() - c["ts"] < GB_SEASONAL_TTL:
+        return c["val"]
+    try:
+        val = await asyncio.to_thread(_gb_seasonal_build, api_key, area, start_year)
+    except Exception as e:
+        if c:
+            return {**c["val"], "stale": True, "error": str(e)[:200]}
+        raise HTTPException(status_code=502, detail=f"EIA API error: {e}")
+    _gb_seasonal_cache[key] = {"ts": _time.time(), "val": val}
+    return val
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

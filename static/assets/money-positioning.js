@@ -1221,6 +1221,133 @@
     });
   }
 
+  // ========== GASOLINE SEASONAL BALANCE (EIA PSM monthly, month × year) ==========
+  const GBS_MONTH_LABEL = (p) => { const [y, m] = p.split("-"); return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+m - 1] + "-" + y.slice(2); };
+  const gbsFmt = (v, u, sign) => v == null ? "—" : (sign && v > 0 ? "+" : "") + (u === "days" ? v.toFixed(1) : u === "mb" ? v.toFixed(1) : Math.round(v).toLocaleString());
+
+  async function renderGBSeasonal(box, area) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:30px;text-align:center;">Loading EIA PSM seasonal gasoline balance…</div>';
+    let d;
+    try {
+      const r = await fetch(`/api/eia_gasoline_seasonal?area=${area}`);
+      if (!r.ok) { const e = await r.json(); throw new Error(e.detail || r.statusText); }
+      d = await r.json();
+    } catch (e) { box.innerHTML = `<div style="color:${C.red};padding:20px;">Seasonal balance: ${e.message}</div>`; return; }
+    box.innerHTML = "";
+    const M = {}; d.metrics.forEach(m => { M[m.key] = m; });
+    const lp = d.latest_period;
+    const curYear = lp.slice(0, 4);
+
+    // Header
+    const hdr = el("div", { style: { display: "flex", alignItems: "baseline", gap: "12px", flexWrap: "wrap", marginBottom: "4px" } });
+    hdr.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber } }, `⛽ SEASONAL GASOLINE BALANCE — ${d.area_name}`));
+    hdr.appendChild(el("span", { style: { fontSize: "11px", fontWeight: "700", color: "#000", background: C.green, borderRadius: "999px", padding: "2px 10px" } }, `Latest PSM: ${GBS_MONTH_LABEL(lp)}`));
+    box.appendChild(hdr);
+    box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "12px" } },
+      `${d.source}. Lines = one year each (${curYear} bold), grey band = ${M.demand.band.years[0]}–${M.demand.band.years.slice(-1)[0]} min/max, dashed = 5y avg. kb/d unless stated.`));
+
+    // KPI strip — latest month vs y/y and vs 5y avg
+    const kpis = [
+      ["demand", "Demand"], ["production", "Production"], ["imports", "Imports"], ["exports", "Exports"],
+      ["stock_change", "Stock chg"], ["stocks_total", "Stocks (mb)"], ["days_supply", "Days supply"],
+    ];
+    const kr = el("div", { style: { display: "grid", gridTemplateColumns: `repeat(${kpis.length}, 1fr)`, gap: "8px", marginBottom: "14px" } });
+    kpis.forEach(([k, lbl]) => {
+      const m = M[k], L = m && m.latest; if (!L) return;
+      const good = (k === "demand" || k === "exports") ? 1 : (k === "production" || k === "imports" || k === "stocks_total" || k === "days_supply" || k === "stock_change") ? -1 : 0;
+      const col = (v) => v == null ? C.muted : (v * good > 0 ? C.green : v * good < 0 ? C.red : C.muted);
+      const b = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: "10px", padding: "10px 12px" } });
+      b.appendChild(el("div", { style: { fontSize: "10px", color: C.muted, textTransform: "uppercase", letterSpacing: ".06em" } }, lbl));
+      b.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.text, margin: "2px 0" } }, gbsFmt(L.value, m.units)));
+      b.appendChild(el("div", { style: { fontSize: "10.5px", color: col(L.yoy) } }, `y/y ${gbsFmt(L.yoy, m.units, true)}`));
+      b.appendChild(el("div", { style: { fontSize: "10.5px", color: col(L.vs_5y) } }, `vs 5y ${gbsFmt(L.vs_5y, m.units, true)}${L.rank_5y ? ` · #${L.rank_5y}/${L.n_5y + 1}` : ""}`));
+      kr.appendChild(b);
+    });
+    box.appendChild(kr);
+
+    // Seasonal charts grid
+    const chartKeys = ["demand", "production", "imports", "exports", "net_exports", "stock_change", "stocks_total", "days_supply", "stocks_finished", "stocks_blending", "adjustment", "ethanol_prod"];
+    const grid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(480px, 1fr))", gap: "12px" } });
+    const charts = [];
+    chartKeys.forEach((k, i) => {
+      const m = M[k]; if (!m || !Object.keys(m.years).length) return;
+      const id = `gbs-${area}-${k}`;
+      grid.appendChild(card(m.label + (m.units !== "kb/d" ? ` (${m.units})` : ""), el("div", { id, style: { width: "100%", height: "360px" } })));
+      charts.push({ id, m });
+    });
+    box.appendChild(grid);
+
+    // Current year vs 5y avg by month — balance components
+    const devId = `gbs-${area}-dev`;
+    box.appendChild(card(`${curYear} vs 5y average by month — balance components (kb/d; + = looser: more supply / less demand)`, el("div", { id: devId, style: { width: "100%", height: "380px" } })));
+
+    // Compact table
+    const tbl = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11px" } });
+    const thr = el("tr");
+    ["Metric", `${GBS_MONTH_LABEL(lp)}`, "m/m", "y/y", "vs 5y avg", "5y rank", `YTD ${curYear}`, `YTD ${curYear - 1}`, "YTD 5y avg", "Units"].forEach((h, i) =>
+      thr.appendChild(el("th", { style: { padding: "6px 6px", textAlign: i === 0 ? "left" : "right", color: C.amber, borderBottom: `2px solid ${C.border}`, fontSize: "10px", whiteSpace: "nowrap" } }, h)));
+    tbl.appendChild(el("thead", null, thr));
+    const tb = el("tbody");
+    d.metrics.forEach(m => {
+      const L = m.latest; if (!L) return;
+      const tr = el("tr", { style: { borderBottom: `1px solid ${C.border}30` } });
+      tr.appendChild(el("td", { style: { padding: "5px 6px", color: C.cyan, whiteSpace: "nowrap" } }, m.label));
+      const sc = v => v == null ? C.muted : v > 0 ? C.green : v < 0 ? C.red : C.text;
+      [[L.value, false, C.text], [L.mom, true], [L.yoy, true], [L.vs_5y, true], [L.rank_5y ? `#${L.rank_5y}/${L.n_5y + 1}` : "—", false, C.muted], [L.ytd, false, C.text], [L.ytd_prev, false, C.muted], [L.ytd_5y, false, C.muted]].forEach(([v, sign, c]) => {
+        const txt = typeof v === "string" ? v : gbsFmt(v, m.units, sign);
+        tr.appendChild(el("td", { style: { padding: "5px 6px", textAlign: "right", color: c || sc(v), fontVariantNumeric: "tabular-nums" } }, txt));
+      });
+      tr.appendChild(el("td", { style: { padding: "5px 6px", textAlign: "right", color: C.muted, fontSize: "10px" } }, m.units));
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    box.appendChild(card(`Latest month & YTD summary — ${d.area_name}`, tbl));
+    box.appendChild(el("div", { style: { fontSize: "10.5px", color: C.muted, margin: "2px 0 18px" } },
+      "YTD = average of Jan→latest month. Stock change and stocks cover finished gasoline + blending components; demand/production are finished gasoline (EIA definition). 5y rank: #1 = highest of the window for that calendar month."));
+
+    loadPlotly(() => {
+      const yrs = Object.keys(M.demand.years).sort();
+      const showYears = new Set(yrs.slice(-4));
+      charts.forEach(({ id, m }) => {
+        const tr = [];
+        if (m.band) {
+          tr.push({ x: m.months, y: m.band.hi, name: "5y max", line: { width: 0 }, showlegend: false, hoverinfo: "skip", mode: "lines" });
+          tr.push({ x: m.months, y: m.band.lo, name: "5y range", fill: "tonexty", fillcolor: "rgba(148,163,184,0.16)", line: { width: 0 }, mode: "lines", hoverinfo: "skip" });
+          tr.push({ x: m.months, y: m.band.avg, name: "5y avg", line: { color: "#94a3b8", width: 1.5, dash: "dash" }, mode: "lines" });
+        }
+        const years = Object.keys(m.years).sort();
+        years.forEach((y, i) => {
+          const isCur = y === curYear, isPrev = String(+curYear - 1) === y;
+          tr.push({
+            x: m.months, y: m.years[y], name: y, mode: isCur ? "lines+markers" : "lines",
+            line: { color: isCur ? C.amber : isPrev ? C.cyan : yearColors[i % yearColors.length], width: isCur ? 3.5 : isPrev ? 2.2 : 1.3 },
+            marker: { size: 7 }, opacity: isCur ? 1 : isPrev ? 0.95 : 0.55,
+            visible: showYears.has(y) ? true : "legendonly", connectgaps: false,
+          });
+        });
+        const layout = { ...plotLayout, height: 360, margin: { t: 10, b: 60, l: 60, r: 20 },
+          xaxis: { ...plotLayout.xaxis, type: "category", categoryarray: m.months, categoryorder: "array" },
+          yaxis: { ...plotLayout.yaxis, title: { text: m.units, font: { size: 11 } } },
+          legend: { ...plotLayout.legend, y: -0.18 } };
+        if (m.key === "stock_change" || m.key === "net_exports" || m.key === "adjustment") layout.shapes = [{ type: "line", x0: 0, x1: 1, xref: "paper", y0: 0, y1: 0, line: { color: C.muted, width: 1, dash: "dot" } }];
+        Plotly.newPlot(id, tr, layout, { responsive: true });
+      });
+
+      // Deviation bars: current year minus 5y avg, signed so + = looser balance
+      const comp = [["production", "Production", C.green, 1], ["imports", "Imports", C.cyan, 1], ["demand", "Demand", C.red, -1], ["exports", "Exports", C.purple, -1]];
+      const devTraces = comp.map(([k, lbl, col, sgn]) => {
+        const m = M[k]; const cur = m.years[curYear] || [];
+        return { x: m.months, y: m.months.map((_, i) => (cur[i] != null && m.band.avg[i] != null) ? +(sgn * (cur[i] - m.band.avg[i])).toFixed(0) : null), name: lbl + (sgn < 0 ? " (inverted)" : ""), type: "bar", marker: { color: col } };
+      });
+      const sc = M.stock_change; const cur = sc.years[curYear] || [];
+      devTraces.push({ x: sc.months, y: sc.months.map((_, i) => (cur[i] != null && sc.band.avg[i] != null) ? +(cur[i] - sc.band.avg[i]).toFixed(0) : null), name: "Stock change vs 5y (net)", type: "scatter", mode: "lines+markers", line: { color: C.amber, width: 3 }, marker: { size: 8 } });
+      Plotly.newPlot(devId, devTraces, { ...plotLayout, height: 380, barmode: "relative", margin: { t: 10, b: 60, l: 60, r: 20 },
+        xaxis: { ...plotLayout.xaxis, type: "category", categoryarray: sc.months, categoryorder: "array" },
+        yaxis: { ...plotLayout.yaxis, title: { text: "kb/d vs 5y avg", font: { size: 11 } } }, legend: { ...plotLayout.legend, y: -0.18 },
+        shapes: [{ type: "line", x0: 0, x1: 1, xref: "paper", y0: 0, y1: 0, line: { color: C.muted, width: 1 } }] }, { responsive: true });
+    });
+  }
+
   async function renderGBal(box) {
     box.innerHTML = "";
 
@@ -1259,6 +1386,7 @@
       gbCurrentArea = select.value;
       gbStartYear = parseInt(startYrSel.value);
       gbEndYear = parseInt(endYrSel.value);
+      renderGBSeasonal(seasonalBox, gbCurrentArea);
       contentBox.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading gasoline balances for ' + areas[gbCurrentArea] + ' (' + gbStartYear + '–' + gbEndYear + ')...</div>';
       try {
         gbData = await fetchGB(gbCurrentArea, gbStartYear, gbEndYear);
@@ -1274,6 +1402,8 @@
     controls.appendChild(loadBtn);
     box.appendChild(controls);
 
+    const seasonalBox = el("div");
+    box.appendChild(seasonalBox);
     const contentBox = el("div");
     box.appendChild(contentBox);
 
@@ -1282,6 +1412,7 @@
     box.appendChild(monthlyBox);
 
     // Auto-load US data + monthly table
+    renderGBSeasonal(seasonalBox, gbCurrentArea);
     contentBox.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading gasoline balances for U.S. Total (' + gbStartYear + '–' + gbEndYear + ')...</div>';
     try {
       gbData = await fetchGB(gbCurrentArea, gbStartYear, gbEndYear);
