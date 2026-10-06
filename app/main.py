@@ -8120,14 +8120,45 @@ GB_MONTHLY_STOCK_ROWS = [
 ]
 
 
-def _fetch_eia_gasoline_area(api_key: str, duo: str, start_ym: str, end_ym: str) -> dict:
-    """Fetch monthly gasoline data for one area from EIA endpoints.
+GB_PRODUCT_CFG = {
+    "gasoline": {
+        "label": "Gasoline", "icon": "⛽",
+        "snd_products": ["EPM0F", "EPOBG", "EPOOXE"],
+        "trade_products": ["EPM0F", "EPOBG"],
+        "notes": "Stock change and stocks cover finished gasoline + blending components; demand/production are finished gasoline (EIA definition).",
+    },
+    "distillate": {
+        "label": "Distillate / Diesel", "icon": "🛢️",
+        "snd_products": ["EPD0", "EPDXL0", "EPDM10", "EPD00H", "EPOORDO", "EPOORDB"],
+        "trade_products": ["EPD0", "EPDXL0"],
+        "notes": "All flows are total distillate fuel oil (EIA EPD0: ULSD ≤15 ppm + 15–500 ppm + >500 ppm heating oil). Renewable diesel / biodiesel are reported separately by EIA and are not inside the distillate balance.",
+    },
+}
+GB_DISTILLATE_STOCK_ROWS = [
+    {"key": "stocks_total", "label": "Total Distillate Stocks", "src": "snd", "product": "EPD0", "process": "SAE", "unit": "MBBL"},
+    {"key": "stocks_ulsd", "label": "ULSD (0–15 ppm) Stocks", "src": "snd", "product": "EPDXL0", "process": "SAE", "unit": "MBBL"},
+    {"key": "stocks_lsd", "label": "15–500 ppm Stocks", "src": "snd", "product": "EPDM10", "process": "SAE", "unit": "MBBL"},
+    {"key": "stocks_hsd", "label": ">500 ppm (Heating Oil) Stocks", "src": "snd", "product": "EPD00H", "process": "SAE", "unit": "MBBL"},
+]
+
+
+def _gb_product_cfg(product: str) -> dict:
+    cfg = GB_PRODUCT_CFG.get((product or "gasoline").lower())
+    if not cfg:
+        raise HTTPException(status_code=400, detail=f"Invalid product: {list(GB_PRODUCT_CFG.keys())}")
+    return cfg
+
+
+def _fetch_eia_gasoline_area(api_key: str, duo: str, start_ym: str, end_ym: str,
+                             snd_products: list = None, trade_products: list = None) -> dict:
+    """Fetch monthly product data (gasoline by default) for one area from EIA endpoints.
     Returns {(source, product, process, units): {period: value}}."""
     from collections import defaultdict
     result: dict = defaultdict(dict)
 
     # 1) S&D endpoint — production, stock change, product supplied, etc.
-    snd_products = ["EPM0F", "EPOBG", "EPOOXE"]
+    snd_products = snd_products or ["EPM0F", "EPOBG", "EPOOXE"]
+    trade_products = trade_products or ["EPM0F", "EPOBG"]
     prod_param = "".join(f"&facets[product][]={p}" for p in snd_products)
     offset = 0
     while True:
@@ -8160,7 +8191,7 @@ def _fetch_eia_gasoline_area(api_key: str, duo: str, start_ym: str, end_ym: str)
 
     # 2) Imports endpoint (finished + blending components)
     imp_duo = duo + "-Z00" if "-" not in duo else duo
-    for imp_prod in ["EPM0F", "EPOBG"]:
+    for imp_prod in trade_products:
         url = (
             f"https://api.eia.gov/v2/petroleum/move/imp/data/"
             f"?api_key={api_key}&frequency=monthly&data[0]=value"
@@ -8187,7 +8218,7 @@ def _fetch_eia_gasoline_area(api_key: str, duo: str, start_ym: str, end_ym: str)
 
     # 3) Exports endpoint (finished + blending components)
     exp_duo = duo + "-Z00" if "-" not in duo else duo
-    for exp_prod in ["EPM0F", "EPOBG"]:
+    for exp_prod in trade_products:
         url = (
             f"https://api.eia.gov/v2/petroleum/move/exp/data/"
             f"?api_key={api_key}&frequency=monthly&data[0]=value"
@@ -8215,12 +8246,69 @@ def _fetch_eia_gasoline_area(api_key: str, duo: str, start_ym: str, end_ym: str)
     return dict(result)
 
 
-def _build_gasoline_balance(raw: dict, periods: list, area_name: str) -> dict:
+def _build_distillate_balance(raw: dict, periods: list, area_name: str) -> dict:
+    """Distillate (EPD0) balance in the same row layout as the gasoline table:
+      Supply = Production + Imports + Adjustment
+      Disposition = Product Supplied + Exports + Stock Change
+    Supplementary rows: ULSD trade/stock change, renewable diesel & biodiesel plant output."""
+
+    def _gs(src: str, prod: str, proc: str, unit: str = "MBBL/D") -> dict:
+        return raw.get((src, prod, proc, unit), {})
+
+    def _make_row(key: str, label: str, series: dict, **kwargs) -> dict:
+        return {"key": key, "label": label, "values": {p: series.get(p) for p in periods}, "unit": "kb/d", **kwargs}
+
+    def _sum(*ds):
+        out = {}
+        for p in periods:
+            clean = [d.get(p) for d in ds if d.get(p) is not None]
+            out[p] = round(sum(clean), 1) if clean else None
+        return out
+
+    production = _gs("snd", "EPD0", "YPR")
+    imports = _gs("imp", "EPD0", "IM0")
+    adjustment = _gs("snd", "EPD0", "VUA")
+    exports = _gs("exp", "EPD0", "EEX")
+    demand = _gs("snd", "EPD0", "VPP")
+    scg = _gs("snd", "EPD0", "SCG")
+    total_supply = _sum(production, imports, adjustment)
+    total_demand = _sum(exports, demand, scg)
+    bal = {p: round(total_supply[p] - total_demand[p], 1) if total_supply.get(p) is not None and total_demand.get(p) is not None else None for p in periods}
+
+    balance_rows = [
+        _make_row("production", "Refinery & Blender Net Production", production),
+        _make_row("imports_finished", "Imports — Distillate", imports),
+        _make_row("adjustment", "Supply Adjustment", adjustment),
+        _make_row("total_supply", "TOTAL SUPPLY", total_supply, is_total=True),
+        _make_row("exports_finished", "Exports — Distillate", exports),
+        _make_row("demand", "Product Supplied (Demand)", demand),
+        _make_row("stock_change", "Stock Change (Total Distillate)", scg),
+        _make_row("total_demand", "TOTAL DISPOSITION", total_demand, is_total=True),
+        _make_row("balance", "BALANCE (residual)", bal, is_balance=True),
+    ]
+    supp_rows = [
+        _make_row("imports_ulsd", "ULSD (≤15 ppm) — Imports", _gs("imp", "EPDXL0", "IM0"), is_supplementary=True),
+        _make_row("exports_ulsd", "ULSD (≤15 ppm) — Exports", _gs("exp", "EPDXL0", "EEX"), is_supplementary=True),
+        _make_row("scg_ulsd", "ULSD (≤15 ppm) — Stock Change", _gs("snd", "EPDXL0", "SCG"), is_supplementary=True),
+        _make_row("renewable_diesel_prod", "Renewable Diesel — Plant Net Production", _gs("snd", "EPOORDO", "YNP"), is_supplementary=True),
+        _make_row("biodiesel_prod", "Biodiesel — Plant Net Production", _gs("snd", "EPOORDB", "YNP"), is_supplementary=True),
+    ]
+    stock_rows = []
+    for row_def in GB_DISTILLATE_STOCK_ROWS:
+        series = _gs("snd", row_def["product"], row_def["process"], row_def.get("unit", "MBBL"))
+        stock_rows.append({"key": row_def["key"], "label": row_def["label"], "values": {p: series.get(p) for p in periods}, "unit": "mmb"})
+    return {"balance_rows": balance_rows, "supplementary_rows": supp_rows, "stock_rows": stock_rows}
+
+
+def _build_gasoline_balance(raw: dict, periods: list, area_name: str, product: str = "gasoline") -> dict:
     """Build gasoline balance from raw EIA data.
     Uses finished motor gasoline (EPM0F) for the primary balance:
       Supply = Production + Imports + Adjustment
       Demand = Product Supplied + Exports + Stock Change
     Then adds blending component & ethanol supplementary rows."""
+
+    if product == "distillate":
+        return _build_distillate_balance(raw, periods, area_name)
 
     def _gs(src: str, prod: str, proc: str, unit: str = "MBBL/D") -> dict:
         return raw.get((src, prod, proc, unit), {})
@@ -8363,11 +8451,19 @@ def _add_projections(result: dict, periods: list, proj_months: list) -> dict:
 async def get_eia_gasoline_monthly(
     start_year: int = Query(2024, description="Start year"),
     end_year: int = Query(2026, description="End year"),
+    product: str = Query("gasoline", description="gasoline | distillate"),
+    refresh: bool = Query(False),
 ):
-    """Monthly gasoline balance table — US Total + all 5 PADDs with projections."""
+    """Monthly product balance table (gasoline or distillate) — US Total + all 5 PADDs with projections."""
     api_key = os.environ.get("EIA_API_KEY", "7SzAygceNwO58RBgwVgV7dkk163Bk73xzFF36lq6")
     if not api_key:
         raise HTTPException(status_code=500, detail="EIA_API_KEY not set")
+    cfg = _gb_product_cfg(product)
+    product = product.lower()
+    mkey = f"{product}:{start_year}:{end_year}"
+    cached = _gb_monthly_cache.get(mkey)
+    if cached and not refresh and _time.time() - cached["ts"] < GB_SEASONAL_TTL:
+        return cached["val"]
 
     # Fetch historical data going back further for better seasonal averages
     hist_start = max(2020, start_year - 3)
@@ -8386,7 +8482,8 @@ async def get_eia_gasoline_monthly(
     sections = []
     for area_code, duo, area_name in areas:
         try:
-            raw = _fetch_eia_gasoline_area(api_key, duo, start_ym, end_ym)
+            raw = await asyncio.to_thread(_fetch_eia_gasoline_area, api_key, duo, start_ym, end_ym,
+                                          cfg["snd_products"], cfg["trade_products"])
         except Exception as e:
             sections.append({"area": area_code, "area_name": area_name, "error": str(e)})
             continue
@@ -8397,7 +8494,7 @@ async def get_eia_gasoline_monthly(
             all_periods.update(series_data.keys())
         periods = sorted(all_periods)
 
-        result = _build_gasoline_balance(raw, periods, area_name)
+        result = _build_gasoline_balance(raw, periods, area_name, product)
 
         # Determine projection months: find last actual month, project forward
         actual_periods = [p for p in periods if p >= f"{start_year}-01"]
@@ -8430,11 +8527,16 @@ async def get_eia_gasoline_monthly(
         result["periods"] = display_periods
         sections.append(result)
 
-    return {
+    val = {
         "start_year": start_year,
         "end_year": end_year,
+        "product": product,
+        "product_label": cfg["label"],
         "sections": sections,
     }
+    if all(not sec.get("error") for sec in sections):
+        _gb_monthly_cache[mkey] = {"ts": _time.time(), "val": val}
+    return val
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -8442,6 +8544,7 @@ async def get_eia_gasoline_monthly(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _gb_seasonal_cache: dict = {}
+_gb_monthly_cache: dict = {}
 GB_SEASONAL_TTL = 6 * 3600
 GB_SEASONAL_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 GB_SEASONAL_METRICS = [
@@ -8458,12 +8561,29 @@ GB_SEASONAL_METRICS = [
     ("adjustment", "Supply adjustment (unaccounted-for, finished)", "kb/d"),
     ("ethanol_prod", "Fuel ethanol — plant net production", "kb/d"),
 ]
+GB_SEASONAL_METRICS_DIST = [
+    ("production", "Production — refinery & blender net (total distillate)", "kb/d"),
+    ("demand", "Demand — product supplied (total distillate)", "kb/d"),
+    ("imports", "Imports — total distillate", "kb/d"),
+    ("exports", "Exports — total distillate", "kb/d"),
+    ("net_exports", "Net exports (exports − imports)", "kb/d"),
+    ("stock_change", "Stock change — total distillate", "kb/d"),
+    ("stocks_total", "Stocks — total distillate", "mb"),
+    ("stocks_ulsd", "Stocks — ULSD (≤15 ppm)", "mb"),
+    ("stocks_hisulf", "Stocks — >15 ppm sulfur (heating oil / off-road)", "mb"),
+    ("days_supply", "Days of supply (total stocks ÷ demand)", "days"),
+    ("adjustment", "Supply adjustment (unaccounted-for)", "kb/d"),
+    ("renewable_prod", "Renewable diesel + biodiesel — plant net production", "kb/d"),
+]
 
 
-def _gb_seasonal_series(raw: dict) -> dict:
+def _gb_seasonal_series(raw: dict, product: str = "gasoline") -> dict:
     """Derive the balance metrics ({period: value}) from the raw PSM feed."""
     def g(src, prod, proc, unit="MBBL/D"):
         return raw.get((src, prod, proc, unit), {})
+
+    if product == "distillate":
+        return _gb_seasonal_series_dist(raw)
 
     prod = g("snd", "EPM0F", "YPR")
     dem = g("snd", "EPM0F", "VPP")
@@ -8500,6 +8620,44 @@ def _gb_seasonal_series(raw: dict) -> dict:
         "ethanol_prod": eth,
     }
     return out
+
+
+def _gb_seasonal_series_dist(raw: dict) -> dict:
+    def g(src, prod, proc, unit="MBBL/D"):
+        return raw.get((src, prod, proc, unit), {})
+
+    prod = g("snd", "EPD0", "YPR")
+    dem = g("snd", "EPD0", "VPP")
+    imports, exports = g("imp", "EPD0", "IM0"), g("exp", "EPD0", "EEX")
+    st = g("snd", "EPD0", "SAE", "MBBL")
+    st_u = g("snd", "EPDXL0", "SAE", "MBBL")
+    st_m, st_h = g("snd", "EPDM10", "SAE", "MBBL"), g("snd", "EPD00H", "SAE", "MBBL")
+    rd, bd = g("snd", "EPOORDO", "YNP"), g("snd", "EPOORDB", "YNP")
+    periods = sorted(set(prod) | set(dem))
+
+    def add(*ds):
+        out = {}
+        for p in periods:
+            vals = [d.get(p) for d in ds if p in d]
+            if vals:
+                out[p] = sum(vals)
+        return out
+
+    stocks_total = {p: v / 1000 for p, v in st.items()}
+    return {
+        "production": prod,
+        "demand": dem,
+        "imports": imports,
+        "exports": exports,
+        "net_exports": {p: exports[p] - imports[p] for p in periods if p in exports and p in imports},
+        "stock_change": g("snd", "EPD0", "SCG"),
+        "stocks_total": stocks_total,
+        "stocks_ulsd": {p: v / 1000 for p, v in st_u.items()},
+        "stocks_hisulf": {p: v / 1000 for p, v in add(st_m, st_h).items()},
+        "days_supply": {p: stocks_total[p] * 1000 / dem[p] for p in periods if p in stocks_total and dem.get(p)},
+        "adjustment": g("snd", "EPD0", "VUA"),
+        "renewable_prod": add(rd, bd),
+    }
 
 
 def _gb_seasonal_metric(key: str, label: str, units: str, series: dict, latest_period: str) -> dict:
@@ -8554,19 +8712,26 @@ def _gb_seasonal_metric(key: str, label: str, units: str, series: dict, latest_p
     }
 
 
-def _gb_seasonal_build(api_key: str, area: str, start_year: int) -> dict:
+def _gb_seasonal_build(api_key: str, area: str, start_year: int, product: str = "gasoline") -> dict:
+    cfg = GB_PRODUCT_CFG[product]
     duo = GB_AREA_MAP[area]["duo"]
     end_year = datetime.utcnow().year + 1
-    raw = _fetch_eia_gasoline_area(api_key, duo, f"{start_year}-01", f"{end_year}-12")
-    series = _gb_seasonal_series(raw)
+    raw = _fetch_eia_gasoline_area(api_key, duo, f"{start_year}-01", f"{end_year}-12",
+                                   cfg["snd_products"], cfg["trade_products"])
+    series = _gb_seasonal_series(raw, product)
     anchor = series["demand"] or series["production"]
     if not anchor:
-        raise RuntimeError("no monthly gasoline data returned")
+        raise RuntimeError(f"no monthly {product} data returned")
     latest_period = max(anchor)
-    metrics = [_gb_seasonal_metric(k, lbl, u, series.get(k, {}), latest_period) for k, lbl, u in GB_SEASONAL_METRICS]
+    metric_defs = GB_SEASONAL_METRICS_DIST if product == "distillate" else GB_SEASONAL_METRICS
+    metrics = [_gb_seasonal_metric(k, lbl, u, series.get(k, {}), latest_period) for k, lbl, u in metric_defs]
     return {
         "area": area,
         "area_name": GB_AREA_MAP[area]["name"],
+        "product": product,
+        "product_label": cfg["label"],
+        "icon": cfg["icon"],
+        "notes": cfg["notes"],
         "source": "EIA Petroleum Supply Monthly (API v2: /petroleum/sum/snd, /move/imp, /move/exp)",
         "latest_period": latest_period,
         "start_year": start_year,
@@ -8583,10 +8748,11 @@ async def _gb_seasonal_warm():
         return
 
     def _warm():
-        try:
-            _gb_seasonal_cache["US:2017"] = {"ts": _time.time(), "val": _gb_seasonal_build(api_key, "US", 2017)}
-        except Exception as e:
-            print(f"[GB-Seasonal] warm failed: {e}")
+        for product in GB_PRODUCT_CFG:
+            try:
+                _gb_seasonal_cache[f"{product}:US:2017"] = {"ts": _time.time(), "val": _gb_seasonal_build(api_key, "US", 2017, product)}
+            except Exception as e:
+                print(f"[GB-Seasonal] warm {product} failed: {e}")
 
     asyncio.get_event_loop().run_in_executor(None, _warm)
 
@@ -8595,20 +8761,23 @@ async def _gb_seasonal_warm():
 async def get_eia_gasoline_seasonal(
     area: str = Query("US", description="Region: US, PADD1-5"),
     start_year: int = Query(2017, ge=2000, le=2026),
+    product: str = Query("gasoline", description="gasoline | distillate"),
     refresh: bool = Query(False),
 ):
-    """Seasonal (month × year) gasoline balance from the latest EIA PSM: production, demand, imports/exports, stock change, stocks, days of supply."""
+    """Seasonal (month × year) product balance from the latest EIA PSM: production, demand, imports/exports, stock change, stocks, days of supply."""
     api_key = os.environ.get("EIA_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="EIA_API_KEY not set")
     if area not in GB_AREA_MAP:
         raise HTTPException(status_code=400, detail=f"Invalid area: {list(GB_AREA_MAP.keys())}")
-    key = f"{area}:{start_year}"
+    _gb_product_cfg(product)
+    product = product.lower()
+    key = f"{product}:{area}:{start_year}"
     c = _gb_seasonal_cache.get(key)
     if c and not refresh and _time.time() - c["ts"] < GB_SEASONAL_TTL:
         return c["val"]
     try:
-        val = await asyncio.to_thread(_gb_seasonal_build, api_key, area, start_year)
+        val = await asyncio.to_thread(_gb_seasonal_build, api_key, area, start_year, product)
     except Exception as e:
         if c:
             return {**c["val"], "stale": True, "error": str(e)[:200]}
@@ -8909,17 +9078,32 @@ jodi_cache: dict = {"data": {}, "ts": 0}
 JODI_CACHE_TTL = 7200  # 2 hours
 
 
-def _jodi_csv_path() -> str:
+# JODI secondary-product codes served by the JODI tab -> (display name, CSV cache file)
+JODI_PRODUCTS = {
+    "GASOLINE": {"name": "Gasoline", "file": "jodi_gasoline.csv"},
+    "GASDIES": {"name": "Gas/Diesel Oil", "file": "jodi_gasdies.csv"},
+}
+JODI_DEFAULT_PRODUCT = "GASOLINE"
+
+
+def _jodi_product(product: str) -> str:
+    code = (product or JODI_DEFAULT_PRODUCT).upper()
+    if code not in JODI_PRODUCTS:
+        raise HTTPException(status_code=400, detail=f"Unknown JODI product: {list(JODI_PRODUCTS.keys())}")
+    return code
+
+
+def _jodi_csv_path(product: str = JODI_DEFAULT_PRODUCT) -> str:
     data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-    return os.path.join(data_dir, "jodi_gasoline.csv")
+    return os.path.join(data_dir, JODI_PRODUCTS[product]["file"])
 
 
-def _load_jodi_country(country_code: str) -> dict:
+def _load_jodi_country(country_code: str, product: str = JODI_DEFAULT_PRODUCT) -> dict:
     """Load JODI data for a single country from pre-processed CSV.
     Returns: {flow: {"unit": str, "entries": [(period, val)]}}
     """
     import csv
-    csv_path = _jodi_csv_path()
+    csv_path = _jodi_csv_path(product)
     if not os.path.exists(csv_path):
         return {}
 
@@ -8943,7 +9127,7 @@ def _load_jodi_country(country_code: str) -> dict:
     return result
 
 
-def _load_jodi_region(region_code: str) -> dict:
+def _load_jodi_region(region_code: str, product: str = JODI_DEFAULT_PRODUCT) -> dict:
     """Aggregate JODI data for all countries in a region.
     Returns same format as _load_jodi_country: {flow: {"unit": str, "entries": [(period, val)]}}
     Values are summed across countries for each period.
@@ -8956,7 +9140,7 @@ def _load_jodi_region(region_code: str) -> dict:
     flow_period_counts: dict = defaultdict(lambda: defaultdict(int))
 
     for cc in region["countries"]:
-        cdata = _get_jodi_country(cc)
+        cdata = _get_jodi_country(cc, product)
         if not cdata:
             continue
         for flow, fd in cdata.items():
@@ -8981,9 +9165,9 @@ def _load_jodi_region(region_code: str) -> dict:
     return result
 
 
-def _jodi_countries_list() -> dict:
+def _jodi_countries_list(product: str = JODI_DEFAULT_PRODUCT) -> dict:
     """Scan the JODI CSV to find which countries have data."""
-    csv_path = _jodi_csv_path()
+    csv_path = _jodi_csv_path(product)
     if not os.path.exists(csv_path):
         return {}
     found = set()
@@ -9019,7 +9203,7 @@ def _download_jodi_refresh() -> dict:
             with open(tmp_zip, "wb") as fp:
                 shutil.copyfileobj(resp, fp, length=1 << 20)
 
-        raw: dict = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        raw_by_product: dict = {prod: defaultdict(lambda: defaultdict(lambda: defaultdict(list))) for prod in JODI_PRODUCTS}
         with zipfile.ZipFile(tmp_zip) as zf:
             csv_name = zf.namelist()[0]
             with zf.open(csv_name) as f:
@@ -9032,68 +9216,72 @@ def _download_jodi_refresh() -> dict:
                 ra_i, tp_i = idx.get("REF_AREA", 0), idx.get("TIME_PERIOD", 1)
                 fb_i, um_i, ov_i = idx.get("FLOW_BREAKDOWN", 3), idx.get("UNIT_MEASURE", 4), idx.get("OBS_VALUE", 5)
                 for row in reader:
-                    if len(row) <= ep_i or row[ep_i] != "GASOLINE":
+                    if len(row) <= ep_i or row[ep_i] not in raw_by_product:
                         continue
-                    raw[row[ra_i]][row[fb_i]][row[um_i]].append((row[tp_i], row[ov_i]))
+                    raw_by_product[row[ep_i]][row[ra_i]][row[fb_i]][row[um_i]].append((row[tp_i], row[ov_i]))
 
-        # Pick preferred unit, write to CSV cache, and build result
+        # Pick preferred unit, write one CSV cache per product; return the gasoline result
         data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
         os.makedirs(data_dir, exist_ok=True)
-        csv_path = os.path.join(data_dir, "jodi_gasoline.csv")
         result: dict = {}
-        with open(csv_path, "w") as fp:
-            fp.write("country,flow,unit,period,value\n")
-            for country in sorted(raw.keys()):
-                result[country] = {}
-                for flow, units_data in raw[country].items():
-                    prefs = PREFERRED.get(flow, DEFAULT_PREF)
-                    chosen = None
-                    for u in prefs:
-                        if u in units_data and any(v not in ("", "x", "-", "..") for _, v in units_data[u]):
-                            chosen = u
-                            break
-                    if not chosen:
-                        for u, entries in units_data.items():
-                            if u in JODI_INVALID_UNITS:
-                                continue
-                            if any(v not in ("", "x", "-", "..") for _, v in entries):
+        for prod_code, raw in raw_by_product.items():
+            csv_path = _jodi_csv_path(prod_code)
+            prod_result: dict = {}
+            if prod_code == JODI_DEFAULT_PRODUCT:
+                result = prod_result
+            with open(csv_path, "w") as fp:
+                fp.write("country,flow,unit,period,value\n")
+                for country in sorted(raw.keys()):
+                    prod_result[country] = {}
+                    for flow, units_data in raw[country].items():
+                        prefs = PREFERRED.get(flow, DEFAULT_PREF)
+                        chosen = None
+                        for u in prefs:
+                            if u in units_data and any(v not in ("", "x", "-", "..") for _, v in units_data[u]):
                                 chosen = u
                                 break
-                    if chosen:
-                        entries = sorted(units_data[chosen])
-                        parsed = []
-                        for period, vs in entries:
-                            val = None
-                            if vs not in ("", "x", "-", ".."):
-                                try:
-                                    val = float(vs)
-                                except ValueError:
-                                    pass
-                            fp.write(f"{country},{flow},{chosen},{period},{vs}\n")
-                            parsed.append((period, val))
-                        result[country][flow] = {"unit": chosen, "entries": parsed}
+                        if not chosen:
+                            for u, entries in units_data.items():
+                                if u in JODI_INVALID_UNITS:
+                                    continue
+                                if any(v not in ("", "x", "-", "..") for _, v in entries):
+                                    chosen = u
+                                    break
+                        if chosen:
+                            entries = sorted(units_data[chosen])
+                            parsed = []
+                            for period, vs in entries:
+                                val = None
+                                if vs not in ("", "x", "-", ".."):
+                                    try:
+                                        val = float(vs)
+                                    except ValueError:
+                                        pass
+                                fp.write(f"{country},{flow},{chosen},{period},{vs}\n")
+                                parsed.append((period, val))
+                            prod_result[country][flow] = {"unit": chosen, "entries": parsed}
         return result
     finally:
         if os.path.exists(tmp_zip):
             os.remove(tmp_zip)
 
 
-def _get_jodi_country(country_code: str) -> dict:
-    """Get JODI gasoline data for one country (lazy, per-country cache)."""
+def _get_jodi_country(country_code: str, product: str = JODI_DEFAULT_PRODUCT) -> dict:
+    """Get JODI product data for one country (lazy, per-country cache)."""
     import time
     now = time.time()
-    cache_key = country_code
+    cache_key = f"{product}:{country_code}"
     if cache_key in jodi_cache["data"]:
         entry = jodi_cache["data"][cache_key]
         if (now - entry["ts"]) < JODI_CACHE_TTL:
             return entry["flows"]
-    flows = _load_jodi_country(country_code)
-    if not flows and not os.path.exists(_jodi_csv_path()):
+    flows = _load_jodi_country(country_code, product)
+    if not flows and not os.path.exists(_jodi_csv_path(product)):
         _download_jodi_refresh()
-        flows = _load_jodi_country(country_code)
+        flows = _load_jodi_country(country_code, product)
     jodi_cache["data"][cache_key] = {"flows": flows, "ts": now}
     # Evict old entries if cache grows too large (keep last 10 countries)
-    if len(jodi_cache["data"]) > 10:
+    if len(jodi_cache["data"]) > 20:
         oldest = min(jodi_cache["data"], key=lambda k: jodi_cache["data"][k]["ts"])
         del jodi_cache["data"][oldest]
     return flows
@@ -9120,17 +9308,19 @@ async def get_jodi_gasoline(
     country: str = Query("US", description="ISO2 country code or region code (R_EUROPE, R_MIDDLE_EAST, etc.)"),
     start_year: int = Query(2015, description="Start year"),
     end_year: int = Query(2026, description="End year"),
+    product: str = Query("GASOLINE", description="JODI product: GASOLINE | GASDIES (gas/diesel oil)"),
 ):
-    """JODI gasoline S&D balance with multi-year overlay for any country or region."""
+    """JODI product S&D balance (gasoline or gas/diesel oil) with multi-year overlay for any country or region."""
     is_region = country in JODI_REGIONS
     if not is_region and country not in JODI_COUNTRY_NAMES:
         raise HTTPException(status_code=400, detail=f"Unknown country/region: {country}")
+    product = _jodi_product(product)
 
     try:
         if is_region:
-            country_data = _load_jodi_region(country)
+            country_data = await asyncio.to_thread(_load_jodi_region, country, product)
         else:
-            country_data = _get_jodi_country(country)
+            country_data = await asyncio.to_thread(_get_jodi_country, country, product)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"JODI data error: {e}")
 
@@ -9251,7 +9441,7 @@ async def get_jodi_gasoline(
                 pass
 
     # Build available list with regions at the top
-    avail = _jodi_countries_list() or {k: v for k, v in sorted(JODI_COUNTRY_NAMES.items(), key=lambda x: x[1])}
+    avail = _jodi_countries_list(product) or {k: v for k, v in sorted(JODI_COUNTRY_NAMES.items(), key=lambda x: x[1])}
     regions_avail = {code: info["name"] for code, info in JODI_REGIONS.items()}
     combined_available = {**regions_avail, **avail}
 
@@ -9260,6 +9450,9 @@ async def get_jodi_gasoline(
     result = {
         "country": country,
         "country_name": display_name,
+        "product": product,
+        "product_name": JODI_PRODUCTS[product]["name"],
+        "available_products": {k: v["name"] for k, v in JODI_PRODUCTS.items()},
         "start_year": start_year,
         "end_year": end_year,
         "snd_table": snd_table,

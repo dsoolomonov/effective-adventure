@@ -1030,6 +1030,8 @@
 
   // ========== GASOLINE BALANCES (Monthly S&D + Multi-Year Overlay) ==========
   let gbCurrentArea = "US";
+  let gbProduct = "gasoline";
+  const GB_PRODUCTS = { gasoline: "Gasoline", distillate: "Diesel / Distillate" };
   let gbStartYear = 2015;
   let gbEndYear = 2026;
   let gbData = null;
@@ -1225,11 +1227,12 @@
   const GBS_MONTH_LABEL = (p) => { const [y, m] = p.split("-"); return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+m - 1] + "-" + y.slice(2); };
   const gbsFmt = (v, u, sign) => v == null ? "—" : (sign && v > 0 ? "+" : "") + (u === "days" ? v.toFixed(1) : u === "mb" ? v.toFixed(1) : Math.round(v).toLocaleString());
 
-  async function renderGBSeasonal(box, area) {
-    box.innerHTML = '<div style="color:#94a3b8;padding:30px;text-align:center;">Loading EIA PSM seasonal gasoline balance…</div>';
+  async function renderGBSeasonal(box, area, product) {
+    product = product || "gasoline";
+    box.innerHTML = `<div style="color:#94a3b8;padding:30px;text-align:center;">Loading EIA PSM seasonal ${GB_PRODUCTS[product] || product} balance…${product !== "gasoline" || area !== "US" ? "<br><small>First load pulls ~10 years of PSM data from EIA — up to 60–90s, then cached 6h</small>" : ""}</div>`;
     let d;
     try {
-      const r = await fetch(`/api/eia_gasoline_seasonal?area=${area}`);
+      const r = await fetch(`/api/eia_gasoline_seasonal?area=${area}&product=${product}`);
       if (!r.ok) { const e = await r.json(); throw new Error(e.detail || r.statusText); }
       d = await r.json();
     } catch (e) { box.innerHTML = `<div style="color:${C.red};padding:20px;">Seasonal balance: ${e.message}</div>`; return; }
@@ -1240,7 +1243,7 @@
 
     // Header
     const hdr = el("div", { style: { display: "flex", alignItems: "baseline", gap: "12px", flexWrap: "wrap", marginBottom: "4px" } });
-    hdr.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber } }, `⛽ SEASONAL GASOLINE BALANCE — ${d.area_name}`));
+    hdr.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber } }, `${d.icon || "⛽"} SEASONAL ${(d.product_label || "Gasoline").toUpperCase()} BALANCE — ${d.area_name}`));
     hdr.appendChild(el("span", { style: { fontSize: "11px", fontWeight: "700", color: "#000", background: C.green, borderRadius: "999px", padding: "2px 10px" } }, `Latest PSM: ${GBS_MONTH_LABEL(lp)}`));
     box.appendChild(hdr);
     box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "12px" } },
@@ -1266,19 +1269,23 @@
     box.appendChild(kr);
 
     // Seasonal charts grid
-    const chartKeys = ["demand", "production", "imports", "exports", "net_exports", "stock_change", "stocks_total", "days_supply", "stocks_finished", "stocks_blending", "adjustment", "ethanol_prod"];
+    const chartOrder = ["demand", "production", "imports", "exports", "net_exports", "stock_change", "stocks_total", "days_supply"];
+    const chartKeys = [...chartOrder, ...d.metrics.map(m => m.key).filter(k => !chartOrder.includes(k))];
     const grid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(480px, 1fr))", gap: "12px" } });
     const charts = [];
     chartKeys.forEach((k, i) => {
       const m = M[k]; if (!m || !Object.keys(m.years).length) return;
-      const id = `gbs-${area}-${k}`;
+      // Skip series EIA no longer reports (e.g. distillate supply adjustment, blank since 2021)
+      const hasRecent = [curYear, String(+curYear - 1)].some(y => (m.years[y] || []).some(v => v != null));
+      if (!hasRecent) return;
+      const id = `gbs-${product}-${area}-${k}`;
       grid.appendChild(card(m.label + (m.units !== "kb/d" ? ` (${m.units})` : ""), el("div", { id, style: { width: "100%", height: "360px" } })));
       charts.push({ id, m });
     });
     box.appendChild(grid);
 
     // Current year vs 5y avg by month — balance components
-    const devId = `gbs-${area}-dev`;
+    const devId = `gbs-${product}-${area}-dev`;
     box.appendChild(card(`${curYear} vs 5y average by month — balance components (kb/d; + = looser: more supply / less demand)`, el("div", { id: devId, style: { width: "100%", height: "380px" } })));
 
     // Compact table
@@ -1303,7 +1310,7 @@
     tbl.appendChild(tb);
     box.appendChild(card(`Latest month & YTD summary — ${d.area_name}`, tbl));
     box.appendChild(el("div", { style: { fontSize: "10.5px", color: C.muted, margin: "2px 0 18px" } },
-      "YTD = average of Jan→latest month. Stock change and stocks cover finished gasoline + blending components; demand/production are finished gasoline (EIA definition). 5y rank: #1 = highest of the window for that calendar month."));
+      `YTD = average of Jan→latest month. ${d.notes || ""} 5y rank: #1 = highest of the window for that calendar month.`));
 
     loadPlotly(() => {
       const yrs = Object.keys(M.demand.years).sort();
@@ -1353,7 +1360,15 @@
 
     // Controls: PADD Dropdown + Year Range
     const controls = el("div", { style: { display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px", flexWrap: "wrap" } });
-    controls.appendChild(el("span", { style: { fontSize: "12px", color: C.muted, fontWeight: "600" } }, "REGION:"));
+    controls.appendChild(el("span", { style: { fontSize: "12px", color: C.muted, fontWeight: "600" } }, "PRODUCT:"));
+    const prodSel = el("select", { style: { background: C.card, color: C.amber, fontWeight: "700", border: `1px solid ${C.amber}`, borderRadius: "6px", padding: "8px 12px", fontSize: "12px", cursor: "pointer", minWidth: "170px" } });
+    Object.entries(GB_PRODUCTS).forEach(([k, v]) => {
+      const opt = el("option", { value: k }, (k === "gasoline" ? "⛽ " : "🛢️ ") + v);
+      if (k === gbProduct) opt.selected = true;
+      prodSel.appendChild(opt);
+    });
+    controls.appendChild(prodSel);
+    controls.appendChild(el("span", { style: { fontSize: "12px", color: C.muted, fontWeight: "600", marginLeft: "12px" } }, "REGION:"));
     const select = el("select", { style: { background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "8px 12px", fontSize: "12px", cursor: "pointer", minWidth: "200px" } });
     const areas = { US: "U.S. Total", PADD1: "East Coast (PADD 1)", PADD2: "Midwest (PADD 2)", PADD3: "Gulf Coast (PADD 3)", PADD4: "Rocky Mountain (PADD 4)", PADD5: "West Coast (PADD 5)" };
     Object.entries(areas).forEach(([k, v]) => {
@@ -1382,24 +1397,34 @@
     }
     controls.appendChild(endYrSel);
 
+    const loadAll = async () => {
+      const prodLabel = GB_PRODUCTS[gbProduct] || gbProduct;
+      renderGBSeasonal(seasonalBox, gbCurrentArea, gbProduct);
+      if (gbProduct === "gasoline") {
+        contentBox.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading gasoline balances for ' + areas[gbCurrentArea] + ' (' + gbStartYear + '–' + gbEndYear + ')...</div>';
+        try {
+          gbData = await fetchGB(gbCurrentArea, gbStartYear, gbEndYear);
+          renderGBContent(contentBox, gbData);
+        } catch (e) { contentBox.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; }
+      } else {
+        // The product-mix overlays (conventional/RBOB/blendstocks) are gasoline-only; distillate shows seasonal + PSM table.
+        contentBox.innerHTML = "";
+      }
+      monthlyBox.innerHTML = `<div style="color:#94a3b8;padding:20px;text-align:center;font-size:12px;">Loading monthly ${prodLabel} PSM balance table (US + 5 PADDs)…${gbProduct !== "gasoline" ? "<br><small>First load can take 2–3 min (6 regions × EIA API), then cached 6h</small>" : ""}</div>`;
+      try {
+        const md = await fetchGBMonthly(gbStartYear, gbEndYear, gbProduct);
+        renderGBMonthlyTable(monthlyBox, md);
+      } catch (e) { monthlyBox.innerHTML = `<div style="color:${C.red};padding:20px;font-size:12px;">Monthly table: ${e.message}</div>`; }
+    };
     const loadBtn = el("button", { style: { background: C.amber, color: "#000", border: "none", borderRadius: "6px", padding: "8px 20px", fontWeight: "700", fontSize: "12px", cursor: "pointer" }, onClick: async () => {
+      gbProduct = prodSel.value;
       gbCurrentArea = select.value;
       gbStartYear = parseInt(startYrSel.value);
       gbEndYear = parseInt(endYrSel.value);
-      renderGBSeasonal(seasonalBox, gbCurrentArea);
-      contentBox.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading gasoline balances for ' + areas[gbCurrentArea] + ' (' + gbStartYear + '–' + gbEndYear + ')...</div>';
-      try {
-        gbData = await fetchGB(gbCurrentArea, gbStartYear, gbEndYear);
-        renderGBContent(contentBox, gbData);
-      } catch (e) { contentBox.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; }
-      // Also reload monthly table
-      monthlyBox.innerHTML = '<div style="color:#94a3b8;padding:20px;text-align:center;font-size:12px;">Loading monthly balance table...</div>';
-      try {
-        const md = await fetchGBMonthly(gbStartYear, gbEndYear);
-        renderGBMonthlyTable(monthlyBox, md);
-      } catch (e) { monthlyBox.innerHTML = `<div style="color:${C.red};padding:20px;font-size:12px;">Monthly table: ${e.message}</div>`; }
+      await loadAll();
     } }, "Load Data");
     controls.appendChild(loadBtn);
+    prodSel.onchange = () => { gbProduct = prodSel.value; loadAll(); };
     box.appendChild(controls);
 
     const seasonalBox = el("div");
@@ -1411,24 +1436,12 @@
     const monthlyBox = el("div");
     box.appendChild(monthlyBox);
 
-    // Auto-load US data + monthly table
-    renderGBSeasonal(seasonalBox, gbCurrentArea);
-    contentBox.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading gasoline balances for U.S. Total (' + gbStartYear + '–' + gbEndYear + ')...</div>';
-    try {
-      gbData = await fetchGB(gbCurrentArea, gbStartYear, gbEndYear);
-      renderGBContent(contentBox, gbData);
-    } catch (e) { contentBox.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; }
-    // Also load monthly balance table
-    monthlyBox.innerHTML = '<div style="color:#94a3b8;padding:20px;text-align:center;font-size:12px;">Loading monthly balance table...</div>';
-    try {
-      const monthlyData = await fetchGBMonthly(gbStartYear, gbEndYear);
-      renderGBMonthlyTable(monthlyBox, monthlyData);
-    } catch (e) { monthlyBox.innerHTML = `<div style="color:${C.red};padding:20px;font-size:12px;">Monthly table: ${e.message}</div>`; }
+    await loadAll();
   }
 
   // ========== GASOLINE MONTHLY BALANCE TABLE (Spreadsheet-style) ==========
-  async function fetchGBMonthly(sy, ey) {
-    const r = await fetch(`/api/eia_gasoline_monthly?start_year=${sy}&end_year=${ey}`);
+  async function fetchGBMonthly(sy, ey, product) {
+    const r = await fetch(`/api/eia_gasoline_monthly?start_year=${sy}&end_year=${ey}&product=${product || "gasoline"}`);
     if (!r.ok) { const e = await r.json(); throw new Error(e.detail || r.statusText); }
     return await r.json();
   }
@@ -1489,6 +1502,8 @@
     }
 
     const monthAbbr = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const PL = data.product_label || "Gasoline";
+    box.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber, margin: "18px 0 10px" } }, `EIA PSM MONTHLY ${PL.toUpperCase()} BALANCE — US + PADDs (kb/d, stocks mmb)`));
     let gbmChIdx = 0;
     const gbmNextId = () => `gbm-c-${gbmChIdx++}`;
     const chartsToPlot = [];
@@ -1510,7 +1525,7 @@
       // Balance table (projected values shown in italic/different color)
       const allRows = [...(sec.balance_rows || []), ...(sec.supplementary_rows || [])];
       const balTbl = _buildBalanceTable(periods, pLabels, allRows, false, projPeriods);
-      box.appendChild(card(`${sec.area_name} — Gasoline Balance (kb/d)`, balTbl));
+      box.appendChild(card(`${sec.area_name} — ${PL} Balance (kb/d)`, balTbl));
 
       // Stock levels table
       const sRows = sec.stock_rows || [];
@@ -1540,7 +1555,7 @@
         });
         stTbl.appendChild(stBody);
         stWrap.appendChild(stTbl);
-        box.appendChild(card(`${sec.area_name} — Gasoline Stocks (mmb)`, stWrap));
+        box.appendChild(card(`${sec.area_name} — ${PL} Stocks (mmb)`, stWrap));
       }
 
       // Stock Change bar chart for EVERY area
@@ -1596,7 +1611,7 @@
         });
         if (sRows.length > 0) {
           const stockTraces = [];
-          const stockColors = [C.cyan, C.green, C.amber];
+          const stockColors = [C.cyan, C.green, C.amber, C.purple];
           const actPeriods = periods.filter(p => !projPeriods.has(p));
           const projPeriodsArr = periods.filter(p => projPeriods.has(p));
           sRows.forEach((row, i) => {
@@ -1609,7 +1624,7 @@
           if (stockTraces.length > 0) {
             const cid = gbmNextId();
             chartsToPlot.push({ id: cid, traces: stockTraces, yTitle: "million barrels" });
-            chartsGrid.appendChild(card("US Gasoline Stocks (mmb)", el("div", { id: cid, style: { width: "100%", height: "350px" } })));
+            chartsGrid.appendChild(card(`US ${PL} Stocks (mmb)`, el("div", { id: cid, style: { width: "100%", height: "350px" } })));
           }
         }
         box.appendChild(chartsGrid);
@@ -1641,13 +1656,15 @@
 
   // ========== JODI GASOLINE (Global S&D + Multi-Year Overlay) ==========
   let jodiCountry = "US";
+  let jodiProduct = "GASOLINE";
+  const JODI_PRODUCT_LABELS = { GASOLINE: "⛽ Gasoline", GASDIES: "🛢️ Gas/Diesel Oil" };
   let jodiStartYear = 2015;
   let jodiEndYear = 2026;
   let jodiData = null;
   let jodiCountries = null;
 
   async function fetchJODI(country, sy, ey) {
-    const r = await fetch(`/api/jodi_gasoline?country=${country}&start_year=${sy}&end_year=${ey}`);
+    const r = await fetch(`/api/jodi_gasoline?country=${country}&start_year=${sy}&end_year=${ey}&product=${jodiProduct}`);
     if (!r.ok) { const e = await r.json(); throw new Error(e.detail || r.statusText); }
     return await r.json();
   }
@@ -1659,11 +1676,11 @@
     const chartSeries = data.chart_series || {};
 
     // Header
-    box.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber, marginBottom: "4px" } }, `JODI GASOLINE BALANCE — ${data.country_name || data.country} (${data.start_year}–${data.end_year})`));
+    box.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber, marginBottom: "4px" } }, `JODI ${(data.product_name || "Gasoline").toUpperCase()} BALANCE — ${data.country_name || data.country} (${data.start_year}–${data.end_year})`));
     box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "14px" } }, "Source: JODI World Database (Joint Organizations Data Initiative) | Monthly | 118 Countries"));
 
     if (sndTable.length === 0) {
-      box.appendChild(el("div", { style: { color: C.muted, padding: "30px", textAlign: "center", fontSize: "13px" } }, "No gasoline data available for this country. Try another country."));
+      box.appendChild(el("div", { style: { color: C.muted, padding: "30px", textAlign: "center", fontSize: "13px" } }, `No ${(data.product_name || "gasoline").toLowerCase()} data available for this country. Try another country.`));
       return;
     }
 
@@ -1704,7 +1721,7 @@
       tb.appendChild(tr);
     });
     tbl.appendChild(tb);
-    box.appendChild(card("Gasoline Supply & Demand Balance", tbl));
+    box.appendChild(card(`${data.product_name || "Gasoline"} Supply & Demand Balance`, tbl));
 
     // ---- REGIONAL COUNTRY BREAKDOWN TABLE (when viewing a region) ----
     if (data.is_region && data.region_countries && data.region_countries.length > 0) {
@@ -1829,9 +1846,17 @@
   async function renderJODI(box) {
     box.innerHTML = "";
 
-    // Controls: Country Dropdown + Year Range
+    // Controls: Product + Country Dropdown + Year Range
     const controls = el("div", { style: { display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px", flexWrap: "wrap" } });
-    controls.appendChild(el("span", { style: { fontSize: "12px", color: C.muted, fontWeight: "600" } }, "COUNTRY:"));
+    controls.appendChild(el("span", { style: { fontSize: "12px", color: C.muted, fontWeight: "600" } }, "PRODUCT:"));
+    const jProdSel = el("select", { style: { background: C.card, color: C.amber, fontWeight: "700", border: `1px solid ${C.amber}`, borderRadius: "6px", padding: "8px 12px", fontSize: "12px", cursor: "pointer", minWidth: "170px" } });
+    Object.entries(JODI_PRODUCT_LABELS).forEach(([k, v]) => {
+      const opt = el("option", { value: k }, v);
+      if (k === jodiProduct) opt.selected = true;
+      jProdSel.appendChild(opt);
+    });
+    controls.appendChild(jProdSel);
+    controls.appendChild(el("span", { style: { fontSize: "12px", color: C.muted, fontWeight: "600", marginLeft: "12px" } }, "COUNTRY:"));
     const select = el("select", { style: { background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "8px 12px", fontSize: "12px", cursor: "pointer", minWidth: "220px" } });
 
     // Add a loading message while we fetch country list
@@ -1859,11 +1884,12 @@
     controls.appendChild(endYrSel);
 
     const loadBtn = el("button", { style: { background: C.amber, color: "#000", border: "none", borderRadius: "6px", padding: "8px 20px", fontWeight: "700", fontSize: "12px", cursor: "pointer" }, onClick: async () => {
+      jodiProduct = jProdSel.value;
       jodiCountry = select.value;
       jodiStartYear = parseInt(startYrSel.value);
       jodiEndYear = parseInt(endYrSel.value);
       const cName = select.options[select.selectedIndex].text;
-      contentBox.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading JODI gasoline data for ' + cName + ' (' + jodiStartYear + '–' + jodiEndYear + ')...<br><small>First load downloads ~55 MB from JODI — may take 15-30 seconds</small></div>';
+      contentBox.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading JODI ' + (JODI_PRODUCT_LABELS[jodiProduct] || jodiProduct).replace(/^\S+\s/, "") + ' data for ' + cName + ' (' + jodiStartYear + '–' + jodiEndYear + ')...<br><small>First load downloads ~55 MB from JODI — may take 15-30 seconds</small></div>';
       try {
         jodiData = await fetchJODI(jodiCountry, jodiStartYear, jodiEndYear);
         if (jodiData.available_countries && !jodiCountries) {
@@ -1874,6 +1900,7 @@
       } catch (e) { contentBox.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`; }
     } }, "Load Data");
     controls.appendChild(loadBtn);
+    jProdSel.onchange = () => loadBtn.click();
 
     // Refresh button (re-downloads from JODI website)
     const refreshBtn = el("button", { style: { background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "8px 14px", fontSize: "11px", cursor: "pointer", marginLeft: "8px" }, onClick: async () => {
