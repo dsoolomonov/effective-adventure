@@ -5748,6 +5748,184 @@
   }
 
 
+  // ─── PLATTS ASSESSMENT · BFOETM TAB ───
+  async function renderPlattsBFOE(box) {
+    box.innerHTML = "";
+    const GC = { midland_fob: "#94a3b8", midland_cif: "#64748b", forties: "#10b981", brent: "#f5b90f", oseberg: "#3b82f6", ekofisk: "#8b5cf6", troll: "#ef4444" };
+    const st = { date: null, exqp: true, hidden: new Set(), data: null };
+    const fmtD = d => { if (!d) return "—"; const x = new Date(d + "T00:00:00Z"); return x.toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" }); };
+    const f4 = v => v == null ? "—" : v.toFixed(4);
+    const f2 = v => v == null ? "—" : v.toFixed(2);
+    const fc = v => v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(1);
+    const th = (t, l) => el("th", { style: { textAlign: l ? "left" : "right", padding: "5px 8px", color: C.muted, fontSize: "10.5px", fontWeight: "600", borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" } }, t);
+    const td = (t, o = {}) => el("td", { style: { textAlign: o.l ? "left" : "right", padding: "5px 8px", color: o.c || C.text, fontWeight: o.b ? "700" : "400", fontVariantNumeric: "tabular-nums", borderBottom: `1px solid ${C.border}33`, whiteSpace: "nowrap", background: o.bg || "transparent" } }, t);
+    const table = (heads, rows) => { const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "12px" } }); const hr = el("tr", {}); heads.forEach((h, i) => hr.appendChild(th(h, i === 0))); t.appendChild(hr); rows.forEach(r => t.appendChild(r)); return t; };
+    const btn = (label, on, active) => { const b = el("button", { onClick: on, style: { padding: "6px 12px", borderRadius: "6px", border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accent + "22" : C.card, color: active ? C.accent : C.text, fontSize: "12px", fontWeight: "600", cursor: "pointer" } }, label); return b; };
+
+    const hdr = el("div", { style: { marginBottom: "14px" } });
+    hdr.appendChild(el("h2", { style: { color: C.amber, margin: "0 0 6px 0", fontSize: "20px" } }, "⚖️ Platts Assessment — BFOETM grade curves & Dated basket"));
+    hdr.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: 0 } }, "Platts day-by-day FOB grade curves (AWT symbols, $/bbl vs North Sea Dated strip), Platts QP, FAF and Forties de-escalator · window read from the data, not hardcoded"));
+    box.appendChild(hdr);
+    const bar = el("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginBottom: "12px" } });
+    box.appendChild(bar);
+    const body = el("div", {});
+    box.appendChild(body);
+    let plotReady = false;
+    loadPlotly(() => { plotReady = true; });
+
+    function drawBar() {
+      bar.innerHTML = "";
+      const d = st.data;
+      bar.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", fontWeight: "700", letterSpacing: "1px" } }, "AS OF"));
+      const pb = btn("◀", () => d && d.prev_date && load(d.prev_date)); pb.disabled = !(d && d.prev_date); pb.title = "Previous assessment"; bar.appendChild(pb);
+      const inp = el("input", { type: "date", style: { background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "5px 8px", fontSize: "12px", colorScheme: "dark" } });
+      inp.value = d ? d.as_of : (st.date || "");
+      inp.addEventListener("change", () => inp.value && load(inp.value));
+      bar.appendChild(inp);
+      const nb = btn("▶", () => d && d.next_date && load(d.next_date)); nb.disabled = !(d && d.next_date); nb.title = "Next assessment"; bar.appendChild(nb);
+      bar.appendChild(btn("Latest", () => load(null), false));
+      bar.appendChild(el("span", { style: { width: "16px" } }));
+      bar.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", fontWeight: "700", letterSpacing: "1px" } }, "PLATTS QP"));
+      bar.appendChild(btn("Ex-QP (stripped)", () => { st.exqp = true; drawBar(); drawBody(); }, st.exqp));
+      bar.appendChild(btn("Raw (incl. QP)", () => { st.exqp = false; drawBar(); drawBody(); }, !st.exqp));
+      if (d && d.requested && d.requested !== d.as_of) bar.appendChild(el("span", { style: { color: C.amber, fontSize: "11px" } }, `No assessment on ${d.requested} — showing ${d.as_of}`));
+    }
+
+    function drawBody() {
+      const d = st.data; body.innerHTML = "";
+      const fld = st.exqp ? "ex_qp" : "raw";
+      const bk = d.basket;
+      const w = d.window;
+      const top = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: "10px", marginBottom: "12px" } });
+      const kpi = (label, val, sub, col) => { const k = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: "8px", padding: "10px 12px" } }); k.appendChild(el("div", { style: { color: C.muted, fontSize: "10.5px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase" } }, label)); k.appendChild(el("div", { style: { color: col || C.text, fontSize: "22px", fontWeight: "800", margin: "4px 0", fontVariantNumeric: "tabular-nums" } }, val)); if (sub) k.appendChild(el("div", { style: { color: C.muted, fontSize: "11px" } }, sub)); return k; };
+      top.appendChild(kpi("Dated basket ex-QP · reconstruction", bk.ex_qp == null ? "withheld" : bk.ex_qp.toFixed(2), bk.ex_qp == null ? (w ? `${bk.missing.length} window day(s) missing a grade` : "window unknown") : "$/bbl · avg of daily lows · not Platts' published Dated", bk.ex_qp == null ? C.red : C.gold));
+      top.appendChild(kpi("Published window", w ? `${fmtD(w.start)} → ${fmtD(w.end)}` : "unknown", w ? `Day ${w.min_day}–${w.max_day} · loading = T+9+N · ${w.max_day - w.min_day + 1} days` : "no FOB grade returned data"));
+      const setters = {}; bk.days.forEach(b => { if (b.setter) setters[b.setter] = (setters[b.setter] || 0) + 1; });
+      const nameOf = k => (d.grades.find(g => g.key === k) || {}).name || k;
+      const sTxt = Object.entries(setters).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${nameOf(k)} ${n}d`).join(" · ");
+      top.appendChild(kpi("Daily-low setter", sTxt ? nameOf(Object.entries(setters).sort((a, b) => b[1] - a[1])[0][0]) : "—", sTxt || "", C.green));
+      const brent = d.grades.find(g => g.key === "brent");
+      if (brent && bk.ex_qp != null && brent.avg_raw_c != null) top.appendChild(kpi("Basket vs Brent curve", fc(bk.ex_qp * 100 - brent.avg_raw_c) + "¢", "¢/bbl · basket ex-QP − Brent window average"));
+      body.appendChild(top);
+
+      const chips = el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "10px" } });
+      d.grades.forEach(g => {
+        const off = st.hidden.has(g.key);
+        const ch = el("button", { onClick: () => { off ? st.hidden.delete(g.key) : st.hidden.add(g.key); drawBody(); }, title: g.in_basket ? "Click to show/hide on chart" : "Table only — not in Dated basket", style: { padding: "4px 10px", borderRadius: "999px", border: `1px solid ${GC[g.key]}`, background: off ? "transparent" : GC[g.key] + "33", color: off ? C.muted : C.text, fontSize: "11.5px", fontWeight: "600", cursor: "pointer", opacity: g.in_basket ? 1 : 0.7 } }, `● ${g.name}${g.has_qp ? " ·QP" : ""}${g.in_basket ? "" : " (table only)"} · ${g.points.length}d`);
+        chips.appendChild(ch);
+      });
+      body.appendChild(chips);
+
+      const grid = el("div", { style: { display: "grid", gridTemplateColumns: "minmax(0,2.2fr) minmax(320px,1fr)", gap: "12px", alignItems: "start" } });
+      const left = el("div", {}), right = el("div", {});
+      grid.appendChild(left); grid.appendChild(right); body.appendChild(grid);
+
+      const chart = el("div", { style: { height: "420px" } });
+      left.appendChild(card(`Grade curves ${st.exqp ? "ex-QP" : "raw"} · $/bbl vs North Sea Dated strip · as of ${fmtD(d.as_of)}`, chart));
+      const traces = [];
+      d.grades.filter(g => g.in_basket && !st.hidden.has(g.key)).forEach(g => {
+        traces.push({ x: g.points.map(p => p.date), y: g.points.map(p => p[fld]), name: g.name, mode: "lines+markers", connectgaps: false, line: { color: GC[g.key], width: 2 }, marker: { size: 4 }, hovertemplate: `${g.name}<br>%{x|%d %b}: %{y:.4f}<extra></extra>` });
+      });
+      if (st.exqp && bk.days.some(b => b.low != null)) traces.push({ x: bk.days.map(b => b.date), y: bk.days.map(b => b.low), name: "Daily low (basket)", mode: "lines", line: { color: "#ffffff", width: 3, dash: "dot" }, hovertemplate: "Daily low %{x|%d %b}: %{y:.4f}<extra></extra>" });
+      const shapes = bk.ex_qp != null && st.exqp ? [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: bk.ex_qp, y1: bk.ex_qp, line: { color: C.gold, width: 1, dash: "dash" } }] : [];
+      const draw = () => Plotly.newPlot(chart, traces, { ...plotLayout, shapes, legend: { orientation: "h", y: -0.15, font: { color: C.muted, size: 11 } }, xaxis: { ...plotLayout.xaxis, tickformat: "%d-%b" }, yaxis: { ...plotLayout.yaxis, title: "$/bbl" }, margin: { l: 55, r: 15, t: 15, b: 60 } }, { responsive: true, displayModeBar: false });
+      if (plotReady) draw(); else loadPlotly(() => { plotReady = true; draw(); });
+
+      // Daily table
+      const fob = d.grades.filter(g => g.in_basket);
+      const rows = bk.days.map(b => {
+        const tr = el("tr", {});
+        tr.appendChild(td(fmtD(b.date), { l: true }));
+        fob.forEach(g => {
+          const p = g.points.find(x => x.date === b.date);
+          const v = p ? p[fld] : null;
+          const isLow = st.exqp && b.setter === g.key;
+          tr.appendChild(td(f4(v), { c: v == null ? C.red : (isLow ? C.bg : C.text), b: isLow, bg: isLow ? GC[g.key] : null }));
+        });
+        tr.appendChild(td(f4(b.low), { b: true, c: C.gold }));
+        return tr;
+      });
+      const dt = el("div", { style: { overflowX: "auto", maxHeight: "460px", overflowY: "auto" } });
+      dt.appendChild(table(["Loading date", ...fob.map(g => g.name.replace(" equiv. North Sea", "")), "Daily low ex-QP"], rows));
+      left.appendChild(el("div", { style: { height: "12px" } }));
+      left.appendChild(card(`Per-day curve · $/bbl · ${st.exqp ? "ex-QP, setter highlighted" : "raw values (lows computed ex-QP)"}`, dt));
+
+      // Side panel
+      const avgRows = d.grades.map(g => {
+        const v = st.exqp ? g.avg_ex_c : g.avg_raw_c;
+        const tr = el("tr", {});
+        tr.appendChild(td(el("span", {}, [el("span", { style: { color: GC[g.key] } }, "● "), document.createTextNode(g.name + (g.in_basket ? "" : " †"))]), { l: true }));
+        tr.appendChild(td(fc(v), { c: v == null ? C.muted : C.text, b: true }));
+        tr.appendChild(td(String(g.points.length), { c: C.muted }));
+        return tr;
+      });
+      const side = el("div", {});
+      side.appendChild(table(["Grade", `Avg ${st.exqp ? "ex-QP" : "raw"} ¢/bbl`, "Days"], avgRows));
+      side.appendChild(el("div", { style: { color: C.muted, fontSize: "10.5px", marginTop: "6px" } }, "Plain average of each grade's per-day curve ×100. Blank if any point missing. † Midland CIF Rotterdam: delivery = T+11+N (B/L −1 day), listed for reference, never in the basket."));
+      right.appendChild(card("Grade averages", side));
+
+      const qpRows = d.qp.map(q => { const tr = el("tr", {}); tr.appendChild(td(nameOf(q.grade), { l: true })); tr.appendChild(td(f4(q.m0))); tr.appendChild(td(f4(q.m1))); tr.appendChild(td(q.m0_date ? fmtD(q.m0_date) : "—", { c: C.muted })); return tr; });
+      const qpBox = el("div", {});
+      qpBox.appendChild(table(["Grade", "M0 $/bbl", "M1 $/bbl", "Published"], qpRows));
+      const used = [];
+      d.grades.filter(g => g.has_qp).forEach(g => { const seen = {}; g.points.forEach(p => { const m = p.date.slice(0, 7); if (!(m in seen)) { seen[m] = 1; used.push(`${g.name} ${m}: ${p.qp == null ? "missing" : p.qp.toFixed(4) + " (" + p.qp_symbol + ")"}`); } }); });
+      qpBox.appendChild(el("div", { style: { color: C.muted, fontSize: "10.5px", marginTop: "6px", lineHeight: "1.5" } }, "Applied by loading month: " + used.join(" · ") + ". M0 in month m → loading m, M1 in m → m+1; latest ≤ as-of, M0 wins ties, no carry. Missing QP → point missing."));
+      right.appendChild(el("div", { style: { height: "12px" } }));
+      right.appendChild(card("Platts QP · Oseberg / Ekofisk / Troll", qpBox));
+
+      const cif = d.grades.find(g => g.key === "midland_cif");
+      if (cif) {
+        const cRows = cif.points.map(p => { const tr = el("tr", {}); tr.appendChild(td(fmtD(p.date), { l: true })); tr.appendChild(td(fmtD(p.bl_date), { c: C.muted })); tr.appendChild(td(f4(p.raw))); return tr; });
+        const cb = el("div", { style: { maxHeight: "240px", overflowY: "auto" } });
+        cb.appendChild(table(["Rotterdam delivery", "Deemed B/L", "$/bbl"], cRows));
+        right.appendChild(el("div", { style: { height: "12px" } }));
+        right.appendChild(card(`Midland CIF Rotterdam · table only · avg ${fc(cif.avg_raw_c)}¢`, cb));
+      }
+
+      const fRows = d.faf.map(f => { const tr = el("tr", {}); tr.appendChild(td(f.route, { l: true })); tr.appendChild(td(f.symbol, { c: C.blue })); tr.appendChild(td(f4(f.value), { b: true })); tr.appendChild(td(f.date ? fmtD(f.date) : "—", { c: C.muted })); return tr; });
+      const fb = el("div", {});
+      fb.appendChild(table(["Route", "Symbol", "$/bbl", "Date"], fRows));
+      fb.appendChild(el("div", { style: { color: C.muted, fontSize: "10.5px", marginTop: "6px" } }, "Platts CIF→FOB normalisation values, not real freight costs. Midland FOB curve already includes the FAF netback."));
+      right.appendChild(el("div", { style: { height: "12px" } }));
+      right.appendChild(card(`FAF · ${d.faf_date ? fmtD(d.faf_date) : "—"}`, fb));
+
+      // Forties quality strip
+      const fq = d.forties_quality;
+      const strip = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: "8px" } });
+      const cell = (label, val, src, col) => { const c = el("div", { style: { border: `1px solid ${C.border}`, borderRadius: "6px", padding: "8px 10px" } }); c.appendChild(el("div", { style: { color: C.muted, fontSize: "10px", fontWeight: "700", letterSpacing: "0.6px", textTransform: "uppercase" } }, label)); c.appendChild(el("div", { style: { color: col || C.text, fontSize: "16px", fontWeight: "700", margin: "3px 0", fontVariantNumeric: "tabular-nums" } }, val)); c.appendChild(el("div", { style: { color: C.muted, fontSize: "10px" } }, src)); return c; };
+      strip.appendChild(cell("Sulfur de-escalator", fq.deesc == null ? "n/a" : "$" + f4(fq.deesc), fq.deesc == null ? `Platts ${fq.deesc_symbol} · not returned on our entitlement` : `Platts ${fq.deesc_symbol} · ${fmtD(fq.deesc_date)}`, fq.deesc == null ? C.muted : C.text));
+      strip.appendChild(cell("Buzzard % (weekly)", "no feed", "INEOS FPS · not Platts", C.muted));
+      strip.appendChild(cell("Pctile", "no feed", "share of weeks ≤ latest Buzzard %", C.muted));
+      strip.appendChild(cell("Est. sulfur", "no feed", "INEOS Buzzard→quality projection", C.muted));
+      strip.appendChild(cell("Sulfur trigger", fq.sulfur_trigger.toFixed(2) + "%", "fixed model constant, not a feed"));
+      strip.appendChild(cell("Maint", "no feed", "first month < 85% of peak FPS throughput", C.muted));
+      body.appendChild(el("div", { style: { height: "12px" } }));
+      body.appendChild(card("Forties quality strip", strip));
+
+      body.appendChild(el("div", { style: { height: "12px" } }));
+      body.appendChild(card("Method", el("div", { style: { color: C.muted, fontSize: "11.5px", lineHeight: "1.6" } }, [
+        el("div", {}, "• Curves: AWT<grade><day>00, grade A Midland FOB · B Midland CIF · C Forties · D Brent · E Oseberg · F Ekofisk · G Troll; day A–Z = Day 1–26. FOB loading = T+9+N."),
+        el("div", {}, "• Window = lowest → highest Day N with a close across the six FOB grades (Midland CIF excluded)."),
+        el("div", {}, "• Ex-QP = per-day value − Platts QP for that loading month (Oseberg/Ekofisk/Troll only). Brent/Forties have no QP; Midland FOB is not adjusted."),
+        el("div", {}, "• Dated basket ex-QP = average over window days of the lowest ex-QP value among Brent, Forties, Oseberg, Ekofisk, Troll, Midland FOB. Withheld if any day misses a grade. " + bk.label + "."),
+      ])));
+    }
+
+    async function load(date) {
+      st.date = date;
+      body.innerHTML = `<div style="color:${C.muted};padding:40px;text-align:center;">Loading Platts BFOETM…</div>`;
+      try {
+        st.data = await plattsFetch("/api/platts/bfoetm" + (date ? "?date=" + date : ""));
+        drawBar(); drawBody();
+      } catch (e) {
+        st.data = null; drawBar();
+        body.innerHTML = `<div style="color:${C.red};padding:20px;">Error: ${e.message}</div>`;
+      }
+    }
+    drawBar();
+    load(null);
+  }
+
   // ─── ASIA PRODUCT BALANCES TAB ───
   async function renderAsiaBal(box) {
     box.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Loading Asia balances...</div>';
@@ -9085,6 +9263,7 @@
       ]},
       { name: "Platts / SPGCI", items: [
         { id: "platts", label: "Platts", icon: "🅿️" },
+        { id: "pbfoe", label: "Platts Assessment", icon: "⚖️" },
       ]},
       { name: "Flows & Data", items: [
         { id: "signal", label: "Signal", icon: "📡" },
@@ -9145,6 +9324,7 @@
       if (id === "ps" && !panes.ps._loaded) { panes.ps._loaded = true; renderPS(panes.ps); }
       if (id === "voloi" && !panes.voloi._loaded) { panes.voloi._loaded = true; renderVOLOI(panes.voloi); }
       if (id === "platts" && !panes.platts._loaded) { panes.platts._loaded = true; renderPlatts(panes.platts); }
+      if (id === "pbfoe" && !panes.pbfoe._loaded) { panes.pbfoe._loaded = true; renderPlattsBFOE(panes.pbfoe); }
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }
       if (id === "ksql" && !panes.ksql._loaded) { panes.ksql._loaded = true; renderKSQL(panes.ksql); }

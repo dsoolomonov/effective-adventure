@@ -14,6 +14,7 @@ import pandas as pd
 import numpy as np
 import asyncio
 from datetime import datetime
+from datetime import date as _date, timedelta as _timedelta
 from collections import defaultdict
 import glob as glob_mod
 
@@ -14710,6 +14711,186 @@ async def platts_news(q: str = Query(None), page_size: int = Query(20)):
         params["q"] = q
     j = _spgci_get("/news-insights/v1/search", params)
     return {"count": j.get("metadata", {}).get("count"), "results": j.get("results", [])}
+
+
+# ── Platts Assessment · BFOETM (day-by-day grade curves → ex-QP Dated basket) ──
+_BFOE_GRADES = [
+    ("A", "midland_fob", "Midland FOB equiv. North Sea"),
+    ("B", "midland_cif", "Midland CIF Rotterdam"),
+    ("C", "forties", "Forties"),
+    ("D", "brent", "Brent"),
+    ("E", "oseberg", "Oseberg"),
+    ("F", "ekofisk", "Ekofisk"),
+    ("G", "troll", "Troll"),
+]
+_BFOE_QP = {"oseberg": ("AAXDW00", "AAXDX00"), "ekofisk": ("AAXDY00", "AAXDZ00"), "troll": ("ATFNB00", "ATFNA00")}
+_BFOE_FAF = [("FHPRM00", "FAF Hound Point-Rotts"), ("FMGRM00", "FAF Mongstad-Rotts"), ("FSFRM00", "FAF North Sea-Rotts"),
+             ("FSTRM00", "FAF Sture-Rotts"), ("FSVRM00", "FAF Sullom Voe-Rotts"), ("FTSRM00", "FAF Teesside-Rotts")]
+_BFOE_DEESC = "AAUXL00"
+_BFOE_SULFUR_TRIGGER = 0.60
+_BFOE_DAYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_BFOE_CACHE: dict = {}
+
+
+def _bfoe_hist(symbols, start, end) -> dict:
+    """Close values for symbols between start and end → {symbol: {YYYY-MM-DD: value}}."""
+    out: dict = {}
+    sym_list = ",".join(f'"{s}"' for s in symbols)
+    filt = (f'symbol IN ({sym_list}) AND bate IN ("c") AND assessDate >= "{start.isoformat()}" '
+            f'AND assessDate <= "{end.isoformat()}"')
+    page = 1
+    while True:
+        j = _spgci_get("/market-data/v3/value/history/symbol", {"filter": filt, "pageSize": 10000, "page": page})
+        for r in j.get("results", []):
+            for d in r.get("data", []):
+                if d.get("value") is not None and d.get("assessDate"):
+                    out.setdefault(r.get("symbol"), {})[d["assessDate"][:10]] = float(d["value"])
+        if page >= int((j.get("metadata") or {}).get("totalPages") or 1):
+            return out
+        page += 1
+
+
+def _bfoe_latest(series: dict, on_or_before: str):
+    ds = [d for d in (series or {}) if d <= on_or_before]
+    if not ds:
+        return None, None
+    d = max(ds)
+    return series[d], d
+
+
+def _bfoe_model(date_str):
+    req = _date.fromisoformat(date_str) if date_str else datetime.utcnow().date()
+    curve_syms = [f"AWT{g}{c}00" for g, _, _ in _BFOE_GRADES for c in _BFOE_DAYS]
+    h = _bfoe_hist(curve_syms, req - _timedelta(days=14), req + _timedelta(days=7))
+    dates = sorted({d for s, v in h.items() if s.startswith("AWTD") for d in v})
+    cand = [d for d in dates if d <= req.isoformat()]
+    if not cand:
+        raise HTTPException(status_code=404, detail=f"No BFOETM assessment on or before {req.isoformat()}")
+    T = max(cand)
+    Td = _date.fromisoformat(T)
+    prev_d = max([d for d in dates if d < T], default=None)
+    next_d = min([d for d in dates if d > T], default=None)
+
+    side_start = (Td.replace(day=1) - _timedelta(days=1)).replace(day=1)
+    side_syms = [s for pair in _BFOE_QP.values() for s in pair] + [s for s, _ in _BFOE_FAF] + [_BFOE_DEESC]
+    sh = _bfoe_hist(side_syms, side_start, Td)
+
+    def ym(d: _date):
+        return d.year * 12 + d.month - 1
+
+    def qp_for(key, load_date: _date):
+        m0, m1 = _BFOE_QP[key]
+        target = ym(load_date)
+        best = None
+        for sym, prio, offset in ((m0, 1, 0), (m1, 0, 1)):
+            for d, v in sh.get(sym, {}).items():
+                if d > T or ym(_date.fromisoformat(d)) + offset != target:
+                    continue
+                k = (d, prio)
+                if best is None or k > best[0]:
+                    best = (k, v, sym, d)
+        return None if best is None else {"value": best[1], "symbol": best[2], "published": best[3]}
+
+    grades = []
+    for letter, key, name in _BFOE_GRADES:
+        pts = []
+        for i, c in enumerate(_BFOE_DAYS):
+            v = h.get(f"AWT{letter}{c}00", {}).get(T)
+            if v is None:
+                continue
+            n = i + 1
+            p = {"day": n, "symbol": f"AWT{letter}{c}00", "raw": v}
+            if key == "midland_cif":
+                dd = Td + _timedelta(days=11 + n)
+                p["bl_date"] = (dd - _timedelta(days=1)).isoformat()
+            else:
+                dd = Td + _timedelta(days=9 + n)
+            p["date"] = dd.isoformat()
+            if key in _BFOE_QP:
+                q = qp_for(key, dd)
+                p["qp"] = q["value"] if q else None
+                p["qp_symbol"] = q["symbol"] if q else None
+                p["ex_qp"] = None if q is None else round(v - q["value"], 4)
+            else:
+                p["qp"] = 0.0 if key != "midland_fob" else None
+                p["ex_qp"] = v
+            pts.append(p)
+        grades.append({"key": key, "letter": letter, "name": name, "points": pts,
+                       "in_basket": key != "midland_cif", "has_qp": key in _BFOE_QP})
+
+    fob = [g for g in grades if g["in_basket"]]
+    ns = [p["day"] for g in fob for p in g["points"]]
+    window = None
+    if ns:
+        window = {"min_day": min(ns), "max_day": max(ns),
+                  "start": (Td + _timedelta(days=9 + min(ns))).isoformat(),
+                  "end": (Td + _timedelta(days=9 + max(ns))).isoformat()}
+
+    basket_days, missing = [], []
+    if window:
+        d0 = _date.fromisoformat(window["start"])
+        for k in range(window["max_day"] - window["min_day"] + 1):
+            ds = (d0 + _timedelta(days=k)).isoformat()
+            vals = {}
+            for g in fob:
+                p = next((p for p in g["points"] if p["date"] == ds), None)
+                vals[g["key"]] = None if p is None else p["ex_qp"]
+            miss = [kk for kk, vv in vals.items() if vv is None]
+            if miss:
+                missing.append({"date": ds, "grades": miss})
+                basket_days.append({"date": ds, "low": None, "setter": None, "values": vals})
+                continue
+            setter = min(vals, key=lambda kk: vals[kk])
+            basket_days.append({"date": ds, "low": vals[setter], "setter": setter, "values": vals})
+    basket = None
+    if window and not missing and basket_days:
+        basket = round(sum(b["low"] for b in basket_days) / len(basket_days), 4)
+
+    def avg_c(g, field):
+        vs = [p.get(field) for p in g["points"]]
+        days = [p["day"] for p in g["points"]]
+        span = (window["min_day"], window["max_day"]) if (g["in_basket"] and window) else (min(days, default=0), max(days, default=-1))
+        if not vs or any(v is None for v in vs) or len(vs) != span[1] - span[0] + 1:
+            return None
+        return round(sum(vs) / len(vs) * 100, 1)
+
+    for g in grades:
+        g["avg_raw_c"] = avg_c(g, "raw")
+        g["avg_ex_c"] = avg_c(g, "ex_qp")
+
+    qp_tab = []
+    for key, (m0, m1) in _BFOE_QP.items():
+        v0, d0_ = _bfoe_latest(sh.get(m0), T)
+        v1, d1_ = _bfoe_latest(sh.get(m1), T)
+        qp_tab.append({"grade": key, "m0": v0, "m0_symbol": m0, "m0_date": d0_, "m1": v1, "m1_symbol": m1, "m1_date": d1_})
+    faf = []
+    for sym, label in _BFOE_FAF:
+        v, d_ = _bfoe_latest(sh.get(sym), T)
+        faf.append({"symbol": sym, "route": label, "value": v, "date": d_})
+    de_v, de_d = _bfoe_latest(sh.get(_BFOE_DEESC), T)
+
+    return {
+        "as_of": T, "requested": req.isoformat(), "prev_date": prev_d, "next_date": next_d,
+        "window": window, "grades": grades,
+        "basket": {"ex_qp": basket, "days": basket_days, "missing": missing,
+                   "label": "Reconstruction from Platts day-by-day grade curves (daily low ex-QP, averaged) — not Platts' published Dated Brent"},
+        "qp": qp_tab, "faf": faf, "faf_date": max([f["date"] for f in faf if f["date"]], default=None),
+        "forties_quality": {"deesc": de_v, "deesc_date": de_d, "deesc_symbol": _BFOE_DEESC,
+                            "sulfur_trigger": _BFOE_SULFUR_TRIGGER, "ineos": None},
+    }
+
+
+@app.get("/api/platts/bfoetm")
+async def platts_bfoetm(date_: str = Query(None, alias="date")):
+    """Platts BFOETM assessment for an as-of date: grade curves, ex-QP Dated basket, QP, FAF, Forties de-escalator."""
+    import time as _time
+    key = date_ or "latest"
+    hit = _BFOE_CACHE.get(key)
+    if hit and _time.time() - hit[0] < 900:
+        return hit[1]
+    model = await asyncio.to_thread(_bfoe_model, date_)
+    _BFOE_CACHE[key] = (_time.time(), model)
+    return model
 
 
 # --- Serve Frontend Static Files ---
