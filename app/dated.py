@@ -419,8 +419,10 @@ def build(wf, wv):
             findings.append(("info", "Second triangle added: EFS(M+2) − B/D(M) = Dubai M/M+2",
                              f"B/D(M) is front-line Brent (M+2 futures) vs Dubai M, EFS(M+2) is the same Brent vs Dubai M+2, so the gap must equal the Dubai M/M+2 spread. For B/D months from {MNAME[asof.month]} on it misses by {min(errs):.2f}–{max(errs):.2f} $/bbl (median {sorted(errs)[len(errs)//2]:.2f}), always the same sign: EFS−B/D runs above the Dubai spread. That is the front-line averaging / Dubai partials vs swaps basis, worth knowing when you leg B/D against EFS. Expired months (Sep) blow out and are shown greyed. This is an independent check (the Dated/Dub−DFL=B/D identity is exact because one leg is derived)."))
 
-    findings.append(("info", "Dated-setting grade: WTI Midland",
-                     "MARKETWIRE: WTI Midland set Dated every day of the 2–22 Oct window. Forties diffs are read 'over the setter', not vs Forties. Keep it as a period-specific input."))
+    mw_note = str(wv["MARKETWIRE"]["A2"].value or "") if "MARKETWIRE" in wv.sheetnames else ""
+    if mw_note:
+        findings.append(("info", "Dated-setting grade (period-specific)",
+                         mw_note[:260] + (" …" if len(mw_note) > 260 else "") + " Read Forties/BFOE grades 'over the setter'; re-check the setter every window rather than hard-coding it."))
 
     order = {"high": 0, "med": 1, "low": 2, "info": 3}
     findings.sort(key=lambda f: order[f[0]])
@@ -527,7 +529,7 @@ def parse_marketwire(wv):
         if not isinstance(lab, str) or diff is None:
             continue
         cif = "CIF" in lab
-        if "setter" in str(S.cell(r, 5).value or "").lower() or "Dated Brent Diff" in lab:
+        if lab.startswith("Dated Brent Diff") or _num(S.cell(r, 4).value) == 0:
             setter = diff
             lab = "WTI Midland FOB-NS (setter)"
         grades.append({"grade": lab, "diff": diff, "chg": _num(S.cell(r, 3).value), "over_setter": _num(S.cell(r, 4).value), "cif": cif})

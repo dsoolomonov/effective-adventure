@@ -7913,7 +7913,7 @@
           <b style="color:${C.text}">Corrected vs workbook</b>: averages skip English bank holidays; week levels re-chained from the rolls; months with incomplete grid coverage flagged rather than shown as numbers.</div>`;
         body.appendChild(c10);
 
-        setTimeout(() => plots(d), 0);
+        setTimeout(() => loadPlotly(() => plots(d)), 0);
       }
 
       function plots(d) {
