@@ -5748,6 +5748,231 @@
   }
 
 
+  // ─── ASIA PRODUCT BALANCES TAB ───
+  async function renderAsiaBal(box) {
+    box.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Loading Asia balances...</div>';
+    let data;
+    try {
+      const r = await fetch("/api/asia/balances");
+      if (!r.ok) throw new Error(r.status === 404 ? "no balances pack loaded yet" : r.statusText);
+      data = await r.json();
+    } catch (e) {
+      box.innerHTML = `<div style="color:${C.red};padding:20px;">Error loading Asia balances: ${e.message}</div>`;
+      return;
+    }
+    box.innerHTML = "";
+    const PRODS = [["gasoline", "⛽ Gasoline"], ["gasoil", "🛢️ Gasoil"], ["kerosene", "✈️ Jet / Kero"], ["fueloil", "🚢 Fuel oil"]];
+    const PNAME = { gasoline: "Gasoline", gasoil: "Gasoil", kerosene: "Jet/kero", fueloil: "Fuel oil" };
+    const AGG = ["Total Asia", "China", "Asia ex-China"];
+    const MON = ["Sep", "Oct", "Nov", "Dec"];
+    const MCOL = { Sep: "#64748b", Oct: C.accent, Nov: C.gold, Dec: C.purple };
+    const st = { prod: "gasoil" };
+    const f0 = v => eaFmt(v), s0 = v => eaSign(v), f2 = v => eaFmt(v, 2), s2 = v => eaSign(v, 2);
+    const sgnCol = v => v == null ? C.muted : v > 0 ? C.green : v < 0 ? C.red : C.text;
+    const pd = data.products;
+    const get = (arr, name) => arr.find(c => c.name === name);
+    const L = (o) => Object.assign({}, plotLayout, o || {});
+    const cfg = { displayModeBar: false, responsive: true };
+
+    const hdr = el("div", { style: { marginBottom: "16px" } });
+    hdr.appendChild(el("h2", { style: { color: C.amber, margin: "0 0 6px 0", fontSize: "20px" } }, `🌏 ${data.title || "Asia Product Balances"}`));
+    hdr.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: 0 } },
+      `Monthly Asian product supply/demand, trade and stocks by country · balances & trade in kb/d, stocks in mb · Sep–Dec 2026 monthly, 2025/2026 annual averages, y/y changes · pack dated ${data.pack_date || "–"} · balance = supply − demand, net exports = exports − imports`));
+    box.appendChild(hdr);
+
+    // Overview strip: all four products
+    const ov = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "14px" } });
+    PRODS.forEach(([k, lbl]) => {
+      const b = get(pd[k].balance, "Total Asia"), s = get(pd[k].stocks, "Total Reported");
+      const c = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: "10px", padding: "12px 14px", cursor: "pointer" }, onClick: () => { st.prod = k; draw(); } });
+      c.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "700", color: C.text, marginBottom: "6px" } }, lbl));
+      const row = (t, v, col) => { const r = el("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11.5px", padding: "2px 0" } }); r.appendChild(el("span", { style: { color: C.muted } }, t)); r.appendChild(el("span", { style: { color: col || C.text, fontWeight: "600", fontVariantNumeric: "tabular-nums" } }, v)); return r; };
+      const q4 = (b.net[3] + b.net[4] + b.net[5]) / 3;
+      c.appendChild(row("Asia balance Oct", s0(b.net[3]) + " kb/d", sgnCol(b.net[3])));
+      c.appendChild(row("Q4 avg balance", s0(Math.round(q4)) + " kb/d", sgnCol(q4)));
+      c.appendChild(row("Demand y/y (2026)", s0(b.rows.Demand[10]) + " kb/d", sgnCol(b.rows.Demand[10])));
+      if (s) c.appendChild(row("Stocks Dec / y/y", `${f2(s.stocks[4])} mb / ${s2(s.stocks[9])}`, sgnCol(s.stocks[9])));
+      ov.appendChild(c);
+    });
+    box.appendChild(ov);
+
+    // Read
+    const n = data.notes || {};
+    if (n.points) {
+      const w = el("div", {});
+      if (n.headline) w.appendChild(el("div", { style: { fontSize: "13.5px", color: C.text, fontWeight: "600", marginBottom: "10px", lineHeight: "1.5" } }, n.headline));
+      const grid = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" } });
+      n.points.forEach((pt, i) => {
+        const c = el("div", { style: { background: "#0a0f1b", border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.gold}`, borderRadius: "6px", padding: "10px 12px", fontSize: "12px", color: C.text, lineHeight: "1.5" } });
+        c.appendChild(el("span", { style: { color: C.gold, fontWeight: "700", marginRight: "6px" } }, `${i + 1}.`));
+        c.appendChild(document.createTextNode(pt));
+        grid.appendChild(c);
+      });
+      w.appendChild(grid);
+      if (n.conclusion) w.appendChild(el("div", { style: { marginTop: "10px", background: "#132018", border: `1px solid ${C.green}55`, borderRadius: "6px", padding: "12px 14px", fontSize: "12.5px", color: C.text, lineHeight: "1.55" } }, n.conclusion));
+      box.appendChild(card("Desk read", w));
+    }
+
+    // Product selector + product area
+    const bar = el("div", { style: { display: "flex", gap: "6px", alignItems: "center", margin: "6px 0 12px", flexWrap: "wrap" } });
+    bar.appendChild(el("span", { style: { fontSize: "11px", color: C.muted, marginRight: "6px", letterSpacing: "1px" } }, "PRODUCT"));
+    const pbtn = {};
+    PRODS.forEach(([k, lbl]) => {
+      const b = el("button", { style: { padding: "6px 14px", borderRadius: "16px", border: `1px solid ${C.border}`, fontSize: "12px", cursor: "pointer", fontWeight: "600" }, onClick: () => { st.prod = k; draw(); } }, lbl);
+      pbtn[k] = b; bar.appendChild(b);
+    });
+    box.appendChild(bar);
+    const area = el("div", {});
+    box.appendChild(area);
+
+    // Margins (static, below product area)
+    const mbox = el("div", {});
+    box.appendChild(mbox);
+    (function margins() {
+      const M = data.margins || [];
+      if (!M.length) return;
+      const cols = data.margin_cols;
+      const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11.5px" } });
+      const h = el("tr", {});
+      h.appendChild(el("th", { style: { textAlign: "left", padding: "5px 8px", color: C.muted, borderBottom: `1px solid ${C.border}` } }, "$/bbl"));
+      cols.forEach(c => h.appendChild(el("th", { style: { textAlign: "right", padding: "5px 8px", color: C.muted, borderBottom: `1px solid ${C.border}` } }, c === "2025" ? "2025 avg" : c + " 26")));
+      t.appendChild(h);
+      let g = null;
+      M.forEach(r => {
+        if (r.group !== g) { g = r.group; const gr = el("tr", {}); gr.appendChild(el("td", { colspan: String(cols.length + 1), style: { padding: "7px 8px 3px", color: C.amber, fontSize: "10.5px", fontWeight: "700", letterSpacing: "1px", textTransform: "uppercase" } }, g)); t.appendChild(gr); }
+        const tr = el("tr", {});
+        tr.appendChild(el("td", { style: { padding: "4px 8px", color: C.text, borderBottom: `1px solid ${C.border}22` } }, r.name));
+        r.vals.forEach((v, i) => tr.appendChild(el("td", { style: { textAlign: "right", padding: "4px 8px", color: v < 0 ? C.red : (i === r.vals.length - 1 ? C.text : "#cbd5e1"), fontWeight: i === r.vals.length - 1 ? "700" : "400", fontVariantNumeric: "tabular-nums", borderBottom: `1px solid ${C.border}22` } }, f2(v))));
+        t.appendChild(tr);
+      });
+      const wrap = el("div", { style: { display: "grid", gridTemplateColumns: "1.15fr 1fr", gap: "14px" } });
+      const tw = el("div", { style: { overflowX: "auto" } }); tw.appendChild(t);
+      const ch = el("div", { style: { height: "330px" } });
+      wrap.appendChild(tw); wrap.appendChild(ch);
+      mbox.appendChild(card("Singapore refining margins & cracks (monthly avg)", wrap));
+      loadPlotly(() => {
+        const mo = cols.slice(1);
+        const cr = M.filter(r => r.group === "Cracks vs Dubai");
+        const pal = [C.red, "#a3e635", C.accent, C.cyan, C.gold, "#f97316"];
+        const tr = cr.map((r, i) => ({ x: mo, y: r.vals.slice(1), name: r.name, type: "scatter", mode: "lines+markers", line: { color: pal[i % pal.length], width: 2 } }));
+        const avg = M.find(r => r.group === "Refining margin");
+        if (avg) tr.push({ x: mo, y: avg.vals.slice(1), name: "Avg refining margin", type: "bar", marker: { color: "rgba(139,92,246,0.35)" } });
+        Plotly.newPlot(ch, tr, L({ title: { text: "Cracks vs Dubai & avg margin, $/bbl", font: { size: 12, color: C.text } }, margin: { t: 34, b: 60, l: 45, r: 15 }, legend: Object.assign({}, plotLayout.legend, { y: -0.2 }) }), cfg);
+      });
+    })();
+
+    function tbl(rows, cols, opts) {
+      const o = opts || {};
+      const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11px" } });
+      const h = el("tr", {});
+      h.appendChild(el("th", { style: { textAlign: "left", padding: "5px 8px", color: C.muted, borderBottom: `1px solid ${C.border}`, position: "sticky", left: "0", background: C.card } }, o.first || ""));
+      cols.forEach((c, i) => h.appendChild(el("th", { style: { textAlign: "right", padding: "5px 7px", color: c.startsWith("y/y") ? C.gold : C.muted, borderBottom: `1px solid ${C.border}`, borderLeft: i === o.yyFrom ? `1px solid ${C.border}` : "none", whiteSpace: "nowrap" } }, c)));
+      t.appendChild(h);
+      rows.forEach(r => {
+        r.lines.forEach((ln, li) => {
+          const tr = el("tr", { style: { background: li === 0 && AGG.concat(["Total Reported"]).includes(r.name) ? "rgba(56,189,248,0.06)" : "transparent" } });
+          const sub = /power-gen|bunkers|feedstocks/.test(ln.label);
+          tr.appendChild(el("td", { style: { padding: "4px 8px", paddingLeft: li === 0 ? "8px" : sub ? "30px" : "20px", color: li === 0 ? C.text : C.muted, fontWeight: li === 0 ? "700" : "400", fontStyle: sub ? "italic" : "normal", borderBottom: `1px solid ${C.border}22`, whiteSpace: "nowrap", position: "sticky", left: "0", background: C.card } }, li === 0 ? r.name + (r.fixed ? " ⚑" : "") : ln.label));
+          ln.vals.forEach((v, i) => {
+            const yy = i >= o.yyFrom;
+            const signed = yy || ln.signed;
+            tr.appendChild(el("td", { style: { textAlign: "right", padding: "4px 7px", color: signed ? sgnCol(v) : C.text, fontWeight: li === 0 ? "700" : "400", fontVariantNumeric: "tabular-nums", borderBottom: `1px solid ${C.border}22`, borderLeft: i === o.yyFrom ? `1px solid ${C.border}` : "none" } }, (signed ? (o.dec ? s2 : s0) : (o.dec ? f2 : f0))(v)));
+          });
+          t.appendChild(tr);
+        });
+      });
+      const w = el("div", { style: { overflowX: "auto", maxHeight: "560px", overflowY: "auto" } }); w.appendChild(t); return w;
+    }
+
+    function draw() {
+      PRODS.forEach(([k]) => { const on = k === st.prod; Object.assign(pbtn[k].style, { background: on ? C.accent : "transparent", color: on ? "#04111d" : C.text, borderColor: on ? C.accent : C.border }); });
+      area.innerHTML = "";
+      const P = pd[st.prod], nm = PNAME[st.prod];
+      const tot = get(P.balance, "Total Asia"), cn = get(P.balance, "China"), xc = get(P.balance, "Asia ex-China");
+      const ttot = get(P.trade, "Total Asia"), stk = get(P.stocks, "Total Reported");
+      const ctry = P.balance.filter(c => !AGG.includes(c.name));
+      const tctry = P.trade.filter(c => !AGG.includes(c.name));
+      const sctry = P.stocks.filter(c => c.name !== "Total Reported");
+
+      area.appendChild(card(`${nm} — key numbers`, statRow([
+        ["Asia balance Oct", s0(tot.net[3]) + " kb/d", sgnCol(tot.net[3])],
+        ["Nov / Dec", `${s0(tot.net[4])} / ${s0(tot.net[5])}`, sgnCol(tot.net[5])],
+        ["2026 avg vs 2025", `${s0(tot.net[1])} vs ${s0(tot.net[0])}`, sgnCol(tot.net[1] - tot.net[0])],
+        ["Demand 2026 y/y", `${s0(tot.rows.Demand[10])} (China ${s0(cn.rows.Demand[10])})`, sgnCol(tot.rows.Demand[10])],
+        ["Asia exports Oct", `${f0(ttot.rows.Exports[3])} (${s0(ttot.rows.Exports[7])} y/y)`, sgnCol(ttot.rows.Exports[7])],
+        ["Stocks Oct → Dec", stk ? `${f2(stk.stocks[2])} → ${f2(stk.stocks[4])} mb (${s2(stk.stocks[9])} y/y)` : "–", stk ? sgnCol(stk.stocks[4] - stk.stocks[2]) : C.text],
+      ])));
+
+      const grid = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" } });
+      const mk = (title, h) => { const d = el("div", { style: { height: (h || 340) + "px" } }); grid.appendChild(card(title, d, { marginBottom: "0" })); return d; };
+      const c1 = mk("Net balance by country, Sep–Dec (kb/d, + = long)");
+      const c2 = mk("Demand & supply — Total Asia / China / Asia ex-China (kb/d)");
+      const c3 = mk("Net exports by country, Sep–Dec (kb/d)");
+      const c4 = mk("Reported stocks by country (mb) — stacked = total, dashed = year ago");
+      const c5 = mk("2026 y/y change: demand vs supply by country (kb/d)");
+      const c6 = mk(st.prod === "fueloil" ? "Fuel oil demand split — bunkers / feedstocks / power-gen (kb/d)" : "Monthly y/y change in Asia balance & exports (kb/d)");
+      area.appendChild(grid);
+      area.appendChild(el("div", { style: { height: "14px" } }));
+
+      const bl = (c) => [{ label: "Balance", vals: c.net, signed: true }].concat(Object.entries(c.rows).map(([k, v]) => ({ label: k, vals: v })));
+      area.appendChild(card(`${nm} supply / demand balance by country (kb/d)`, tbl(P.balance.map(c => ({ name: c.name, fixed: c.sign_fixed, lines: bl(c) })), data.balance_cols, { first: "kb/d", yyFrom: 6 })));
+      area.appendChild(card(`${nm} trade by country (kb/d)`, tbl(P.trade.map(c => ({ name: c.name, lines: [{ label: "Net exports", vals: c.net, signed: true }].concat(Object.entries(c.rows).map(([k, v]) => ({ label: k, vals: v }))) })), data.balance_cols, { first: "kb/d", yyFrom: 6 })));
+      area.appendChild(card(`${nm} stocks by country (mb)`, tbl(P.stocks.map(c => ({ name: c.name, lines: [{ label: "Stocks", vals: c.stocks }, { label: "m/m chg.", vals: (c.mm || []).concat([null, null, null, null, null]), signed: true }] })), data.stock_cols, { first: "mb", yyFrom: 5, dec: true })));
+      const fx = (data.fixes || []).filter(f => f.startsWith(st.prod + ":"));
+      area.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, margin: "-4px 0 14px", lineHeight: "1.5" } },
+        "Sep–Dec 2026 months beyond the latest reported data are forecasts. Total Asia = China + Asia ex-China; country rows don't sum to Asia ex-China (smaller markets not shown separately). " +
+        (fx.length ? `⚑ ${fx.length} fuel-oil country balances were printed with an inverted sign in the pack (supply − demand gave the opposite sign); they're shown here as supply − demand: ${fx.map(f => f.split(": ")[1].split(" balance")[0]).join(", ")}.` : "")));
+
+      loadPlotly(() => {
+        const names = ctry.map(c => c.name);
+        Plotly.newPlot(c1, MON.map((m, i) => ({ x: names, y: ctry.map(c => c.net[2 + i]), name: m, type: "bar", marker: { color: MCOL[m] } })),
+          L({ barmode: "group", margin: { t: 10, b: 80, l: 50, r: 10 }, xaxis: { gridcolor: "#1e293b", tickangle: -40, tickfont: { size: 10 } } }), cfg);
+        const xs = ["2025 avg", "2026 avg"].concat(MON);
+        const pick = v => [v[0], v[1], v[2], v[3], v[4], v[5]];
+        const sd = [];
+        [[tot, C.text], [cn, C.red], [xc, C.accent]].forEach(([c, col]) => {
+          sd.push({ x: xs, y: pick(c.rows.Demand), name: `${c.name} demand`, type: "scatter", mode: "lines+markers", line: { color: col, width: 2 } });
+          sd.push({ x: xs, y: pick(c.rows.Supply), name: `${c.name} supply`, type: "scatter", mode: "lines+markers", line: { color: col, width: 2, dash: "dot" } });
+        });
+        Plotly.newPlot(c2, sd, L({ margin: { t: 10, b: 80, l: 55, r: 10 }, legend: Object.assign({}, plotLayout.legend, { y: -0.18, font: { size: 10, color: C.text } }) }), cfg);
+        const tn = tctry.map(c => c.name);
+        Plotly.newPlot(c3, MON.map((m, i) => ({ x: tn, y: tctry.map(c => c.net[2 + i]), name: m, type: "bar", marker: { color: MCOL[m] } })),
+          L({ barmode: "group", margin: { t: 10, b: 80, l: 50, r: 10 }, xaxis: { gridcolor: "#1e293b", tickangle: -40, tickfont: { size: 10 } } }), cfg);
+        const sm = data.stock_cols.slice(0, 5);
+        const pal = [C.accent, C.red, C.gold, C.green, C.purple, C.cyan, "#f97316", "#a3e635", "#e879f9", "#94a3b8"];
+        const stT = sctry.map((c, i) => ({ x: sm, y: c.stocks.slice(0, 5), name: c.name, type: "bar", marker: { color: pal[i % pal.length] } }));
+        if (stk) {
+          stT.push({ x: sm, y: stk.stocks.slice(0, 5), name: "Total reported", type: "scatter", mode: "lines+markers+text", line: { color: "#fff", width: 3 }, text: stk.stocks.slice(0, 5).map(v => v.toFixed(1)), textposition: "top center", textfont: { color: "#fff", size: 10 } });
+          stT.push({ x: sm, y: stk.stocks.slice(0, 5).map((v, i) => +(v - stk.stocks[5 + i]).toFixed(2)), name: "Total year ago", type: "scatter", mode: "lines", line: { color: "#94a3b8", width: 2, dash: "dash" } });
+        }
+        Plotly.newPlot(c4, stT, L({ barmode: "stack", margin: { t: 10, b: 70, l: 45, r: 15 }, legend: Object.assign({}, plotLayout.legend, { y: -0.16, font: { size: 10, color: C.text } }) }), cfg);
+        const yc = ctry.filter(c => c.rows.Demand && c.rows.Supply);
+        Plotly.newPlot(c5, [
+          { x: yc.map(c => c.name), y: yc.map(c => c.rows.Demand[10]), name: "Demand y/y", type: "bar", marker: { color: C.red } },
+          { x: yc.map(c => c.name), y: yc.map(c => c.rows.Supply[10]), name: "Supply y/y", type: "bar", marker: { color: C.green } },
+          { x: yc.map(c => c.name), y: yc.map(c => c.net[10]), name: "Balance y/y", type: "scatter", mode: "markers", marker: { color: C.gold, size: 9, symbol: "diamond" } },
+        ], L({ barmode: "group", margin: { t: 10, b: 80, l: 45, r: 10 }, xaxis: { gridcolor: "#1e293b", tickangle: -40, tickfont: { size: 10 } } }), cfg);
+        if (st.prod === "fueloil") {
+          const rows = [tot, cn, xc].concat(ctry.filter(c => c.rows.bunkers));
+          const nm6 = rows.map(c => c.name);
+          const comp = ["bunkers", "feedstocks", "power-gen"];
+          const cc = { bunkers: C.accent, feedstocks: C.gold, "power-gen": C.purple };
+          Plotly.newPlot(c6, comp.map(k => ({ x: nm6, y: rows.map(c => c.rows[k] ? c.rows[k][3] : null), name: k + " (Oct)", type: "bar", marker: { color: cc[k] } }))
+            .concat([{ x: nm6, y: rows.map(c => c.rows.Supply ? c.rows.Supply[3] : null), name: "Supply (Oct)", type: "scatter", mode: "markers", marker: { color: C.green, size: 9 } }]),
+            L({ barmode: "group", margin: { t: 10, b: 80, l: 45, r: 10 }, xaxis: { gridcolor: "#1e293b", tickangle: -40, tickfont: { size: 10 } } }), cfg);
+        } else {
+          Plotly.newPlot(c6, [
+            { x: MON, y: tot.net.slice(6, 10), name: "Asia balance y/y", type: "bar", marker: { color: C.accent } },
+            { x: MON, y: cn.net.slice(6, 10), name: "China balance y/y", type: "bar", marker: { color: C.red } },
+            { x: MON, y: ttot.rows.Exports.slice(6, 10), name: "Asia exports y/y", type: "scatter", mode: "lines+markers", line: { color: C.gold, width: 2 } },
+            { x: MON, y: ttot.rows.Imports.slice(6, 10), name: "Asia imports y/y", type: "scatter", mode: "lines+markers", line: { color: C.purple, width: 2, dash: "dot" } },
+          ], L({ barmode: "group", margin: { t: 10, b: 60, l: 45, r: 10 } }), cfg);
+        }
+      });
+    }
+    draw();
+  }
+
   // ─── LOCAL GASOLINE BALANCES — QUARTERLY (LEM) TAB ───
   async function renderLEM(box) {
     box.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Loading quarterly balances...</div>';
@@ -8849,6 +9074,7 @@
         { id: "cbm", label: "Crude Balances", icon: "🛢️" },
         { id: "lgb", label: "Local Gasoline Bal", icon: "⛽" },
         { id: "eabal", label: "Local Balances", icon: "🌐" },
+        { id: "asia", label: "Asia Balances", icon: "🌏" },
         { id: "gs", label: "Gasoline Stocks", icon: "📊" },
         { id: "ps", label: "Product Stocks", icon: "🛢️" },
       ]},
@@ -8914,6 +9140,7 @@
       if (id === "margins" && !panes.margins._loaded) { panes.margins._loaded = true; renderMargins(panes.margins); }
       if (id === "lgb" && !panes.lgb._loaded) { panes.lgb._loaded = true; renderLEM(panes.lgb); }
       if (id === "eabal" && !panes.eabal._loaded) { panes.eabal._loaded = true; renderEABal(panes.eabal); }
+      if (id === "asia" && !panes.asia._loaded) { panes.asia._loaded = true; renderAsiaBal(panes.asia); }
       if (id === "gs" && !panes.gs._loaded) { panes.gs._loaded = true; renderGS(panes.gs); }
       if (id === "ps" && !panes.ps._loaded) { panes.ps._loaded = true; renderPS(panes.ps); }
       if (id === "voloi" && !panes.voloi._loaded) { panes.voloi._loaded = true; renderVOLOI(panes.voloi); }

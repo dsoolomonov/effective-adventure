@@ -12899,6 +12899,16 @@ async def lem_quarterly():
         return _json.load(f)
 
 
+@app.get("/api/asia/balances")
+async def asia_balances():
+    """Monthly Asian product balances (gasoline / gasoil / jet-kero / fuel oil): S&D, trade, stocks, Singapore margins."""
+    path = os.path.join(os.path.dirname(__file__), "asia_balances.json")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Asia balances not available")
+    with open(path) as f:
+        return _json.load(f)
+
+
 # --- Local Balances (Energy Aspects global gasoline + US weekly) ────────────
 _LOCALBAL_CACHE = None
 
