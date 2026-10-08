@@ -43,6 +43,7 @@ def _ensure_sklearn():
         StandardScaler = _SS
         _sklearn_loaded = True
 import openpyxl
+from app import dated as _dated
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -14652,6 +14653,36 @@ async def platts_news(q: str = Query(None), page_size: int = Query(20)):
 
 # --- Serve Frontend Static Files ---
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+
+# ── Dated Brent CFD curve (per-cargo X workbook) ──
+_dated_cache = {"mtime": None, "model": None}
+
+
+@app.get("/api/dated/model")
+async def dated_model():
+    path = _dated.WORKBOOK_PATH
+    if not os.path.exists(path):
+        return {"loaded": False, "error": "No Dated workbook uploaded yet."}
+    mt = os.path.getmtime(path)
+    if _dated_cache["mtime"] != mt:
+        try:
+            _dated_cache["model"] = await asyncio.to_thread(_dated.get_model)
+            _dated_cache["mtime"] = mt
+        except Exception as e:
+            return {"loaded": False, "error": f"Could not parse workbook: {e}"}
+    return {"loaded": True, "file_mtime": datetime.utcfromtimestamp(mt).isoformat() + "Z", **_dated_cache["model"]}
+
+
+@app.post("/api/dated/upload")
+async def dated_upload(file: UploadFile = File(...)):
+    content = await file.read()
+    try:
+        await asyncio.to_thread(_dated.save_workbook_bytes, content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Not a valid per-cargo X workbook: {e}")
+    _dated_cache["mtime"] = None
+    return {"ok": True, "name": file.filename}
+
 
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):

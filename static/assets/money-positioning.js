@@ -7722,6 +7722,272 @@
     injected = true;
 
     // ─── SIGNAL OCEAN TAB (/api/signal/*) — DPP Aframax/Suezmax/VLCC strait passages ───
+    async function renderDated(box) {
+      box.innerHTML = "";
+      const st = { unit: "c", dubMonth: null, d: null };
+      const L = (extra) => { const b = JSON.parse(JSON.stringify(plotLayout)); return Object.assign(b, extra || {}); };
+      const AX = (o) => Object.assign({ gridcolor: "#1e293b", tickfont: { size: 11 }, zerolinecolor: "#334155" }, o || {});
+      const cfg = { displaylogo: false, responsive: true, modeBarButtonsToRemove: ["lasso2d", "select2d"] };
+      const u = (v) => v == null ? null : (st.unit === "c" ? v : v / 100);
+      const fv = (v, dp) => v == null ? "—" : (st.unit === "c" ? (v >= 0 ? "+" : "") + v.toFixed(dp == null ? 0 : dp) + "c" : (v >= 0 ? "+" : "") + (v / 100).toFixed(2));
+      const uLbl = () => st.unit === "c" ? "cents/bbl" : "$/bbl";
+      const SEV = { high: C.red, med: "#fb923c", low: C.gold, info: C.cyan };
+      const esc = s => String(s == null ? "" : s).replace(/</g, "&lt;");
+
+      const hdr = el("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "14px", flexWrap: "wrap", gap: "10px" } });
+      const hl = el("div", {});
+      hl.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "⚖️ Dated Brent — CFD curve, per-cargo X, DFL & divergence"));
+      const sub = el("div", { style: { fontSize: "12px", color: C.muted, marginTop: "3px" } }, "loading…");
+      hl.appendChild(sub);
+      hdr.appendChild(hl);
+      const hr = el("div", { style: { display: "flex", gap: "8px", alignItems: "center" } });
+      const unitBox = el("div", { style: { display: "flex", gap: "4px" } });
+      const fileIn = el("input", { type: "file", accept: ".xlsx", style: { display: "none" } });
+      const upBtn = el("button", { style: { background: "transparent", color: C.text, border: `1px solid ${C.border}`, borderRadius: "8px", padding: "6px 12px", cursor: "pointer", fontSize: "11.5px", fontWeight: "700" }, onClick: () => fileIn.click() }, "⬆ Upload new version (.xlsx)");
+      fileIn.addEventListener("change", async () => {
+        if (!fileIn.files.length) return;
+        upBtn.textContent = "Uploading…";
+        const fd = new FormData(); fd.append("file", fileIn.files[0]);
+        const r = await fetch("/api/dated/upload", { method: "POST", body: fd, credentials: "same-origin" });
+        const j = await r.json().catch(() => ({}));
+        upBtn.textContent = "⬆ Upload new version (.xlsx)";
+        if (!r.ok) { alert(j.detail || "Upload failed"); return; }
+        load();
+      });
+      hr.appendChild(unitBox); hr.appendChild(upBtn); hr.appendChild(fileIn);
+      hdr.appendChild(hr);
+      box.appendChild(hdr);
+      const body = el("div", {});
+      box.appendChild(body);
+
+      function pill(label, active, onClick) {
+        return el("button", { style: { background: active ? C.amber : "transparent", color: active ? "#05070e" : C.text, border: `1px solid ${active ? C.amber : C.border}`, borderRadius: "999px", padding: "5px 12px", cursor: "pointer", fontSize: "11.5px", fontWeight: "700" }, onClick }, label);
+      }
+      function renderUnits() {
+        unitBox.innerHTML = "";
+        [["c", "¢"], ["$", "$/bbl"]].forEach(([k, l]) => unitBox.appendChild(pill(l, st.unit === k, () => { st.unit = k; renderUnits(); draw(); })));
+      }
+      function kpi(title, value, subtxt, color) {
+        const k = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${color || C.amber}`, borderRadius: "10px", padding: "10px 12px" } });
+        k.appendChild(el("div", { style: { fontSize: "10.5px", color: C.muted, fontWeight: "700", letterSpacing: ".5px", textTransform: "uppercase" } }, title));
+        k.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.text, marginTop: "4px" } }, value));
+        if (subtxt) k.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "2px" } }, subtxt));
+        return k;
+      }
+      function table(cols, rows) {
+        let h = `<table style="border-collapse:collapse;font-size:11.5px;white-space:nowrap;width:100%"><thead><tr>` + cols.map(c => `<th style="padding:6px 8px;text-align:${c.num ? "right" : "left"};color:${C.amber};border-bottom:1px solid ${C.border}">${c.h}</th>`).join("") + `</tr></thead><tbody>`;
+        rows.forEach(r => { h += `<tr${r._dim ? ' style="opacity:.5"' : ""}>` + cols.map(c => { const v = c.f(r); return `<td style="padding:4px 8px;border-bottom:1px solid #111827;color:${c.color ? c.color(r) : C.text};text-align:${c.num ? "right" : "left"}">${v == null || v === "" ? "<span style='color:#334155'>—</span>" : v}</td>`; }).join("") + `</tr>`; });
+        const w = el("div", { style: { overflow: "auto" } }); w.innerHTML = h + "</tbody></table>"; return w;
+      }
+      const note = (t) => el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "8px", lineHeight: "1.5" } }, t);
+      const plotDiv = (id, h) => el("div", { id, style: { height: (h || 380) + "px" } });
+      const grid2 = () => el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" } });
+      const rc = (v) => v == null ? C.muted : (v > 0 ? C.red : C.green);
+
+      async function load() {
+        body.innerHTML = `<div style="color:${C.muted};padding:30px;text-align:center">Reading Dated workbook…</div>`;
+        let d;
+        try { const r = await fetch("/api/dated/model", { credentials: "same-origin" }); d = await r.json(); } catch (e) { d = { loaded: false, error: String(e) }; }
+        if (!d.loaded) { body.innerHTML = ""; body.appendChild(card("No Dated workbook", (d.error || "") + " Upload the per-cargo X workbook (.xlsx) with the button above.")); sub.textContent = "no workbook"; return; }
+        st.d = d;
+        sub.textContent = `Workbook ${d.version} · run as-of ${d.asof} · all values vs ${d.basis} unless stated · grid ${d.grid_start} → ${d.grid_end} · uploaded ${d.file_mtime.slice(0, 16).replace("T", " ")} UTC · source workbook marked AI-generated, recomputed and audited here`;
+        draw();
+      }
+
+      function draw() {
+        const d = st.d; if (!d) return;
+        body.innerHTML = "";
+        const dflBy = {}; d.dfl.forEach(r => dflBy[r.month] = r);
+        const divDec = d.divergence[0];
+        const front = d.weeks.find(w => w.contains_asof) || d.weeks[0];
+        const nHigh = d.findings.filter(f => f.sev === "high").length;
+
+        // KPI strip
+        const k = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "10px", marginBottom: "14px" } });
+        d.dfl.slice(0, 3).forEach(r => k.appendChild(kpi(`${r.month} DFL (vs ${r.front_line})`, r.quoted == null ? "—" : fv(r.quoted), `curve-implied ${fv(r.implied)} · ${r.fitted ? "fitted (solve constraint)" : (r.rich == null ? "" : (r.rich > 0 ? "quote " + fv(r.rich) + " rich" : "quote " + fv(-r.rich) + " cheap"))}`, r.fitted ? C.muted : rc(r.rich))));
+        k.appendChild(kpi(`CFD ${front.start.slice(5)} → ${front.end.slice(5)}`, fv(front.level), "current week, vs Dec futures (chained level)", C.cyan));
+        k.appendChild(kpi(`${divDec.month} divergence`, fv(divDec.divergence), `BFOE ${fv(divDec.bfoe)} − avg Dated ${fv(divDec.avg_dated)} · ${divDec.coverage} days`, divDec.divergence < 0 ? C.red : C.green));
+        k.appendChild(kpi("Audit flags", `${nHigh} high / ${d.findings.length}`, "see Workbook audit below", nHigh ? C.red : C.green));
+        body.appendChild(k);
+
+        // 1. Dated curve
+        const c1 = card("1 · Dated CFD curve vs " + d.basis + " — step (weekly CFDs) vs smooth daily (KKT) with BFOE membrane", plotDiv("dt-curve", 440));
+        c1.appendChild(note("Stepped amber = weekly CFD levels chained from the frozen front week through the rolls. Smooth cyan = workbook daily KKT solve. Purple = BFOE month value on the same basis (futures + EFP) across its Dated universe (11th M-1 → 10th M): the membrane says Dated should sit at or below it. Red dots = days where Dated is above its BFOE. Shaded = realized (before as-of). × = English bank holidays, which Platts does not assess and which are excluded from all averages here."));
+        body.appendChild(c1);
+
+        // 2. ladder + roll
+        const g2 = grid2();
+        const c2 = card("2 · Weekly CFD ladder & rolls", plotDiv("dt-ladder", 340));
+        c2.appendChild(note("Bars = weekly CFD level vs Dec futures, line = roll to next week (right axis). A red-outlined bar means the smooth curve's weekly average does not tie to the step."));
+        const c3 = card("3 · Divergence by BFOE month (BFOE − avg Dated in universe)", plotDiv("dt-div", 340));
+        c3.appendChild(note("Divergence should be ≥ 0 (membrane). Faded bars = universe not fully covered by the grid; that number is indicative only. Feb/Mar use the Jan EFP as a placeholder."));
+        g2.appendChild(c2); g2.appendChild(c3); body.appendChild(g2);
+
+        // 4. per-cargo
+        const c4 = card("4 · Per-cargo X — Forties B/L cargoes (vs Dec BFOE)", plotDiv("dt-cargo", 380));
+        c4.appendChild(table([
+          { h: "Cargo", f: r => r.cargo }, { h: "B/L", f: r => r.bl },
+          { h: "Contract window (±5d)", f: r => `${r.win_start.slice(5)} → ${r.win_end.slice(5)} · ${r.n_quotes}q` },
+          { h: "Window avg CFD", num: 1, f: r => fv(r.avg_cal, 1) },
+          { h: "X = EFP − avg", num: 1, f: r => fv(r.x, 1), color: r => r.x < 0 ? C.red : C.green },
+          { h: `X bid / offer (±${d.inputs.half_spread}c)`, num: 1, f: r => `${fv(r.x_bid)} / ${fv(r.x_offer)}` },
+          { h: "Cargo vs Dec futs", num: 1, f: r => fv(r.prem_dec, 1) },
+          { h: "2-1-2 avg (5 quotes)", num: 1, f: r => fv(r.avg_5q, 1) },
+          { h: "Natural Platts window", f: r => r.nat_from ? `${r.nat_from.slice(5)} → ${r.nat_to.slice(5)}` : "" },
+          { h: "Natural avg", num: 1, f: r => fv(r.avg_natural, 0) },
+          { h: "B/L-pricing time spread", num: 1, f: r => fv(r.pricing_value, 0), color: () => C.gold },
+        ], d.cargoes));
+        c4.appendChild(note("X (workbook definition) = Dec EFP − average Dated CFD over B/L ±5 calendar days = Dec BFOE − cargo Dated. Negative X = cargo prices OVER Dec BFOE (front of Nov), positive = under. This is the cargo vs DEC BFOE, not vs Nov BFOE (that would need the Nov/Dec cash BFOE spread). Bid/offer is a flat desk haircut, not a quote. 'Natural Platts window' = assessment dates 10–30 days before B/L, when the cargo sits in the Dated basket; the gap to the contract window is the time-spread embedded in B/L pricing. Holidays excluded."));
+        body.appendChild(c4);
+
+        // 5. DFL
+        const g5 = grid2();
+        const c5 = card("5 · DFL: quoted vs curve-implied vs 1/3–2/3 skeleton", plotDiv("dt-dfl", 360));
+        c5.appendChild(note("Curve-implied = avg smooth Dated in the calendar month (business days, no holidays) + futures spreads to the front line (Oct→Dec, Nov→Jan, Dec→Feb, Jan→Mar). Skeleton = 1/3 S(M/M+2) + 2/3 S(M+1/M+2) from ICE spreads; skeleton − quoted ≈ weighted divergence + EFP terms. Hatched = month fitted by the solve (not a check) or incomplete grid."));
+        const c6 = card("DFL / DTD check table", null);
+        c6.appendChild(table([
+          { h: "Month", f: r => r.month }, { h: "Front line", f: r => r.front_line },
+          { h: "Quoted", num: 1, f: r => fv(r.quoted) }, { h: "Curve-implied", num: 1, f: r => fv(r.implied, 1) },
+          { h: "Quote − curve", num: 1, f: r => r.fitted ? "fitted" : fv(r.rich, 1), color: r => r.fitted ? C.muted : rc(r.rich) },
+          { h: "Skeleton", num: 1, f: r => fv(r.skeleton, 1) }, { h: "Skel − quoted", num: 1, f: r => fv(r.skel_resid, 1) },
+          { h: "Days", num: 1, f: r => r.coverage, color: r => r.complete ? C.text : C.red },
+        ], d.dfl));
+        c6.appendChild(el("div", { style: { height: "12px" } }));
+        c6.appendChild(table([
+          { h: "DTD spread", f: r => r.name }, { h: "Quoted", num: 1, f: r => fv(r.quoted) },
+          { h: "Identity (DFL₁ − DFL₂ + front spread)", num: 1, f: r => fv(r.identity, 1) },
+          { h: "Curve (avg₁ − avg₂)", num: 1, f: r => fv(r.curve, 1) },
+          { h: "Quote − curve", num: 1, f: r => fv(r.quoted == null ? null : r.quoted - r.curve, 1), color: r => rc(r.quoted == null ? null : r.quoted - r.curve) },
+        ], d.dtd));
+        c6.appendChild(note("Red = quote richer than the curve stack (curve says sell it), green = cheaper. Bal-month uses as-of → month-end."));
+        g5.appendChild(c5); g5.appendChild(c6); body.appendChild(g5);
+
+        // 6. Brent–Dubai
+        if (d.dubai && d.dubai.snapshots.length) {
+          const months = Object.keys(d.dubai.series.bd || {});
+          if (!st.dubMonth || !months.includes(st.dubMonth)) st.dubMonth = months.find(m => (d.dubai.series.bd[m] || []).slice(-1)[0] != null) || months[0];
+          const c7 = card("6 · Brent–Dubai complex across snapshots ($/bbl)", null);
+          const mp = el("div", { style: { display: "flex", gap: "6px", marginBottom: "8px", flexWrap: "wrap" } });
+          months.forEach(m => mp.appendChild(pill(m, st.dubMonth === m, () => { st.dubMonth = m; draw(); })));
+          c7.appendChild(mp); c7.appendChild(plotDiv("dt-dub", 360));
+          const g7 = grid2();
+          const tri = d.dubai.efs_bd_dub.map(r => Object.assign({ _dim: (r.bd_month < "Oct" && r.bd_month.startsWith("Sep")) }, r));
+          const idMax = {};
+          d.dubai.identity.forEach(r => { idMax[r.snap] = Math.max(idMax[r.snap] || 0, Math.abs(r.err)); });
+          const left = el("div", {});
+          left.appendChild(el("div", { style: { fontSize: "11px", fontWeight: "700", color: C.amber, margin: "6px 0" } }, "Triangle 1 — Dated/Dub − (DFL + B/D) (arithmetic identity)"));
+          left.appendChild(table([{ h: "Snapshot", f: r => r[0] }, { h: "max |error|", num: 1, f: r => r[1].toFixed(3), color: r => r[1] > 0.02 ? C.red : C.green }], Object.entries(idMax)));
+          left.appendChild(note("Ties to the cent in every snapshot, but one leg is derived from the other two, so this proves consistency of inputs, not market value. Murban/Dub − (Murban/Brent + EFS) is exact for the same reason."));
+          const right = el("div", {});
+          right.appendChild(el("div", { style: { fontSize: "11px", fontWeight: "700", color: C.amber, margin: "6px 0" } }, "Triangle 2 (added) — EFS(M+2) − B/D(M) vs Dubai M/M+2"));
+          right.appendChild(table([{ h: "B/D month", f: r => r.bd_month }, { h: "EFS month", f: r => r.efs_month }, { h: "Snapshot", f: r => r.snap }, { h: "EFS − B/D", num: 1, f: r => r.efs_minus_bd.toFixed(2) }, { h: "Dubai M/M+2", num: 1, f: r => r.dubai_spread.toFixed(2) }, { h: "Gap", num: 1, f: r => r.err.toFixed(2), color: r => Math.abs(r.err) > 0.3 ? "#fb923c" : C.green }], tri.slice(-12)));
+          right.appendChild(note("Independent check: front-line Brent vs Dubai M (B/D) and Brent vs Dubai M+2 (EFS) must differ by the Dubai M/M+2 spread. EFP (Brent futures vs BFOE, cents) and EFS (Brent futures vs Dubai swap, $) are different instruments: not interchangeable."));
+          g7.appendChild(left); g7.appendChild(right); c7.appendChild(g7);
+          body.appendChild(c7);
+        }
+
+        // 7. Marketwire
+        if (d.marketwire && d.marketwire.grades.length) {
+          const c8 = card(`7 · North Sea grades over the Dated setter (Platts ${d.marketwire.date || ""})`, plotDiv("dt-mw", 360));
+          c8.appendChild(note(`Dated-setting grade in the workbook period: WTI Midland (diff ${d.marketwire.setter}). Read Forties/BFOE grades relative to the setter, not as Dated itself. Period-specific; check the setter each window.`));
+          body.appendChild(c8);
+        }
+
+        // 8. Audit
+        const c9 = card(`Workbook audit — ${d.version} (${d.findings.length} findings)`, null);
+        d.findings.forEach(f => {
+          const r = el("div", { style: { borderLeft: `3px solid ${SEV[f.sev]}`, padding: "6px 10px", marginBottom: "8px", background: "#0a1020", borderRadius: "6px" } });
+          r.appendChild(el("div", { style: { fontSize: "12.5px", fontWeight: "700", color: C.text } }, `${f.sev.toUpperCase()} · ${f.title}`));
+          r.appendChild(el("div", { style: { fontSize: "11.5px", color: C.muted, marginTop: "3px", lineHeight: "1.5" } }, f.detail));
+          c9.appendChild(r);
+        });
+        body.appendChild(c9);
+
+        const c10 = card("Conventions used on this tab", null);
+        c10.innerHTML += `<div style="font-size:12px;color:${C.muted};line-height:1.7">
+          <b style="color:${C.text}">CFD</b> = Dated vs BFOE/futures over a weekly pricing window; quoted here vs ${esc(d.basis)}. Buy CFD = long Dated. Each level embeds a time spread (CFD vs Dec = CFD vs producing month + that month/Dec).<br>
+          <b style="color:${C.text}">BFOE(M) vs Dec futures</b> = (M futures − Dec futures) + EFP(M). Inputs: Dec EFP ${d.inputs.efp_dec}, Jan EFP ${d.inputs.efp_jan}, DecJan ${d.inputs.dec_jan}, JanFeb ${d.inputs.jan_feb}, FebMar ${d.inputs.feb_mar ?? "—"}.<br>
+          <b style="color:${C.text}">Divergence(M)</b> = BFOE(M) − average Dated over 11th M-1 → 10th M. Not observable directly (X factor: grade option, tolerance, membrane).<br>
+          <b style="color:${C.text}">DFL(M)</b> = Cal-M Dated − front-line futures ≈ 1/3 S(M/M+2) + 2/3 S(M+1/M+2) + EFP effect − weighted divergence (Dated ≈ 1/3 M-loading + 2/3 M+1-loading).<br>
+          <b style="color:${C.text}">Per-cargo X</b> = Dec EFP − window-average CFD (workbook sign): Dec BFOE minus the cargo's Dated. Not divergence and not vs Nov BFOE.<br>
+          <b style="color:${C.text}">Corrected vs workbook</b>: averages skip English bank holidays; week levels re-chained from the rolls; months with incomplete grid coverage flagged rather than shown as numbers.</div>`;
+        body.appendChild(c10);
+
+        setTimeout(() => plots(d), 0);
+      }
+
+      function plots(d) {
+        const days = d.daily.map(x => x.date);
+        const sm = d.daily.map(x => x.holiday ? null : u(x.smooth));
+        const shapes = [], ann = [];
+        shapes.push({ type: "rect", xref: "x", yref: "paper", x0: d.grid_start, x1: d.asof, y0: 0, y1: 1, fillcolor: "rgba(148,163,184,0.07)", line: { width: 0 }, layer: "below" });
+        ann.push({ x: d.asof, y: 1, yref: "paper", text: "as-of " + d.asof, showarrow: false, font: { size: 10, color: C.muted }, xanchor: "left", yanchor: "bottom" });
+        const tr = [
+          { x: days, y: sm, name: "Smooth daily Dated (KKT)", mode: "lines", line: { color: C.cyan, width: 2.6, shape: "spline", smoothing: 0.6 }, fill: "tozeroy", fillcolor: "rgba(34,211,238,0.08)", hovertemplate: "%{x}<br>smooth %{y:.1f}<extra></extra>" },
+          { x: days, y: d.daily.map(x => u(x.step)), name: "Weekly CFD step", mode: "lines", line: { color: C.gold, width: 2, shape: "hv" }, hovertemplate: "step %{y:.1f}<extra></extra>" },
+        ];
+        d.divergence.forEach((v, i) => {
+          if (v.start > d.grid_end) return;
+          const x1 = v.end < d.grid_end ? v.end : d.grid_end;
+          tr.push({ x: [v.start, x1], y: [u(v.bfoe), u(v.bfoe)], name: `BFOE ${v.month} (membrane)`, mode: "lines", line: { color: C.purple, width: 2.5, dash: "dash" }, legendgroup: "bfoe", showlegend: i === 0, hovertemplate: `BFOE ${v.month} %{y:.1f}<extra></extra>` });
+          shapes.push({ type: "line", xref: "x", yref: "paper", x0: v.start, x1: v.start, y0: 0, y1: 1, line: { color: "rgba(139,92,246,0.35)", width: 1, dash: "dot" } });
+          ann.push({ x: v.start, y: 0.98, yref: "paper", text: `${v.month} universe`, showarrow: false, font: { size: 9.5, color: C.purple }, xanchor: "left" });
+        });
+        const bfoeFor = (date) => { const v = d.divergence.find(x => x.start <= date && date <= x.end); return v ? v.bfoe : null; };
+        const vx = [], vy = [];
+        d.daily.forEach(x => { const b = bfoeFor(x.date); if (b != null && !x.holiday && x.smooth > b) { vx.push(x.date); vy.push(u(x.smooth)); } });
+        if (vx.length) tr.push({ x: vx, y: vy, name: "Dated > BFOE (membrane breach)", mode: "markers", marker: { color: C.red, size: 7, line: { color: "#fff", width: 0.5 } }, hovertemplate: "%{x} above BFOE<extra></extra>" });
+        const hx = d.daily.filter(x => x.holiday);
+        if (hx.length) tr.push({ x: hx.map(x => x.date), y: hx.map(x => u(x.smooth)), name: "UK holiday (excluded)", mode: "markers", marker: { symbol: "x", color: C.muted, size: 9 } });
+        Plotly.newPlot("dt-curve", tr, L({ xaxis: AX({ type: "date" }), yaxis: AX({ title: { text: uLbl() } }), shapes, annotations: ann, margin: { t: 30, b: 60, l: 65, r: 20 } }), cfg);
+
+        const w = d.weeks;
+        Plotly.newPlot("dt-ladder", [
+          { x: w.map(x => x.start.slice(5) + "→" + x.end.slice(5)), y: w.map(x => u(x.level)), type: "bar", name: "CFD level", marker: { color: w.map(x => x.realized ? "#475569" : (x.contains_asof ? C.cyan : C.gold)), line: { color: w.map(x => Math.abs(x.fit_err || 0) > 2 ? C.red : "rgba(0,0,0,0)"), width: 2.5 } }, text: w.map(x => fv(x.level)), textposition: "outside", textfont: { size: 9.5, color: C.text }, hovertemplate: "%{x}<br>level %{y:.1f}<extra></extra>" },
+          { x: w.map(x => x.start.slice(5) + "→" + x.end.slice(5)), y: w.map(x => u(x.roll_to_next)), name: "Roll to next", yaxis: "y2", mode: "lines+markers", line: { color: C.purple, width: 2 }, marker: { size: 6 } },
+        ], L({ xaxis: AX({ tickangle: -45, tickfont: { size: 9.5 } }), yaxis: AX({ title: { text: uLbl() } }), yaxis2: AX({ overlaying: "y", side: "right", showgrid: false, title: { text: "roll" } }), margin: { t: 20, b: 80, l: 60, r: 50 }, hovermode: "closest" }), cfg);
+
+        const dv = d.divergence.filter(x => x.avg_dated != null);
+        Plotly.newPlot("dt-div", [
+          { x: dv.map(x => x.month), y: dv.map(x => u(x.divergence)), type: "bar", name: "Divergence (holidays excl.)", marker: { color: dv.map(x => x.divergence < 0 ? C.red : C.green), opacity: dv.map(x => x.complete ? 1 : 0.4) }, text: dv.map(x => fv(x.divergence, 1) + (x.complete ? "" : " · " + x.coverage + " days")), textposition: "outside", textfont: { color: C.text } },
+          { x: dv.map(x => x.month), y: dv.map(x => u(x.divergence_wb)), type: "scatter", mode: "markers", name: "Workbook (incl. holidays)", marker: { symbol: "diamond", size: 11, color: C.gold } },
+        ], L({ yaxis: AX({ title: { text: uLbl() } }), xaxis: AX(), margin: { t: 20, b: 50, l: 60, r: 20 }, hovermode: "closest" }), cfg);
+
+        const cg = d.cargoes;
+        Plotly.newPlot("dt-cargo", [
+          { x: cg.map(c => c.cargo + " " + c.bl.slice(5)), y: cg.map(c => u(c.avg_natural)), type: "bar", name: "Natural Platts window (B/L −30…−10d)", marker: { color: "rgba(139,92,246,0.55)" } },
+          { x: cg.map(c => c.cargo + " " + c.bl.slice(5)), y: cg.map(c => u(c.avg_cal)), type: "bar", name: "Contract window B/L ±5d", marker: { color: C.cyan } },
+          { x: cg.map(c => c.cargo + " " + c.bl.slice(5)), y: cg.map(c => u(c.avg_5q)), type: "bar", name: "5 quotes 2-1-2", marker: { color: "rgba(56,189,248,0.4)" } },
+          { x: cg.map(c => c.cargo + " " + c.bl.slice(5)), y: cg.map(c => u(c.x)), name: "X = EFP − window (bid/offer bars)", mode: "markers+lines", yaxis: "y2", line: { color: C.gold, width: 2 }, marker: { size: 9, color: C.gold }, error_y: { type: "data", array: cg.map(() => u(d.inputs.half_spread)), color: C.gold, thickness: 1.2 } },
+        ], L({ barmode: "group", xaxis: AX(), yaxis: AX({ title: { text: "avg Dated vs Dec, " + uLbl() } }), yaxis2: AX({ overlaying: "y", side: "right", showgrid: false, title: { text: "X" }, zeroline: true, zerolinecolor: C.gold }), margin: { t: 20, b: 60, l: 65, r: 55 }, hovermode: "x unified" }), cfg);
+
+        const df = d.dfl;
+        Plotly.newPlot("dt-dfl", [
+          { x: df.map(r => r.month), y: df.map(r => u(r.skel_s1)), type: "bar", name: "1/3 × S(M/M+2)", marker: { color: "rgba(139,92,246,0.7)" }, offsetgroup: "s" },
+          { x: df.map(r => r.month), y: df.map(r => u(r.skel_s2)), type: "bar", name: "2/3 × S(M+1/M+2)", marker: { color: "rgba(139,92,246,0.35)" }, offsetgroup: "s", base: df.map(r => u(r.skel_s1)) },
+          { x: df.map(r => r.month), y: df.map(r => u(r.implied)), type: "bar", name: "Curve-implied", offsetgroup: "c", marker: { color: C.cyan, opacity: df.map(r => (r.fitted || !r.complete) ? 0.35 : 1), pattern: { shape: df.map(r => (r.fitted || !r.complete) ? "/" : "") } } },
+          { x: df.map(r => r.month), y: df.map(r => u(r.quoted)), name: "Quoted (run)", mode: "markers+text", marker: { symbol: "diamond", size: 14, color: C.gold, line: { color: "#000", width: 1 } }, text: df.map(r => r.quoted == null ? "" : fv(r.quoted)), textposition: "top center", textfont: { color: C.gold, size: 11 } },
+        ], L({ barmode: "group", xaxis: AX(), yaxis: AX({ title: { text: uLbl() } }), margin: { t: 20, b: 50, l: 60, r: 20 }, hovermode: "x unified" }), cfg);
+
+        if (d.dubai && document.getElementById("dt-dub")) {
+          const s = d.dubai.series, m = st.dubMonth, X = d.dubai.snapshots;
+          const S = (k, name, col, dash) => ({ x: X, y: (s[k] || {})[m] || [], name, mode: "lines+markers", line: { color: col, width: 2.4, dash }, marker: { size: 7 }, connectgaps: false });
+          Plotly.newPlot("dt-dub", [
+            S("dated_dub", "Dated/Dubai", C.cyan), S("dfl", "DFL (Dated − front Brent)", C.gold), S("bd", "B/D swap (front Brent − Dubai)", C.purple),
+            S("efs", "EFS (Brent fut − Dubai swap, same month)", C.green, "dot"), S("murban_dub", "Murban/Dubai", "#f472b6", "dash"), S("murban_brent", "Murban/Brent", "#fb923c", "dash"),
+          ], L({ xaxis: AX({ type: "category" }), yaxis: AX({ title: { text: "$/bbl · " + m } }), margin: { t: 20, b: 60, l: 60, r: 20 } }), cfg);
+        }
+        if (d.marketwire && document.getElementById("dt-mw")) {
+          const g = d.marketwire.grades.filter(x => x.over_setter != null).sort((a, b) => a.over_setter - b.over_setter);
+          Plotly.newPlot("dt-mw", [{ y: g.map(x => x.grade), x: g.map(x => x.over_setter), type: "bar", orientation: "h", marker: { color: g.map(x => x.over_setter === 0 ? C.gold : (x.cif ? "rgba(139,92,246,0.7)" : C.cyan)) }, text: g.map(x => x.over_setter.toFixed(2)), textposition: "outside", textfont: { color: C.text, size: 10 }, name: "over setter" }],
+            L({ xaxis: AX({ title: { text: "$/bbl over WTI Midland (setter)" } }), yaxis: AX({ tickfont: { size: 10.5 } }), margin: { t: 10, b: 50, l: 200, r: 40 }, showlegend: false, hovermode: "closest" }), cfg);
+        }
+      }
+
+      renderUnits();
+      load();
+    }
+
     async function renderSignal(box) {
       box.innerHTML = "";
       const CLASS_COL = { VLCC: C.purple, Suezmax: C.cyan, Aframax: C.gold, All: C.amber, Unknown: C.muted };
@@ -8477,6 +8743,9 @@
         { id: "pricing", label: "Pricing", icon: "🏷️" },
         { id: "margins", label: "Refinery Margins", icon: "📈" },
       ]},
+      { name: "Brent Complex", items: [
+        { id: "dated", label: "Dated Brent", icon: "⚖️" },
+      ]},
       { name: "Balances & Stocks", items: [
         { id: "gb", label: "Gasoline Balances", icon: "⛽" },
         { id: "jodi", label: "JODI Global", icon: "🌍" },
@@ -8555,6 +8824,7 @@
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }
       if (id === "ksql" && !panes.ksql._loaded) { panes.ksql._loaded = true; renderKSQL(panes.ksql); }
+      if (id === "dated" && !panes.dated._loaded) { panes.dated._loaded = true; renderDated(panes.dated); }
       if (id === "signal" && !panes.signal._loaded) { panes.signal._loaded = true; renderSignal(panes.signal); }
     }
 
