@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+app/live_ticks.json
+app/live_positioning.json
+app/voloi_live.json
+bridge/bridge_config.json
+.env
+*.secrets.env
+app/dated_workbook.xlsx
+app/asia_balances.json
