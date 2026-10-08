@@ -7994,9 +7994,9 @@
       const PAL = ["#38bdf8", "#8b5cf6", "#22d3ee", "#f5b90f", "#10b981", "#ef4444", "#f472b6", "#a3e635", "#fb923c", "#60a5fa", "#c084fc", "#34d399"];
       const state = { days: 90, cls: "All", load: "All", scope: "key", strait: "ALL", data: null, status: null, view: "passages" };
       const LOAD_COL = { All: C.amber, Laden: C.green, Ballast: C.muted };
-      const VIEWS = [["passages", "⛵ Strait passages"], ["hormuz", "🚧 Hormuz flows"], ["fleet", "📍 Fleet tracker"], ["flows", "🛢 Crude flows"], ["tonnage", "⚓ Tonnage lists"]];
-      const TITLES = { passages: "Tanker Strait Passages", hormuz: "Hormuz Flows & Dark Transits", fleet: "Fleet Tracker (live AIS)", flows: "Dirty Crude Flows (voyages)", tonnage: "Available Tonnage (supply)" };
-      const SUBS = { passages: "daily vessel crossings of straits & waypoints (AIS), laden vs ballast", hormuz: "oil leaving the Gulf: AIS-confirmed Hormuz exits + reconstructed unobserved (dark) transits, Gulf of Oman by-pass routes, Red Sea exits", fleet: "latest AIS position, voyage status, destination & ETA for every DPP VLCC / Suezmax / Aframax", flows: "weekly dirty loadings by load region, load→discharge matrix and cargo currently on the water (Signal voyage estimates, barrels)", tonnage: "vessels that can reach each configured load port within N days · open/fixed status, ETA buckets, history" };
+      const VIEWS = [["passages", "⛵ Strait passages"], ["hormuz", "🚧 Hormuz flows"], ["fleet", "📍 Fleet tracker"], ["flows", "🛢 Crude flows"], ["tonnage", "⚓ Tonnage lists"], ["fixtures", "📝 Fixtures"]];
+      const TITLES = { passages: "Tanker Strait Passages", hormuz: "Hormuz Flows & Dark Transits", fleet: "Fleet Tracker (live AIS)", flows: "Dirty Crude Flows (voyages)", tonnage: "Available Tonnage (supply)", fixtures: "Spot Fixtures" };
+      const SUBS = { passages: "daily vessel crossings of straits & waypoints (AIS), laden vs ballast", hormuz: "oil leaving the Gulf: AIS-confirmed Hormuz exits + reconstructed unobserved (dark) transits, Gulf of Oman by-pass routes, Red Sea exits", fleet: "latest AIS position, voyage status, destination & ETA for every DPP VLCC / Suezmax / Aframax", flows: "weekly dirty loadings by load region, load→discharge matrix and cargo currently on the water (Signal voyage estimates, barrels)", tonnage: "vessels that can reach each configured load port within N days · open/fixed status, ETA buckets, history", fixtures: "reported spot fixtures — on subs / fully fixed / failed, laycan, route, charterer, rate (WS / lump sum)" };
 
       const hdr = el("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "14px", flexWrap: "wrap", gap: "10px" } });
       const hl = el("div", {});
@@ -8013,7 +8013,7 @@
       const ctrl = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" } });
       const body = el("div", {});
       box.appendChild(ctrl); box.appendChild(body);
-      const vstate = { fleet: { cls: "All", load: "All", status: "All", q: "", region: "All", data: null }, flows: { days: 365, src: "ALL", data: null }, tonnage: { days: 90, port: null, data: null }, hormuz: { days: 270, cargo: "all", rsCls: "VLCC", split: "status", data: null, timer: null } };
+      const vstate = { fleet: { cls: "All", load: "All", status: "All", q: "", region: "All", data: null }, flows: { days: 365, src: "ALL", data: null }, tonnage: { days: 90, port: null, data: null }, hormuz: { days: 270, cargo: "all", rsCls: "VLCC", split: "status", data: null, timer: null }, fixtures: { days: 3, cls: "All", status: "All", area: "All", q: "", data: null } };
       const AXB = { gridcolor: "#1e293b", tickfont: { size: 11 } }; // fresh axis objects: Plotly mutates the layout it is given, so never share plotLayout.xaxis
       function renderSubnav() {
         subnav.innerHTML = "";
@@ -8029,6 +8029,7 @@
         if (state.view === "fleet") loadFleet(false);
         else if (state.view === "flows") loadFlows(false);
         else if (state.view === "hormuz") loadHormuz(false);
+        else if (state.view === "fixtures") loadFixtures(false);
         else loadTonnage(false);
       }
 
@@ -8501,6 +8502,102 @@
         ], d.ports, { maxH: 460 });
         body.appendChild(card(`All configured load ports — tonnage list ${d.as_of}`, tw));
         body.appendChild(stamp(d, `configurations from ${d.source.config} · distinct vessels per port/day · negative DaysToETA (already passed) excluded`));
+      }
+
+      // ── FIXTURES (spot fixtures reported on voyages) ──
+      const FX_STATUS_COL = { OnSubs: "#38bdf8", FullyFixed: C.green, PossFixed: C.gold, Failed: C.red, Unknown: C.muted };
+      const FX_STATUS_LBL = { OnSubs: "On Subs", FullyFixed: "Fully Fixed", PossFixed: "Poss. Fixed", Failed: "Failed", Unknown: "?" };
+      const fxRate = r => r.rate == null ? null : (r.rate_type === "WS" ? `WS ${r.rate % 1 ? r.rate.toFixed(1) : r.rate.toFixed(0)}` : r.rate_type === "LS" ? `$${r.rate >= 1e6 ? (r.rate / 1e6).toFixed(2) + "M" : (r.rate / 1e3).toFixed(0) + "k"} LS` : `${r.rate} ${r.rate_type || ""}`);
+      const fxQty = r => r.qty != null && r.qty_unit ? (/tonne/i.test(r.qty_unit) ? `${(r.qty / 1000).toFixed(0)} kt` : `${r.qty.toLocaleString()} ${r.qty_unit}`) : (r.bbl ? `${(r.bbl / 1e6).toFixed(2)} mb` : null);
+      const fxLaycan = r => !r.laycan_from ? null : (r.laycan_to && r.laycan_to !== r.laycan_from ? `${r.laycan_from.slice(5)} → ${r.laycan_to.slice(5)}` : r.laycan_from.slice(5));
+      const median = a => { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+      async function loadFixtures(force) {
+        const fs = vstate.fixtures;
+        if (!fs.data || force || fs.data.days !== fs.days) {
+          body.innerHTML = `<div style="color:${C.muted};padding:30px;text-align:center">Loading fixtures from Signal…</div>`;
+          try { fs.data = await (await fetch(`/api/signal/fixtures?days=${fs.days}${force ? "&refresh=1" : ""}`)).json(); }
+          catch (e) { body.innerHTML = `<div style="color:${C.red};padding:30px">${e.message}</div>`; return; }
+          if (state.view !== "fixtures") return;
+        }
+        if (!fs.data.available) return failBox("fixtures", fs.data);
+        drawFixtures();
+      }
+      function drawFixtures() {
+        const fs = vstate.fixtures, d = fs.data;
+        body.innerHTML = "";
+        const c = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "10px" } });
+        c.appendChild(lbl("FIXTURE DATE"));
+        [[3, "Last 3d"], [7, "7d"], [14, "14d"], [30, "30d"], [60, "60d"]].forEach(([n, l]) => c.appendChild(pill(l, fs.days === n, () => { fs.days = n; loadFixtures(false); })));
+        c.appendChild(gap()); c.appendChild(lbl("CLASS"));
+        ["All", "VLCC", "Suezmax", "Aframax"].forEach(cl => c.appendChild(pill(cl, fs.cls === cl, () => { fs.cls = cl; drawFixtures(); }, CLASS_COL[cl])));
+        c.appendChild(refreshBtn(() => loadFixtures(true)));
+        body.appendChild(c);
+        const c2 = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" } });
+        c2.appendChild(lbl("STATE"));
+        ["All", ...d.statuses].forEach(st => c2.appendChild(pill(st === "All" ? "All" : FX_STATUS_LBL[st], fs.status === st, () => { fs.status = st; drawFixtures(); }, st === "All" ? null : FX_STATUS_COL[st])));
+        c2.appendChild(gap()); c2.appendChild(lbl("LOAD AREA"));
+        const areas = [...new Set(d.rows.map(r => r.load_area).filter(Boolean))].sort();
+        const aSel = el("select", { style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "4px 8px", fontSize: "12px" } });
+        ["All", ...areas].forEach(a => { const o = el("option", { value: a }, a); if (a === fs.area) o.selected = true; aSel.appendChild(o); });
+        aSel.addEventListener("change", () => { fs.area = aSel.value; drawFixtures(); }); c2.appendChild(aSel);
+        c2.appendChild(gap());
+        const qIn = el("input", { placeholder: "Find vessel / charterer / port…", value: fs.q, style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "5px 9px", fontSize: "12px", width: "230px" } });
+        qIn.addEventListener("keydown", e => { if (e.key === "Enter") { fs.q = qIn.value.trim(); drawFixtures(); } });
+        qIn.addEventListener("change", () => { fs.q = qIn.value.trim(); drawFixtures(); });
+        c2.appendChild(qIn);
+        body.appendChild(c2);
+
+        const q = fs.q.toLowerCase();
+        const base = d.rows.filter(r => (fs.cls === "All" || r.cls === fs.cls) && (fs.area === "All" || r.load_area === fs.area) && (!q || [r.vessel, r.charterer, r.load_port, r.dis_port, r.operator, r.load_country, r.dis_country].some(v => v && String(v).toLowerCase().includes(q))));
+        const rows = base.filter(r => fs.status === "All" || r.status === fs.status);
+        const live = base.filter(r => r.status !== "Failed");
+        const cnt = st => base.filter(r => r.status === st).length;
+        const kpi = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(175px, 1fr))", gap: "10px", marginBottom: "14px" } });
+        kpi.appendChild(kpiCard(`Fixtures · last ${d.days}d`, String(live.length), `${cnt("OnSubs")} on subs · ${cnt("FullyFixed")} fully fixed · ${cnt("PossFixed")} poss. · ${cnt("Failed")} failed`, C.amber));
+        d.classes.forEach(cl => { const n = live.filter(r => r.cls === cl).length; if (fs.cls === "All" || fs.cls === cl) kpi.appendChild(kpiCard(`${cl} fixtures`, String(n), `${live.filter(r => r.cls === cl && r.status === "OnSubs").length} on subs · ${live.filter(r => r.cls === cl && r.coa).length} COA`, CLASS_COL[cl])); });
+        const ag = live.filter(r => /Arabian Gulf|Red Sea|Gulf of Oman/i.test(r.load_area || ""));
+        kpi.appendChild(kpiCard("Middle East loading", String(ag.length), `${ag.filter(r => r.load_port && /Fujairah|Khor Fakkan|Sohar|Mina Al Fahal|Duqm|Yanbu|Jeddah|Ras Markaz/i.test(r.load_port)).length} outside Hormuz (Fujairah / Oman / Red Sea)`, "#f472b6"));
+        const ws = live.filter(r => r.rate_type === "WS" && r.cls === (fs.cls === "All" ? "VLCC" : fs.cls)).map(r => r.rate), ls = live.filter(r => r.rate_type === "LS" && r.cls === (fs.cls === "All" ? "VLCC" : fs.cls)).map(r => r.rate);
+        kpi.appendChild(kpiCard(`${fs.cls === "All" ? "VLCC" : fs.cls} reported rates`, ws.length ? `WS ${median(ws).toFixed(0)}` : (ls.length ? `$${(median(ls) / 1e6).toFixed(2)}M` : "—"), `median · ${ws.length} WS prints${ls.length ? ` · ${ls.length} lump sums, median $${(median(ls) / 1e6).toFixed(2)}M` : ""}`, C.cyan));
+        kpi.appendChild(kpiCard("Charterer disclosed", `${live.length ? Math.round(live.filter(r => r.charterer).length / live.length * 100) : 0}%`, `rate disclosed on ${live.length ? Math.round(live.filter(r => r.rate != null).length / live.length * 100) : 0}%`, C.muted));
+        body.appendChild(kpi);
+
+        const two = el("div", { style: { display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: "12px", marginBottom: "14px" } });
+        const dDiv = el("div", { style: { height: "290px" } }); two.appendChild(card("Fixtures per day by class (excl. failed)", dDiv, { marginBottom: "0" }));
+        const aDiv = el("div", { style: { height: "290px" } }); two.appendChild(card("Fixtures by load area and class", aDiv, { marginBottom: "0" }));
+        body.appendChild(two);
+        const two2 = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: "12px", marginBottom: "14px" } });
+        const cDiv = el("div", { style: { height: "300px" } }); two2.appendChild(card("Most active charterers (disclosed only)", cDiv, { marginBottom: "0" }));
+        const rDiv = el("div", { style: { height: "300px" } }); two2.appendChild(card("Reported Worldscale prints by fixture time (hover for route)", rDiv, { marginBottom: "0" }));
+        body.appendChild(two2);
+        loadPlotly(() => {
+          const days = [...new Set(live.map(r => r.day))].sort();
+          Plotly.newPlot(dDiv, d.classes.map(cl => ({ type: "bar", name: cl, x: days, y: days.map(x => live.filter(r => r.day === x && r.cls === cl).length), marker: { color: CLASS_COL[cl] } })), { ...plotLayout, barmode: "stack", margin: { t: 10, b: 40, l: 35, r: 10 }, xaxis: { ...AXB, type: "date" }, yaxis: { ...AXB, title: { text: "fixtures", font: { size: 10, color: C.muted } } }, legend: { orientation: "h", y: 1.1, font: { size: 10 } } }, { responsive: true, displayModeBar: false });
+          const ac = {}; live.forEach(r => { const a = r.load_area || "Unknown"; ac[a] = ac[a] || {}; ac[a][r.cls] = (ac[a][r.cls] || 0) + 1; });
+          const al = Object.keys(ac).sort((a, b) => Object.values(ac[a]).reduce((x, y) => x + y, 0) - Object.values(ac[b]).reduce((x, y) => x + y, 0)).slice(-14);
+          Plotly.newPlot(aDiv, d.classes.map(cl => ({ type: "bar", orientation: "h", name: cl, y: al, x: al.map(a => ac[a][cl] || 0), marker: { color: CLASS_COL[cl] } })), { ...plotLayout, barmode: "stack", showlegend: false, margin: { t: 10, b: 30, l: 150, r: 10 }, xaxis: { ...AXB }, yaxis: { ...AXB, type: "category" } }, { responsive: true, displayModeBar: false });
+          const ch = {}; live.filter(r => r.charterer).forEach(r => { ch[r.charterer] = ch[r.charterer] || {}; ch[r.charterer][r.cls] = (ch[r.charterer][r.cls] || 0) + 1; });
+          const cl2 = Object.keys(ch).sort((a, b) => Object.values(ch[a]).reduce((x, y) => x + y, 0) - Object.values(ch[b]).reduce((x, y) => x + y, 0)).slice(-15);
+          Plotly.newPlot(cDiv, d.classes.map(cl => ({ type: "bar", orientation: "h", name: cl, y: cl2, x: cl2.map(a => ch[a][cl] || 0), marker: { color: CLASS_COL[cl] } })), { ...plotLayout, barmode: "stack", showlegend: false, margin: { t: 10, b: 30, l: 150, r: 10 }, xaxis: { ...AXB }, yaxis: { ...AXB, type: "category" } }, { responsive: true, displayModeBar: false });
+          Plotly.newPlot(rDiv, d.classes.map(cl => { const rs = live.filter(r => r.cls === cl && r.rate_type === "WS"); return { type: "scatter", mode: "markers", name: cl, x: rs.map(r => r.fixed_at), y: rs.map(r => r.rate), text: rs.map(r => `${r.vessel} · ${r.load_port || "?"} → ${r.dis_port || "?"} · ${r.charterer || "n/d"}`), hovertemplate: "%{text}<br>WS %{y}<extra></extra>", marker: { color: CLASS_COL[cl], size: 8, opacity: .85 } }; }), { ...plotLayout, margin: { t: 10, b: 40, l: 45, r: 10 }, xaxis: { ...AXB, type: "date" }, yaxis: { ...AXB, title: { text: "Worldscale", font: { size: 10, color: C.muted } } }, legend: { orientation: "h", y: 1.1, font: { size: 10 } } }, { responsive: true, displayModeBar: false });
+        });
+
+        const badge = st => `<span style="border:1px solid ${FX_STATUS_COL[st] || C.muted};color:${FX_STATUS_COL[st] || C.muted};border-radius:4px;padding:1px 6px;font-size:10.5px;font-weight:700">${FX_STATUS_LBL[st] || esc(st)}</span>`;
+        const tw = table([
+          { h: "Vessel", f: r => `<b>${esc(r.vessel)}</b> <span style="color:${C.muted}">(${r.built || "?"}, ${r.dwt_k ? r.dwt_k + "k" : "?"})</span><br><span style="color:${C.muted};font-size:10.5px">${esc(r.operator || "")}</span>${r.sanctioned ? ` <span style="color:${C.red};font-size:10px;font-weight:700">SANCTIONED ${esc(r.sanctioned)}</span>` : ""}` },
+          { h: "Class", f: r => r.cls, color: r => CLASS_COL[r.cls] || C.text },
+          { h: "Fixture date", f: r => (r.fixed_at || "").replace("T", " ").slice(0, 16) },
+          { h: "State", f: r => badge(r.status) + (r.coa ? ` <span style="color:${C.muted};font-size:10px">COA</span>` : "") + (r.hold ? ` <span style="color:${C.muted};font-size:10px">HOLD</span>` : "") },
+          { h: "Laycan", f: fxLaycan },
+          { h: "Load", f: r => r.load_port ? `${esc(r.load_port)}<br><span style="color:${C.muted};font-size:10.5px">${esc(r.load_area || "")}</span>` : null },
+          { h: "Discharge", f: r => r.dis_port ? `${esc(r.dis_port)}<br><span style="color:${C.muted};font-size:10.5px">${esc(r.dis_country || "")}</span>` : null },
+          { h: "Charterer", f: r => esc(r.charterer || "") },
+          { h: "Rate", num: true, f: fxRate, color: () => C.cyan },
+          { h: "Quantity", num: true, f: fxQty },
+          { h: "Cargo", f: r => esc(r.cargo || r.cargo_group || "") },
+        ], rows, { maxH: 620 });
+        body.appendChild(card(`Fixture list — ${rows.length} of ${d.rows.length} fixtures in the last ${d.days} days (newest first)`, tw));
+        body.appendChild(stamp(d, `VLCC / Suezmax / Aframax DPP only · fixtures are those Signal has matched to a voyage, so a few broker-only reports on the Signal screen (no voyage yet) won't appear · rates shown as reported (WS points or lump sum $), not normalised · TCE / broker / source fields are not in the data warehouse`));
       }
 
       // ── HORMUZ FLOWS (observed + reconstructed dark transits) ──

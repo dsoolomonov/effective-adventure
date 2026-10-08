@@ -13768,6 +13768,57 @@ def _signal_tonnage(days: int) -> dict:
     }
 
 
+def _signal_fixtures(days: int) -> dict:
+    """Spot fixtures (OnSubs / FullyFixed / PossFixed / Failed) reported on DPP voyages (uvS_VoyagesSummary)."""
+    d = max(1, min(int(days), 120))
+    rows = _signal_rows(
+        "SELECT VoyageID AS vid, IMO AS imo, VesselName AS vessel, VesselClass AS cls, Deadweight AS dwt, YearBuilt AS built, CommercialOperator AS operator, "
+        "FixtureDate AS fixed_at, FixtureStatus AS status, FixtureIsCOA AS coa, FixtureIsHold AS hold, LaycanFrom AS lc_from, LaycanTo AS lc_to, "
+        "FirstLoadPortName AS load_port, FirstLoadPortCountryName AS load_country, FirstLoadPortLevel0AreaName AS load_area, "
+        "LastDischargePortName AS dis_port, LastDischargePortCountryName AS dis_country, LastDischargePortLevel0AreaName AS dis_area, "
+        "Charterer AS charterer, Rate AS rate, RateType AS rate_type, Quantity AS qty, QuantityUnit AS qty_unit, QuantityInBarrels AS bbl, "
+        "CargoGroup AS cargo_group, CargoType AS cargo, Horizon AS horizon, VesselSanctionedBy AS sanctioned "
+        "FROM dbo.uvS_VoyagesSummary "
+        f"WHERE FixtureDate >= DATEADD(day, -{d}, GETUTCDATE()) AND VesselClassID IN ({_SIGNAL_CLS_IN}) "
+        "ORDER BY FixtureDate DESC",
+        timeout=120,
+    )
+    out = []
+    for r in rows:
+        def ds(v, n=10):
+            return str(v)[:n] if v is not None else None
+        rate = float(r["rate"]) if r["rate"] is not None else None
+        qty = float(r["qty"]) if r["qty"] is not None else None
+        out.append({
+            "vid": r["vid"], "imo": r["imo"], "vessel": r["vessel"], "cls": r["cls"] or "Unknown",
+            "dwt_k": round(float(r["dwt"]) / 1000) if r["dwt"] else None, "built": r["built"], "operator": r["operator"],
+            "fixed_at": ds(r["fixed_at"], 16), "day": ds(r["fixed_at"]), "status": r["status"] or "Unknown",
+            "coa": bool(r["coa"]), "hold": bool(r["hold"]), "laycan_from": ds(r["lc_from"]), "laycan_to": ds(r["lc_to"]),
+            "load_port": r["load_port"], "load_country": r["load_country"], "load_area": r["load_area"],
+            "dis_port": r["dis_port"], "dis_country": r["dis_country"], "dis_area": r["dis_area"],
+            "charterer": r["charterer"], "rate": rate, "rate_type": r["rate_type"],
+            "qty": qty, "qty_unit": r["qty_unit"], "bbl": float(r["bbl"]) if r["bbl"] is not None else None,
+            "cargo_group": r["cargo_group"], "cargo": r["cargo"], "horizon": r["horizon"], "sanctioned": r["sanctioned"],
+        })
+    return {
+        "available": True, "days": d, "rows": out,
+        "statuses": ["OnSubs", "FullyFixed", "PossFixed", "Failed"], "classes": list(_SIGNAL_WP_CLASSES.values()),
+        "source": {"table_key": "dbo.uvS_VoyagesSummary (FixtureDate, FixtureStatus, Laycan, Charterer, Rate)", "class": _SIGNAL_CLS_IN},
+        "fetched_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/api/signal/fixtures")
+async def signal_fixtures(days: int = Query(14, ge=1, le=120), refresh: bool = Query(False)):
+    """Recent DPP spot fixtures (VLCC / Suezmax / Aframax) with status, laycan, route, charterer and rate."""
+    if not _signal_configured():
+        return {"available": False, "reason": "not_configured"}
+    try:
+        return await asyncio.to_thread(_signal_cached, f"fixtures:{days}", SIGNAL_DATA_TTL, refresh, lambda: _signal_fixtures(days))
+    except Exception as e:
+        return {"available": False, "reason": "error", "error": str(e)[:400]}
+
+
 @app.get("/api/signal/fleet")
 async def signal_fleet(refresh: bool = Query(False)):
     """Latest AIS position/status for the DPP VLCC/Suezmax/Aframax fleet."""
