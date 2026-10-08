@@ -14728,6 +14728,7 @@ _BFOE_FAF = [("FHPRM00", "FAF Hound Point-Rotts"), ("FMGRM00", "FAF Mongstad-Rot
              ("FSTRM00", "FAF Sture-Rotts"), ("FSVRM00", "FAF Sullom Voe-Rotts"), ("FTSRM00", "FAF Teesside-Rotts")]
 _BFOE_DEESC = "AAUXL00"
 _BFOE_SULFUR_TRIGGER = 0.60
+_BFOE_MANUAL = {"deesc": 0.15, "buzzard_pct": 18.0}
 _BFOE_DAYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 _BFOE_CACHE: dict = {}
 
@@ -14876,6 +14877,9 @@ def _bfoe_model(date_str):
                    "label": "Reconstruction from Platts day-by-day grade curves (daily low ex-QP, averaged) — not Platts' published Dated Brent"},
         "qp": qp_tab, "faf": faf, "faf_date": max([f["date"] for f in faf if f["date"]], default=None),
         "forties_quality": {"deesc": de_v, "deesc_date": de_d, "deesc_symbol": _BFOE_DEESC,
+                            "deesc_source": "platts" if de_v is not None else "manual",
+                            "deesc_manual": _BFOE_MANUAL["deesc"],
+                            "buzzard_pct": _BFOE_MANUAL["buzzard_pct"], "buzzard_source": "manual",
                             "sulfur_trigger": _BFOE_SULFUR_TRIGGER, "ineos": None},
     }
 

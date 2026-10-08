@@ -5893,8 +5893,9 @@
       const fq = d.forties_quality;
       const strip = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: "8px" } });
       const cell = (label, val, src, col) => { const c = el("div", { style: { border: `1px solid ${C.border}`, borderRadius: "6px", padding: "8px 10px" } }); c.appendChild(el("div", { style: { color: C.muted, fontSize: "10px", fontWeight: "700", letterSpacing: "0.6px", textTransform: "uppercase" } }, label)); c.appendChild(el("div", { style: { color: col || C.text, fontSize: "16px", fontWeight: "700", margin: "3px 0", fontVariantNumeric: "tabular-nums" } }, val)); c.appendChild(el("div", { style: { color: C.muted, fontSize: "10px" } }, src)); return c; };
-      strip.appendChild(cell("Sulfur de-escalator", fq.deesc == null ? "n/a" : "$" + f4(fq.deesc), fq.deesc == null ? `Platts ${fq.deesc_symbol} · not returned on our entitlement` : `Platts ${fq.deesc_symbol} · ${fmtD(fq.deesc_date)}`, fq.deesc == null ? C.muted : C.text));
-      strip.appendChild(cell("Buzzard % (weekly)", "no feed", "INEOS FPS · not Platts", C.muted));
+      const deV = fq.deesc != null ? fq.deesc : fq.deesc_manual;
+      strip.appendChild(cell("Sulfur de-escalator", deV == null ? "n/a" : "$" + deV.toFixed(2) + "/bbl", fq.deesc != null ? `Platts ${fq.deesc_symbol} · ${fmtD(fq.deesc_date)}` : `manual input · Platts ${fq.deesc_symbol} not on our entitlement`, deV == null ? C.muted : C.text));
+      strip.appendChild(cell("Buzzard % (weekly)", fq.buzzard_pct == null ? "no feed" : fq.buzzard_pct.toFixed(0) + "%", fq.buzzard_pct == null ? "INEOS FPS · not Platts" : "manual input · INEOS FPS, not Platts", fq.buzzard_pct == null ? C.muted : C.text));
       strip.appendChild(cell("Pctile", "no feed", "share of weeks ≤ latest Buzzard %", C.muted));
       strip.appendChild(cell("Est. sulfur", "no feed", "INEOS Buzzard→quality projection", C.muted));
       strip.appendChild(cell("Sulfur trigger", fq.sulfur_trigger.toFixed(2) + "%", "fixed model constant, not a feed"));
