@@ -8,3 +8,5 @@ bridge/bridge_config.json
 *.secrets.env
 app/dated_workbook.xlsx
 app/asia_balances.json
+app/outages.json
+app/outages_pack/

@@ -12910,6 +12910,30 @@ async def asia_balances():
         return _json.load(f)
 
 
+_OUTAGES_DIR = os.path.join(os.path.dirname(__file__), "outages_pack")
+
+
+@app.get("/api/outages")
+async def outages_summary():
+    """Global refinery outage pack: chart index, appendix outage list, desk read, revision vs prior pack."""
+    path = os.path.join(os.path.dirname(__file__), "outages.json")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Outage pack not available")
+    with open(path) as f:
+        return _json.load(f)
+
+
+@app.get("/api/outages/chart/{name}")
+async def outages_chart(name: str):
+    # No file extension in the URL so the password gate's static-asset bypass never applies.
+    if not _re.fullmatch(r"p\d{3}_\d", name):
+        raise HTTPException(status_code=400, detail="bad chart name")
+    path = os.path.join(_OUTAGES_DIR, name + ".webp")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="chart not found")
+    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "private, max-age=86400"})
+
+
 # --- Local Balances (Energy Aspects global gasoline + US weekly) ────────────
 _LOCALBAL_CACHE = None
 

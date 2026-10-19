@@ -5928,6 +5928,162 @@
   }
 
   // ─── ASIA PRODUCT BALANCES TAB ───
+  async function renderOutages(box) {
+    box.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Loading refinery outages...</div>';
+    let data;
+    try {
+      const r = await fetch("/api/outages");
+      if (!r.ok) throw new Error(r.status === 404 ? "no outage pack loaded yet" : r.statusText);
+      data = await r.json();
+    } catch (e) {
+      box.innerHTML = `<div style="color:${C.red};padding:20px;">Error loading outages: ${e.message}</div>`;
+      return;
+    }
+    box.innerHTML = "";
+    const UNITS = [["crude", "Crude & Condensate"], ["fcc", "FCC & Reforming"], ["coking", "Coking & Hydrocracking"]];
+    const UN = Object.fromEntries(UNITS);
+    const SECTIONS = ["Overview", "NWE", "Med", "United States", "PADD 1 & 3", "Middle East", "India", "China", "Asia ex-China", "Russia & FSU", "Latin America", "Africa"];
+    const M = data.months;
+    const st = { unit: "crude", section: "Overview", kind: "all", q: "", activeOnly: true };
+    const L = (o) => Object.assign({}, plotLayout, o || {});
+    const cfg = { displayModeBar: false, responsive: true };
+    const sg = v => v == null ? "–" : (v > 0 ? "+" : "") + Math.round(v).toLocaleString();
+    const sgCol = v => v == null ? C.muted : v > 0 ? C.red : v < 0 ? C.green : C.text;
+    const card = (title) => { const c = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: "10px", padding: "12px 14px", marginBottom: "14px" } }); if (title) c.appendChild(el("div", { style: { fontSize: "13px", fontWeight: "700", color: C.text, marginBottom: "8px" } }, title)); return c; };
+    const btn = (lbl, on, fn) => el("button", { style: { background: on ? C.accent : "transparent", color: on ? "#0b1220" : C.text, border: `1px solid ${on ? C.accent : C.border}`, borderRadius: "6px", padding: "5px 11px", fontSize: "12px", cursor: "pointer", fontWeight: on ? "700" : "500" }, onClick: fn }, lbl);
+
+    const hdr = el("div", { style: { marginBottom: "14px" } });
+    hdr.appendChild(el("h2", { style: { color: C.amber, margin: "0 0 6px 0", fontSize: "20px" } }, "🛠️ Global Refinery Outages"));
+    hdr.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: 0 } },
+      `Offline capacity in KBD by unit (crude & condensate, FCC & reforming, coking & hydrocracking) · planned & economic vs unplanned · Oct 2026 – Mar 2027 · report ${data.report_date}, revisions vs ${data.prior_date} pack`));
+    box.appendChild(hdr);
+
+    // KPI strip: revision vs prior per unit
+    const kp = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", marginBottom: "14px" } });
+    UNITS.forEach(([k, lbl]) => {
+      const rv = data.revision[k].total, ls = data.listed_avg_kbd[k];
+      const c = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: "10px", padding: "12px 14px" } });
+      c.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "700", color: C.text, marginBottom: "6px" } }, lbl));
+      const row = (t, v, col) => { const r = el("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11.5px", padding: "2px 0" } }); r.appendChild(el("span", { style: { color: C.muted } }, t)); r.appendChild(el("span", { style: { color: col || C.text, fontWeight: "600", fontVariantNumeric: "tabular-nums" } }, v)); return r; };
+      c.appendChild(row("Revision Oct vs prior", sg(rv[0]) + " kb/d", sgCol(rv[0])));
+      c.appendChild(row("Revision Nov–Mar (sum)", sg(rv.slice(1).reduce((a, b) => a + b, 0)) + " kb/d", sgCol(rv.slice(1).reduce((a, b) => a + b, 0))));
+      c.appendChild(row("Listed key outages Oct (P&E / unpl.)", `${ls.planned[0].toLocaleString()} / ${ls.unplanned[0].toLocaleString()}`));
+      kp.appendChild(c);
+    });
+    box.appendChild(kp);
+
+    // Desk read
+    const rd = card("Desk read");
+    [
+      "Oct offline revised up in all three units vs 25 Sep: crude +884 kb/d (about half unplanned; Middle East is +620 of it), FCC +247, coking/hydrocracking +259 (mostly unplanned). Prompt runs are lower than the last pack assumed.",
+      "Crude outages then fall away fast: global offline drops from ~11.1 mb/d (Oct) to ~7.4 (Nov) and ~5.6 (Dec) booked, below 2025's ~12.2/8.6 and under the ~9.2/7.0 forecast. Dec crude was revised down −417 kb/d (Middle East and Latin America returns). Crude runs recover into Nov–Dec → supportive for crude demand / Dated structure into year-end.",
+      "Conversion stays tight while crude units come back: FCC revised up +140/+168 and coking/hydrocracking +83/+123 for Dec/Jan. More crude through less upgrading = longer resid/VGO, tighter light ends and middle distillates → favours cracks (gasoil, gasoline) over crude spreads, and is bearish HSFO relative to crude.",
+      "Unplanned is concentrated in Russia (970 kb/d Oct, 517 Nov–Dec), Ukraine (~500), Saudi Arabia (383 Oct), Kuwait (263 Oct) and long-running Libya/Nigeria/Yemen. Russian drone-hit units are the swing for export diesel and naphtha/fuel oil.",
+      "Watch: Russian unplanned rolling off (bearish cracks if it does), Middle East units returning in Nov (crude-bullish for Murban/Dubai grades), and next pack's Q1 revision — Feb crude already −230.",
+    ].forEach((t, i) => rd.appendChild(el("div", { style: { fontSize: "12.5px", color: C.text, padding: "3px 0", lineHeight: "1.45" } }, `${i + 1}. ${t}`)));
+    box.appendChild(rd);
+
+    // Plotly charts row
+    const g2 = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" } });
+    const c1 = card("Revision vs " + data.prior_date + " (new − prior, kb/d)"), d1 = el("div", { style: { height: "300px" } }); c1.appendChild(d1);
+    c1.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "4px" } }, data.revision_split_note));
+    const c2 = card("Crude & condensate — global offline seasonality (kb/d)"), d2 = el("div", { style: { height: "300px" } }); c2.appendChild(d2);
+    c2.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "4px" } }, data.crude_seasonal_total.note + "; 2026 = known outages only."));
+    g2.appendChild(c1); g2.appendChild(c2); box.appendChild(g2);
+    const g3 = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" } });
+    const c3 = card("Crude & condensate — Oct 2026 key outages by country (booked, kb/d)"), d3 = el("div", { style: { height: "330px" } }); c3.appendChild(d3);
+    const c4 = card("Listed key outages — monthly average capacity offline (kb/d)"), d4 = el("div", { style: { height: "330px" } }); c4.appendChild(d4);
+    c4.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "4px" } }, "Computed from the appendix list (days-weighted per month, duplicates removed). Key outages only, not the full pack totals."));
+    g3.appendChild(c3); g3.appendChild(c4); box.appendChild(g3);
+    loadPlotly(() => {
+      const ucol = { crude: C.accent, fcc: C.gold, coking: C.purple };
+      Plotly.newPlot(d1, UNITS.map(([k, lbl]) => ({ type: "bar", name: lbl, x: M, y: data.revision[k].total, marker: { color: ucol[k] }, text: data.revision[k].total.map(sg), textposition: "outside" })), L({ barmode: "group", margin: { l: 50, r: 10, t: 10, b: 40 }, legend: { orientation: "h", y: -0.15 } }), cfg);
+      const s = data.crude_seasonal_total, MM = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      Plotly.newPlot(d2, [
+        { x: MM, y: s["2025"], name: "2025", line: { color: C.red, width: 1.5 } },
+        { x: MM, y: s["2026_all"], name: "2026 all outages", line: { color: C.text, width: 3 } },
+        { x: MM, y: s["2026_forecast"], name: "2026 forecast", line: { color: C.gold, width: 2.5, dash: "dot" } },
+        { x: MM, y: s["2027_booked"], name: "2027 booked only", line: { color: "#64748b", width: 2 } },
+      ], L({ margin: { l: 55, r: 10, t: 10, b: 40 }, legend: { orientation: "h", y: -0.15 } }), cfg);
+      const cc = data.crude_country_oct, ctry = [...new Set([...Object.keys(cc.planned), ...Object.keys(cc.unplanned)])].sort((a, b) => ((cc.planned[a] || 0) + (cc.unplanned[a] || 0)) - ((cc.planned[b] || 0) + (cc.unplanned[b] || 0)));
+      Plotly.newPlot(d3, [
+        { type: "bar", orientation: "h", name: "Planned & economic", y: ctry, x: ctry.map(c => cc.planned[c] || 0), marker: { color: C.accent } },
+        { type: "bar", orientation: "h", name: "Unplanned", y: ctry, x: ctry.map(c => cc.unplanned[c] || 0), marker: { color: C.red } },
+      ], L({ barmode: "stack", margin: { l: 130, r: 10, t: 10, b: 40 }, legend: { orientation: "h", y: -0.12 } }), cfg);
+      const tr = [];
+      UNITS.forEach(([k, lbl]) => {
+        tr.push({ type: "bar", name: lbl + " P&E", x: M, y: data.listed_avg_kbd[k].planned, marker: { color: ucol[k] }, offsetgroup: k, legendgroup: k });
+        tr.push({ type: "bar", name: lbl + " unpl.", x: M, y: data.listed_avg_kbd[k].unplanned, marker: { color: ucol[k], opacity: 0.45 }, offsetgroup: k, base: data.listed_avg_kbd[k].planned, legendgroup: k });
+      });
+      Plotly.newPlot(d4, tr, L({ barmode: "group", margin: { l: 50, r: 10, t: 10, b: 40 }, legend: { orientation: "h", y: -0.15, font: { size: 10 } } }), cfg);
+       });
+
+    // Pack charts browser
+    const pc = card("Pack charts by unit and region");
+    const bar1 = el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" } });
+    const bar2 = el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "10px" } });
+    const imgs = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" } });
+    pc.appendChild(bar1); pc.appendChild(bar2);
+    pc.appendChild(el("div", { style: { fontSize: "11px", color: C.amber, marginBottom: "8px" } }, "PADD 1 & 3 is a subset of United States — never add them. Hatched/amber caps = unbooked forecast, not attributed to any refinery."));
+    pc.appendChild(imgs); box.appendChild(pc);
+    const drawCharts = () => {
+      bar1.innerHTML = ""; bar2.innerHTML = ""; imgs.innerHTML = "";
+      UNITS.forEach(([k, lbl]) => bar1.appendChild(btn(lbl, st.unit === k, () => { st.unit = k; drawCharts(); drawTable(); })));
+      SECTIONS.forEach(s => bar2.appendChild(btn(s, st.section === s, () => { st.section = s; drawCharts(); })));
+      data.charts.filter(c => c.unit === st.unit && c.section === st.section).forEach(c => {
+        const f = el("figure", { style: { margin: 0, background: "#fff", borderRadius: "6px", padding: "4px", gridColumn: c.w / c.h > 2.2 || st.section === "Overview" && c.title.startsWith("Key") ? "1 / -1" : "auto" } });
+        const im = el("img", { src: "/api/outages/chart/" + c.file.replace(".webp", ""), alt: c.title, loading: "lazy", style: { width: "100%", display: "block", cursor: "zoom-in" }, onClick: () => window.open("/api/outages/chart/" + c.file.replace(".webp", ""), "_blank") });
+        f.appendChild(im);
+        f.appendChild(el("figcaption", { style: { fontSize: "11px", color: "#334155", padding: "3px 4px" } }, `${UN[c.unit]} · ${c.section} · ${c.title} · p.${c.page}`));
+        imgs.appendChild(f);
+      });
+    };
+
+    // Outage list
+    const tc = card("Key refinery outages (appendix)");
+    const ctr = el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center", marginBottom: "8px" } });
+    const tbx = el("div", { style: { maxHeight: "520px", overflow: "auto" } });
+    tc.appendChild(ctr); tc.appendChild(tbx); box.appendChild(tc);
+    const today = data.report_date;
+    const drawTable = () => {
+      ctr.innerHTML = "";
+      ctr.appendChild(el("span", { style: { fontSize: "12px", color: C.muted } }, UN[st.unit] + " ·"));
+      [["all", "All"], ["planned", "Planned & economic"], ["unplanned", "Unplanned"]].forEach(([k, l]) => ctr.appendChild(btn(l, st.kind === k, () => { st.kind = k; drawTable(); })));
+      ctr.appendChild(btn(st.activeOnly ? "Active / upcoming only" : "Incl. ended", st.activeOnly, () => { st.activeOnly = !st.activeOnly; drawTable(); }));
+      const inp = el("input", { placeholder: "search country / refinery", value: st.q, style: { background: "transparent", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "5px 8px", fontSize: "12px", width: "200px" } });
+      inp.addEventListener("input", () => { st.q = inp.value; drawRows(); });
+      ctr.appendChild(inp);
+      drawRows();
+    };
+    const drawRows = () => {
+      const q = st.q.trim().toUpperCase();
+      const rows = data.rows.filter(r => r.unit === st.unit && (st.kind === "all" || r.kind === st.kind) && (!st.activeOnly || r.end >= today) && (!q || (r.country + " " + r.refinery).toUpperCase().includes(q)))
+        .sort((a, b) => b.kbd - a.kbd || a.start.localeCompare(b.start));
+      const live = rows.filter(r => !r.dup && r.start <= today && r.end >= today).reduce((a, r) => a + r.kbd, 0);
+      const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "12px" } });
+      const th = el("tr");
+      ["Country", "Refinery", "Start", "End", "Days", "KBD", "Type", "Region"].forEach(h => th.appendChild(el("th", { style: { textAlign: h === "KBD" || h === "Days" ? "right" : "left", color: C.muted, padding: "5px 6px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card } }, h)));
+      t.appendChild(th);
+      rows.forEach(r => {
+        const tr = el("tr", { style: { opacity: r.dup ? 0.45 : 1 } });
+        const on = r.start <= today && r.end >= today;
+        const td = (v, al, col) => el("td", { style: { padding: "4px 6px", borderBottom: `1px solid ${C.border}`, textAlign: al || "left", color: col || C.text, fontVariantNumeric: "tabular-nums" } }, v);
+        tr.appendChild(td(r.country)); tr.appendChild(td(r.refinery + (r.start_derived ? " †" : "") + (r.dup ? " (dup)" : "")));
+        tr.appendChild(td(r.start, null, on ? C.green : C.text)); tr.appendChild(td(r.end)); tr.appendChild(td(String(r.days), "right"));
+        tr.appendChild(td(r.kbd.toFixed(0), "right")); tr.appendChild(td(r.type, null, r.kind === "unplanned" ? C.red : C.accent)); tr.appendChild(td(r.region || "–", null, C.muted));
+        t.appendChild(tr);
+      });
+      tbx.innerHTML = "";
+      tbx.appendChild(el("div", { style: { fontSize: "11.5px", color: C.muted, marginBottom: "6px" } }, `${rows.length} rows · ${Math.round(live).toLocaleString()} kb/d offline on ${today} (excl. duplicates) · green start = running now · † start derived from end − duration · faded = duplicate row in the pack`));
+      tbx.appendChild(t);
+    };
+    drawCharts(); drawTable();
+
+    const cv = card("Methodology & caveats");
+    data.caveats.forEach(t => cv.appendChild(el("div", { style: { fontSize: "11.5px", color: C.muted, padding: "2px 0" } }, "• " + t)));
+    box.appendChild(cv);
+  }
+
   async function renderAsiaBal(box) {
     box.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Loading Asia balances...</div>';
     let data;
@@ -9261,6 +9417,7 @@
         { id: "gspe", label: "Genscape Refinery", icon: "🏭" },
         { id: "gseu", label: "Genscape Europe", icon: "🇪🇺" },
         { id: "iir", label: "IIR Turnarounds", icon: "🔧" },
+        { id: "outages", label: "Refinery Outages", icon: "🛠️" },
       ]},
       { name: "Platts / SPGCI", items: [
         { id: "platts", label: "Platts", icon: "🅿️" },
@@ -9316,6 +9473,7 @@
       if (id === "gspe" && !panes.gspe._loaded) { panes.gspe._loaded = true; renderGenscape(panes.gspe); }
       if (id === "gseu" && !panes.gseu._loaded) { panes.gseu._loaded = true; renderGspeEurope(panes.gseu); }
       if (id === "iir" && !panes.iir._loaded) { panes.iir._loaded = true; renderIIR(panes.iir); }
+      if (id === "outages" && !panes.outages._loaded) { panes.outages._loaded = true; renderOutages(panes.outages); }
       if (id === "cbm" && !panes.cbm._loaded) { panes.cbm._loaded = true; renderCBM(panes.cbm); }
       if (id === "margins" && !panes.margins._loaded) { panes.margins._loaded = true; renderMargins(panes.margins); }
       if (id === "lgb" && !panes.lgb._loaded) { panes.lgb._loaded = true; renderLEM(panes.lgb); }
