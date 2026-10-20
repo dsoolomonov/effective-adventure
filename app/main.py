@@ -12910,6 +12910,16 @@ async def asia_balances():
         return _json.load(f)
 
 
+@app.get("/api/session_pricing")
+async def session_pricing():
+    """Intraday spreads/cracks split by Asia / Europe / US session (Dubai time), correlations, research cross-check."""
+    path = os.path.join(os.path.dirname(__file__), "session_pricing.json")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Session pricing pack not available")
+    with open(path) as f:
+        return _json.load(f)
+
+
 _OUTAGES_DIR = os.path.join(os.path.dirname(__file__), "outages_pack")
 
 

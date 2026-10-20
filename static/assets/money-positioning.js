@@ -6084,6 +6084,172 @@
     box.appendChild(cv);
   }
 
+  async function renderSessPricing(box) {
+    box.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Loading session pricing...</div>';
+    let data;
+    try {
+      const r = await fetch("/api/session_pricing");
+      if (!r.ok) throw new Error(r.status === 404 ? "no pricing pack loaded yet" : r.statusText);
+      data = await r.json();
+    } catch (e) { box.innerHTML = `<div style="color:${C.red};padding:20px;">Error loading session pricing: ${e.message}</div>`; return; }
+    box.innerHTML = "";
+    const SES = ["Asia", "Europe", "US", "Wknd gap"];
+    const SCOL = { Asia: "#f59e0b", Europe: "#3b82f6", US: "#ef4444", "Wknd gap": "#64748b" };
+    const SBG = { Asia: "rgba(245,158,11,0.07)", Europe: "rgba(59,130,246,0.07)", US: "rgba(239,68,68,0.07)" };
+    const INS = data.instruments, BY = {}; INS.forEach(i => BY[i.key] = i);
+    const L = (o) => Object.assign({}, plotLayout, o || {});
+    const cfg = { displayModeBar: false, responsive: true };
+    const sg = (v, d) => v == null ? "–" : (v > 0 ? "+" : "") + v.toFixed(d == null ? 2 : d);
+    const col = v => v == null ? C.muted : v > 0 ? C.green : v < 0 ? C.red : C.text;
+    const sessOf = h => (h >= 2 && h < 10) ? "Asia" : (h >= 10 && h < 18) ? "Europe" : "US";
+    const tsD = s => new Date(s.replace(" ", "T") + ":00");
+    const st = { key: "B12", hz: "win", days: 10 };
+
+    const hdr = el("div", { style: { marginBottom: "14px" } });
+    hdr.appendChild(el("h2", { style: { color: C.amber, margin: "0 0 6px 0", fontSize: "20px" } }, "🕒 Session Pricing — who moved Brent, Dubai, WTI & products"));
+    hdr.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: "0 0 8px 0" } },
+      `2h/4h Bloomberg bars, Dubai time · Asia 02–10 · Europe 10–18 · US 18–02 · weekend-gap bars kept separate · window from ${data.window_start.slice(0, 16)} (after the 1 Oct roll), week from ${data.week_start.slice(0, 10)} · last bar ${String(data.asof).slice(0, 16)} · workbook checks: ${data.validation}`));
+    const chips = el("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" } });
+    (data.contracts || []).forEach(t => chips.appendChild(el("span", { style: { fontSize: "11px", color: C.text, background: "#0f172a", border: `1px solid ${C.border}`, borderRadius: "12px", padding: "3px 10px" } }, t)));
+    hdr.appendChild(chips); box.appendChild(hdr);
+
+    // KPI strip
+    const KP = ["B12", "D12", "BD1", "DFL2", "W23", "W12", "G12", "GC1", "RC1", "HG1"];
+    const kp = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "10px", marginBottom: "14px" } });
+    KP.forEach(k => {
+      const i = BY[k]; const s = i.sess_win; const top = ["Asia", "Europe", "US"].reduce((a, b) => Math.abs(s[b]) > Math.abs(s[a]) ? b : a);
+      const c = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderTop: `3px solid ${SCOL[top]}`, borderRadius: "10px", padding: "10px 12px", cursor: "pointer" }, onClick: () => { st.key = k; sel.value = k; drawKey(); } });
+      c.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginBottom: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, i.label));
+      c.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "700", color: C.text, fontVariantNumeric: "tabular-nums" } }, i.last.toFixed(2) + " "));
+      const r = el("div", { style: { fontSize: "11px", display: "flex", gap: "10px", fontVariantNumeric: "tabular-nums" } });
+      r.appendChild(el("span", { style: { color: col(i.chg_win) } }, "2 Oct " + sg(i.chg_win)));
+      r.appendChild(el("span", { style: { color: col(i.chg_wk) } }, "wk " + sg(i.chg_wk)));
+      c.appendChild(r);
+      c.appendChild(el("div", { style: { fontSize: "10.5px", color: SCOL[top], marginTop: "4px", fontWeight: "600" } }, `driver: ${top} ${sg(s[top])} ${i.unit}`));
+      kp.appendChild(c);
+    });
+    box.appendChild(kp);
+
+    // Read + research
+    const rw = el("div", { style: { display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: "12px" } });
+    const rd = el("div", {});
+    (data.read || []).forEach((t, n) => {
+      const isTrade = t.startsWith("Trade"), isCav = t.startsWith("Caveat");
+      rd.appendChild(el("div", { style: { background: isTrade ? "#132018" : "#0a0f1b", border: `1px solid ${isTrade ? C.green + "55" : C.border}`, borderLeft: `3px solid ${isTrade ? C.green : isCav ? C.muted : C.gold}`, borderRadius: "6px", padding: "8px 12px", fontSize: "12px", color: isCav ? C.muted : C.text, lineHeight: "1.5", marginBottom: "6px" } }, t));
+    });
+    rw.appendChild(card("Desk read", rd));
+    const rt = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "11.5px" } });
+    const th = el("tr", {}); ["Research says", "Test", "Δ", "Driver", "Verdict"].forEach(h => th.appendChild(el("th", { style: { textAlign: "left", padding: "5px 6px", color: C.muted, borderBottom: `1px solid ${C.border}` } }, h))); rt.appendChild(th);
+    (data.research || []).forEach(r => {
+      const tr = el("tr", {});
+      const td1 = el("td", { style: { padding: "6px", borderBottom: `1px solid ${C.border}`, color: C.text, lineHeight: "1.4" } });
+      td1.appendChild(el("div", { style: { fontWeight: "600" } }, r.theme)); td1.appendChild(el("div", { style: { color: C.muted, fontSize: "10.5px" } }, `${r.source} — ${r.says}`));
+      tr.appendChild(td1);
+      tr.appendChild(el("td", { style: { padding: "6px", borderBottom: `1px solid ${C.border}`, color: C.text, whiteSpace: "nowrap" } }, `${r.key} (${r.horizon})`));
+      tr.appendChild(el("td", { style: { padding: "6px", borderBottom: `1px solid ${C.border}`, color: col(r.chg), fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } }, sg(r.chg) + " " + r.unit));
+      tr.appendChild(el("td", { style: { padding: "6px", borderBottom: `1px solid ${C.border}`, color: C.muted, whiteSpace: "nowrap" } }, r.driver));
+      const vc = r.verdict === "Confirms" ? C.green : r.verdict === "Contradicts" ? C.red : C.muted;
+      tr.appendChild(el("td", { style: { padding: "6px", borderBottom: `1px solid ${C.border}` } }, el("span", { style: { color: vc, border: `1px solid ${vc}`, borderRadius: "10px", padding: "2px 8px", fontSize: "10.5px", fontWeight: "700" } }, r.verdict)));
+      rt.appendChild(tr);
+    });
+    const rbox = el("div", {}); rbox.appendChild(el("div", { style: { fontSize: "12px", color: C.gold, marginBottom: "6px", fontWeight: "600" } }, data.research_score || "")); rbox.appendChild(rt);
+    rw.appendChild(card("Price vs our research (fixtures · outages · Asia balances)", rbox));
+    box.appendChild(rw);
+
+    // Who moved it
+    const hzBar = el("div", { style: { display: "flex", gap: "6px", marginBottom: "6px" } });
+    const hzBtn = {};
+    [["win", "Since 2 Oct"], ["wk", "This week"]].forEach(([k, t]) => { const b = el("button", { style: { padding: "5px 12px", borderRadius: "14px", border: `1px solid ${C.border}`, fontSize: "11.5px", cursor: "pointer", fontWeight: "600" }, onClick: () => { st.hz = k; drawWho(); } }, t); hzBtn[k] = b; hzBar.appendChild(b); });
+    const whoDiv = el("div", { style: { width: "100%", height: "620px" } });
+    const wb = el("div", {}); wb.appendChild(hzBar); wb.appendChild(whoDiv);
+    wb.appendChild(el("div", { style: { fontSize: "11px", color: C.muted } }, "σ units = session change ÷ 2h-bar stdev, so $/t gasoil and $/bbl crude sit on one scale. Hover for raw change. Black diamond = net change."));
+    box.appendChild(card("Who moved it — change by session", wb));
+
+    // Selected instrument
+    const bar = el("div", { style: { display: "flex", gap: "8px", alignItems: "center", margin: "6px 0 10px", flexWrap: "wrap" } });
+    bar.appendChild(el("span", { style: { fontSize: "11px", color: C.muted, letterSpacing: "1px" } }, "INSTRUMENT"));
+    const sel = el("select", { style: { background: "#0f172a", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "5px 8px", fontSize: "12px" }, onChange: e => { st.key = e.target.value; drawKey(); } });
+    let grp = null, og = null;
+    INS.forEach(i => { if (i.group !== grp) { grp = i.group; og = el("optgroup", { label: grp }); sel.appendChild(og); } const o = el("option", { value: i.key }, i.label); og.appendChild(o); });
+    sel.value = st.key; bar.appendChild(sel);
+    bar.appendChild(el("span", { style: { fontSize: "11px", color: C.muted, marginLeft: "10px", letterSpacing: "1px" } }, "DAYS"));
+    [5, 10, 30].forEach(n => bar.appendChild(el("button", { style: { padding: "4px 10px", borderRadius: "12px", border: `1px solid ${C.border}`, background: "#0f172a", color: C.text, fontSize: "11px", cursor: "pointer" }, onClick: () => { st.days = n; drawKey(); } }, n + "d")));
+    box.appendChild(bar);
+    const g2 = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" } });
+    const pxDiv = el("div", { style: { width: "100%", height: "380px" } }), pathDiv = el("div", { style: { width: "100%", height: "380px" } });
+    const dayDiv = el("div", { style: { width: "100%", height: "380px" } }), hourDiv = el("div", { style: { width: "100%", height: "380px" } });
+    g2.appendChild(card("Price with session bands (Dubai time)", pxDiv)); g2.appendChild(card("Session path — cumulative change by session since 2 Oct", pathDiv));
+    g2.appendChild(card("Day × session", dayDiv)); g2.appendChild(card("Where it trades — volume by bar hour", hourDiv));
+    box.appendChild(g2);
+
+    // Cross-market
+    const g3 = el("div", { style: { display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: "12px" } });
+    const corDiv = el("div", { style: { width: "100%", height: "560px" } }), wtiDiv = el("div", { style: { width: "100%", height: "260px" } }), ovDiv = el("div", { style: { width: "100%", height: "290px" } });
+    g3.appendChild(card(`Correlation of daily changes (${data.corr.ndays} weekdays)`, corDiv));
+    const rc = el("div", {}); rc.appendChild(wtiDiv); rc.appendChild(ovDiv);
+    g3.appendChild(card("WTI expiry roll · structure overview (rebased to 2 Oct)", rc));
+    box.appendChild(g3);
+
+    function drawWho() {
+      Object.entries(hzBtn).forEach(([k, b]) => { b.style.background = k === st.hz ? C.accent : "#0f172a"; b.style.color = k === st.hz ? "#04111f" : C.text; });
+      const ins = INS.slice().reverse(), y = ins.map(i => i.label), f = st.hz === "win" ? "sess_win" : "sess_wk", tot = st.hz === "win" ? "chg_win" : "chg_wk";
+      const tr = SES.map(s => ({ type: "bar", orientation: "h", name: s, y, x: ins.map(i => i[f][s] / i.sd2h), marker: { color: SCOL[s] }, customdata: ins.map(i => `${sg(i[f][s])} ${i.unit}`), hovertemplate: `${s}: %{x:.1f}σ (%{customdata})<extra></extra>` }));
+      tr.push({ type: "scatter", mode: "markers", name: "Net", y, x: ins.map(i => i[tot] / i.sd2h), marker: { symbol: "diamond", size: 9, color: "#f8fafc", line: { color: "#000", width: 1 } }, customdata: ins.map(i => `${sg(i[tot])} ${i.unit}`), hovertemplate: "Net %{x:.1f}σ (%{customdata})<extra></extra>" });
+      Plotly.react(whoDiv, tr, L({ barmode: "relative", hovermode: "closest", margin: { t: 10, b: 60, l: 270, r: 20 }, xaxis: { gridcolor: "#1e293b", zerolinecolor: "#475569", title: "σ (2h-bar stdev)" }, yaxis: { tickfont: { size: 11 } } }), cfg);
+    }
+    function drawKey() {
+      const i = BY[st.key]; const ser = i.series;
+      const t1 = tsD(ser[ser.length - 1][0]), t0 = new Date(t1.getTime() - st.days * 86400000);
+      const pts = ser.filter(p => tsD(p[0]) >= t0);
+      const shapes = []; const d0 = new Date(t0); d0.setHours(0, 0, 0, 0);
+      for (let d = new Date(d0); d <= t1; d = new Date(d.getTime() + 86400000)) {
+        if (d.getDay() === 0) continue;
+        [["Asia", 2, 10], ["Europe", 10, 18], ["US", 18, 26]].forEach(([s, a, b]) => shapes.push({ type: "rect", xref: "x", yref: "paper", y0: 0, y1: 1, x0: new Date(d.getTime() + a * 3600000), x1: new Date(d.getTime() + b * 3600000), fillcolor: SBG[s], line: { width: 0 }, layer: "below" }));
+      }
+      const pc = pts.map(p => SCOL[sessOf(tsD(p[0]).getHours())]);
+      Plotly.react(pxDiv, [{ type: "scatter", mode: "lines+markers", x: pts.map(p => tsD(p[0])), y: pts.map(p => p[1]), line: { color: "#e2e8f0", width: 1.6 }, marker: { size: 5, color: pc }, name: i.label, hovertemplate: "%{x|%d %b %H:%M} · %{y:.2f}<extra></extra>" }],
+        L({ shapes, showlegend: false, hovermode: "closest", yaxis: { gridcolor: "#1e293b", title: i.unit }, xaxis: { gridcolor: "#1e293b", rangebreaks: [{ bounds: ["sat", "mon"] }] }, margin: { t: 10, b: 40, l: 55, r: 15 } }), cfg);
+      // session path
+      const ws = tsD(data.window_start.slice(0, 16)); const cum = { Asia: 0, Europe: 0, US: 0, "Wknd gap": 0 }; const P = { x: [], Asia: [], Europe: [], US: [], "Wknd gap": [], tot: [] };
+      for (let n = 1; n < ser.length; n++) {
+        const t = tsD(ser[n][0]); if (t < ws) continue;
+        const gap = (t - tsD(ser[n - 1][0])) / 3600000; const s = gap > data.sessions_def.gap_hours ? "Wknd gap" : sessOf(t.getHours());
+        cum[s] += ser[n][1] - ser[n - 1][1]; P.x.push(t); SES.forEach(k => P[k].push(cum[k])); P.tot.push(SES.reduce((a, k) => a + cum[k], 0));
+      }
+      const pt = SES.map(s => ({ type: "scatter", mode: "lines", name: s, x: P.x, y: P[s], line: { color: SCOL[s], width: s === "Wknd gap" ? 1.2 : 2.2, dash: s === "Wknd gap" ? "dot" : "solid" } }));
+      pt.push({ type: "scatter", mode: "lines", name: "Total", x: P.x, y: P.tot, line: { color: "#f8fafc", width: 1.4, dash: "dash" } });
+      Plotly.react(pathDiv, pt, L({ yaxis: { gridcolor: "#1e293b", zerolinecolor: "#475569", title: i.unit }, xaxis: { gridcolor: "#1e293b", rangebreaks: [{ bounds: ["sat", "mon"] }] }, margin: { t: 10, b: 50, l: 55, r: 15 }, legend: { orientation: "h", y: -0.18, font: { size: 11, color: C.text } } }), cfg);
+      // day x session heatmap
+      const days = Object.keys(i.dayx).sort(); const S3 = ["Asia", "Europe", "US", "Wknd gap"];
+      const z = S3.map(s => days.map(dd => i.dayx[dd][s] == null ? null : i.dayx[dd][s]));
+      const mx = Math.max(...z.flat().filter(v => v != null).map(Math.abs), 1e-9);
+      Plotly.react(dayDiv, [{ type: "heatmap", x: days.map(dd => new Date(dd + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" })), y: S3, z, zmin: -mx, zmax: mx, colorscale: [[0, "#ef4444"], [0.5, "#0b101c"], [1, "#10b981"]], text: z.map(r => r.map(v => v == null ? "" : sg(v))), texttemplate: "%{text}", textfont: { size: 10, color: "#e2e8f0" }, hovertemplate: "%{x} %{y}: %{z:.2f}<extra></extra>", showscale: false, xgap: 2, ygap: 2 }],
+        L({ showlegend: false, hovermode: "closest", margin: { t: 10, b: 60, l: 75, r: 10 }, xaxis: { tickangle: -45, tickfont: { size: 10 } }, yaxis: { autorange: "reversed" } }), cfg);
+      // volume by hour
+      const vk = ["B12", "W12", "W23", "G12"].filter(k => BY[k].vol_hour);
+      const hrs = Array.from({ length: 12 }, (_, n) => n * 2);
+      const order = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 0];
+      Plotly.react(hourDiv, vk.map((k, n) => { const tot = Object.values(BY[k].vol_hour).reduce((a, b) => a + b, 0); return { type: "bar", name: BY[k].label.split(" (")[0], x: order.map(h => String(h).padStart(2, "0") + ":00"), y: order.map(h => 100 * BY[k].vol_hour[h] / tot), marker: { color: [C.accent, C.purple, C.gold, C.green][n] }, hovertemplate: "%{x}: %{y:.1f}% of volume<extra></extra>" }; }),
+        L({ barmode: "group", yaxis: { gridcolor: "#1e293b", title: "% of window volume", ticksuffix: "%" }, margin: { t: 10, b: 50, l: 55, r: 15 }, hovermode: "x unified",
+          shapes: [["Asia", -0.5, 3.5], ["Europe", 3.5, 7.5], ["US", 7.5, 11.5]].map(([s, a, b]) => ({ type: "rect", xref: "x", yref: "paper", x0: a, x1: b, y0: 0, y1: 1, fillcolor: SBG[s], line: { width: 0 }, layer: "below" })),
+          annotations: [["Asia", 1.5], ["Europe", 5.5], ["US", 9.5]].map(([s, x]) => ({ x, y: 1, yref: "paper", text: s, showarrow: false, font: { color: SCOL[s], size: 11 }, yanchor: "bottom" })) }), cfg);
+    }
+    function drawCross() {
+      const K = data.corr.keys, lab = K.map(k => k);
+      Plotly.react(corDiv, [{ type: "heatmap", x: lab, y: lab, z: data.corr.m, zmin: -1, zmax: 1, colorscale: [[0, "#ef4444"], [0.5, "#0b101c"], [1, "#38bdf8"]], text: data.corr.m.map(r => r.map(v => v == null ? "" : v.toFixed(2))), texttemplate: "%{text}", textfont: { size: 8.5 }, hovertemplate: "%{y} vs %{x}: %{z:.2f}<extra></extra>", xgap: 1, ygap: 1 }],
+        L({ showlegend: false, hovermode: "closest", margin: { t: 10, b: 50, l: 50, r: 10 }, yaxis: { autorange: "reversed", tickfont: { size: 10 } }, xaxis: { tickfont: { size: 10 }, side: "bottom" } }), cfg);
+      const dv = k => { const m = {}; BY[k].series.forEach(p => { if (p[2] == null) return; const d = new Date(tsD(p[0]).getTime() - 2 * 3600000).toISOString().slice(0, 10); m[d] = (m[d] || 0) + p[2]; }); return m; };
+      const a = dv("W12"), b = dv("W23"); const ds = Object.keys(Object.assign({}, a, b)).sort().filter(d => d >= "2026-10-01" && new Date(d + "T12:00:00").getDay() !== 6);
+      Plotly.react(wtiDiv, [{ type: "bar", name: "Nov/Dec (expiring) vol", x: ds, y: ds.map(d => a[d] || 0), marker: { color: C.gold } }, { type: "bar", name: "Dec/Jan vol", x: ds, y: ds.map(d => b[d] || 0), marker: { color: C.accent } },
+        { type: "scatter", mode: "lines", name: "Nov/Dec price", yaxis: "y2", x: ds, y: ds.map(d => { const p = BY.W12.series.filter(q => new Date(tsD(q[0]).getTime() - 2 * 3600000).toISOString().slice(0, 10) === d); return p.length ? p[p.length - 1][1] : null; }), line: { color: "#f8fafc", width: 2 } }],
+        L({ barmode: "group", margin: { t: 10, b: 40, l: 55, r: 45 }, yaxis: { gridcolor: "#1e293b", title: "lots" }, yaxis2: { overlaying: "y", side: "right", title: "$/bbl", showgrid: false }, legend: { orientation: "h", y: -0.25, font: { size: 10, color: C.text } } }), cfg);
+      const OV = ["B12", "D12", "DFL2", "W23", "GC1", "RC1"]; const ws = tsD(data.window_start.slice(0, 16));
+      Plotly.react(ovDiv, OV.map((k, n) => { const s = BY[k].series.filter(p => tsD(p[0]) >= ws); return { type: "scatter", mode: "lines", name: k, x: s.map(p => tsD(p[0])), y: s.map(p => (p[1] - BY[k].base) / BY[k].sd2h), line: { width: 1.6, color: [C.accent, C.gold, C.purple, C.green, "#f472b6", C.red][n] }, hovertemplate: `${BY[k].label}: %{customdata:.2f} (%{y:.1f}σ)<extra></extra>`, customdata: s.map(p => p[1]) }; }),
+        L({ margin: { t: 10, b: 45, l: 55, r: 15 }, yaxis: { gridcolor: "#1e293b", zerolinecolor: "#475569", title: "Δ since 2 Oct (σ)" }, xaxis: { gridcolor: "#1e293b", rangebreaks: [{ bounds: ["sat", "mon"] }] }, hovermode: "closest", legend: { orientation: "h", y: -0.22, font: { size: 10, color: C.text } } }), cfg);
+    }
+    loadPlotly(() => { drawWho(); drawKey(); drawCross(); });
+  }
+
   async function renderAsiaBal(box) {
     box.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Loading Asia balances...</div>';
     let data;
@@ -9398,6 +9564,7 @@
         { id: "mp", label: "Money Positioning", icon: "💰" },
         { id: "voloi", label: "Volume & OI Tracker", icon: "📊" },
         { id: "pricing", label: "Pricing", icon: "🏷️" },
+        { id: "sessp", label: "Session Pricing", icon: "🕒" },
         { id: "margins", label: "Refinery Margins", icon: "📈" },
       ]},
       { name: "Brent Complex", items: [
@@ -9479,6 +9646,7 @@
       if (id === "lgb" && !panes.lgb._loaded) { panes.lgb._loaded = true; renderLEM(panes.lgb); }
       if (id === "eabal" && !panes.eabal._loaded) { panes.eabal._loaded = true; renderEABal(panes.eabal); }
       if (id === "asia" && !panes.asia._loaded) { panes.asia._loaded = true; renderAsiaBal(panes.asia); }
+      if (id === "sessp" && !panes.sessp._loaded) { panes.sessp._loaded = true; renderSessPricing(panes.sessp); }
       if (id === "gs" && !panes.gs._loaded) { panes.gs._loaded = true; renderGS(panes.gs); }
       if (id === "ps" && !panes.ps._loaded) { panes.ps._loaded = true; renderPS(panes.ps); }
       if (id === "voloi" && !panes.voloi._loaded) { panes.voloi._loaded = true; renderVOLOI(panes.voloi); }
