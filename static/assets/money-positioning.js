@@ -6213,8 +6213,9 @@
       const ws = tsD(data.window_start.slice(0, 16)); const cum = { Asia: 0, Europe: 0, US: 0, "Wknd gap": 0 }; const P = { x: [], Asia: [], Europe: [], US: [], "Wknd gap": [], tot: [] };
       for (let n = 1; n < ser.length; n++) {
         const t = tsD(ser[n][0]); if (t < ws) continue;
-        const gap = (t - tsD(ser[n - 1][0])) / 3600000; const s = gap > data.sessions_def.gap_hours ? "Wknd gap" : sessOf(t.getHours());
-        cum[s] += ser[n][1] - ser[n - 1][1]; P.x.push(t); SES.forEach(k => P[k].push(cum[k])); P.tot.push(SES.reduce((a, k) => a + cum[k], 0));
+        const gap = (t - tsD(ser[n - 1][0])) / 3600000, dpx = ser[n][1] - ser[n - 1][1], bl = ser[n][3] || 2;
+        if (gap > data.sessions_def.gap_hours) cum["Wknd gap"] += dpx;
+        else { const a = sessOf(t.getHours()), b = bl > 2 ? sessOf((t.getHours() + bl - 2) % 24) : a; if (a === b) cum[a] += dpx; else { cum[a] += dpx / 2; cum[b] += dpx / 2; } } P.x.push(t); SES.forEach(k => P[k].push(cum[k])); P.tot.push(SES.reduce((a, k) => a + cum[k], 0)); P.x.push(t); SES.forEach(k => P[k].push(cum[k])); P.tot.push(SES.reduce((a, k) => a + cum[k], 0));
       }
       const pt = SES.map(s => ({ type: "scatter", mode: "lines", name: s, x: P.x, y: P[s], line: { color: SCOL[s], width: s === "Wknd gap" ? 1.2 : 2.2, dash: s === "Wknd gap" ? "dot" : "solid" } }));
       pt.push({ type: "scatter", mode: "lines", name: "Total", x: P.x, y: P.tot, line: { color: "#f8fafc", width: 1.4, dash: "dash" } });
