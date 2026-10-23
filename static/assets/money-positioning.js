@@ -4870,15 +4870,14 @@
   }
 
 
-  // ─── PRODUCT STOCKS TAB (weekly hub stocks: /api/product_stocks) ───
-  // Region dropdown (Fujairah / ARA / Japan / Singapore); each view shows a
-  // retrospective, a latest-figures stats table, a combined history chart, and
-  // per-product history / seasonal / YoY detail.
-  async function renderPS(box) {
-    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Product Stocks…</div>';
+  // ─── PRODUCT STOCKS TAB (weekly hub stocks, live from Platts: /api/product_stocks) ───
+  // Regional summary (mmb, w/w, y/y, vs 2017–19), latest Platts stocks articles,
+  // then per-hub detail: retrospective, stats table, history / seasonal / YoY charts.
+  async function renderPS(box, refresh) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Product Stocks from Platts…</div>';
     let blob;
     try {
-      const r = await fetch("/api/product_stocks");
+      const r = await fetch("/api/product_stocks" + (refresh ? "?refresh=1" : ""));
       if (!r.ok) throw new Error(await r.text());
       blob = await r.json();
     } catch (e) {
@@ -4895,6 +4894,7 @@
     const fmt1 = v => v == null ? "—" : v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     const signCol = v => v == null ? C.muted : v >= 0 ? C.green : C.red;
     const sfmt = v => v == null ? "—" : (v >= 0 ? "+" : "") + fmt1(v);
+    const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
     function plot(div, traces, layout) { try { Plotly.newPlot(div, traces, layout, { responsive: true, displayModeBar: false }); } catch (e) { div.innerHTML = `<div style="color:#ef4444;padding:12px">${e.message}</div>`; } }
     function chartDiv(h) { return el("div", { style: { width: "100%", height: (h || 420) + "px" } }); }
@@ -4910,7 +4910,7 @@
       }, extra || {});
     }
 
-    // stats over the last N points of a product
+    // stats over the last N points of a product (vs 2017–19 comes from the backend)
     function stats(p) {
       const pairs = p.dates.map((d, i) => [d, p.values[i]]).filter(x => x[1] != null);
       if (!pairs.length) return null;
@@ -4918,12 +4918,13 @@
       const latest = pairs[n - 1][1], latestD = pairs[n - 1][0];
       const wow = n >= 2 ? latest - pairs[n - 2][1] : null;
       const w4 = n >= 5 ? latest - pairs[n - 5][1] : null;
-      const yoy = n >= 53 ? latest - pairs[n - 53][1] : null;
+      const yoy = p.stats && p.stats.yoy != null ? p.stats.yoy : (n >= 53 ? latest - pairs[n - 53][1] : null);
       const last52 = pairs.slice(-52).map(x => x[1]);
       const lo = Math.min(...last52), hi = Math.max(...last52);
       const win5 = pairs.slice(-260).map(x => x[1]).sort((a, b) => a - b);
       const pctile = win5.length ? Math.round(100 * win5.filter(v => v <= latest).length / win5.length) : null;
-      return { latest, latestD, wow, w4, yoy, lo, hi, pctile };
+      const vs = p.stats ? p.stats.vs1719 : null, baseN = p.stats ? p.stats.base_n : 0;
+      return { latest, latestD, wow, w4, yoy, lo, hi, pctile, vs, baseN };
     }
 
     function seasonal(p) {
@@ -4947,15 +4948,154 @@
       return vals.map((v, i) => (i >= 52 && v != null && vals[i - 52] != null) ? v - vals[i - 52] : null);
     }
 
-    // ── header + region dropdown ──
+    // ── header ──
     const hdr = el("div", { style: { display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px", flexWrap: "wrap" } });
     hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "🛢️ Product Stocks"));
-    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "12px" } }, "Hub:"));
+    const live = blob.source === "platts";
+    hdr.appendChild(el("span", { style: { fontSize: "11px", fontWeight: "700", padding: "3px 9px", borderRadius: "10px", background: live ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)", color: live ? C.green : C.red } }, live ? "● Platts live" : "○ static fallback"));
+    const rbtn = el("button", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "6px 12px", fontSize: "12px", cursor: "pointer" } }, "↻ Refresh from Platts");
+    rbtn.addEventListener("click", () => renderPS(box, true));
+    hdr.appendChild(rbtn);
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", marginLeft: "auto" } }, "Latest week " + (blob.as_of || "—") + (blob.generated_at ? " · pulled " + blob.generated_at.replace("T", " ").replace("Z", " UTC") : "")));
+    box.appendChild(hdr);
+    if (blob.error) box.appendChild(el("div", { style: { color: C.red, fontSize: "12px", marginBottom: "10px" } }, blob.error));
+
+    // ── regional summary (mmb) ──
+    const summ = blob.summary;
+    const GROUPS = summ ? summ.groups : [];
+    const REG_IDS = ["us", "ara", "singapore", "japan", "fujairah"];
+    function summaryRead() {
+      if (!summ) return null;
+      const tot = summ.rows.find(r => r.id === "total");
+      const bits = GROUPS.map(g => {
+        const c = tot && tot.cells[g.id];
+        if (!c || c.value == null) return null;
+        return `${g.name} ${fmt1(c.value)} mmb (w/w ${sfmt(c.wow)}, y/y ${sfmt(c.yoy)}${c.vs1719 != null ? ", vs 2017–19 " + sfmt(c.vs1719) : ""})`;
+      }).filter(Boolean);
+      const defs = [];
+      summ.rows.filter(r => REG_IDS.includes(r.id)).forEach(r => GROUPS.forEach(g => {
+        const c = r.cells[g.id]; if (c && c.status === "ok" && c.vs1719 != null) defs.push([r.name + " " + g.name.toLowerCase(), c.vs1719]);
+      }));
+      defs.sort((a, b) => a[1] - b[1]);
+      const wk = [];
+      summ.rows.filter(r => REG_IDS.includes(r.id)).forEach(r => GROUPS.forEach(g => {
+        const c = r.cells[g.id]; if (c && c.status === "ok" && c.wow != null) wk.push([r.name + " " + g.name.toLowerCase(), c.wow]);
+      }));
+      wk.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+      const w = el("div", { style: { color: C.text, fontSize: "13px", lineHeight: "1.7" } });
+      w.innerHTML =
+        `<div><b>Observable total (live hubs):</b> ${bits.join(" · ")}</div>` +
+        `<div><b>Biggest moves this week:</b> ${wk.slice(0, 4).map(x => `${esc(x[0])} <span style="color:${signCol(x[1])}">${sfmt(x[1])}</span>`).join(" · ")}</div>` +
+        `<div><b>Deepest deficits vs 2017–19:</b> ${defs.slice(0, 4).map(x => `${esc(x[0])} <span style="color:${signCol(x[1])}">${sfmt(x[1])}</span>`).join(" · ")}</div>`;
+      return w;
+    }
+
+    function summaryTable() {
+      const HB = "#16325c", HB2 = "#1d4170";
+      const bd = "1px solid #24385a";
+      let h = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px;color:' + C.text + ';min-width:1050px">';
+      h += `<thead><tr style="background:${HB};color:#e2e8f0"><th style="padding:6px 8px;border:${bd}"></th>`;
+      GROUPS.forEach(g => { h += `<th colspan="4" style="padding:6px 8px;border:${bd};text-align:center">${g.name}</th>`; });
+      h += `</tr><tr style="background:${HB2};color:#cbd5e1">`;
+      h += `<th style="padding:5px 8px;border:${bd};text-align:left"></th>`;
+      GROUPS.forEach(() => ["mmb", "w-o-w", "y-o-y", "vs 2017-19 av"].forEach(c => { h += `<th style="padding:5px 8px;border:${bd};text-align:right;font-weight:600">${c}</th>`; }));
+      h += "</tr></thead><tbody>";
+      summ.rows.forEach(r => {
+        const isTot = r.kind === "total", isReg = r.kind === "region", isSpr = r.kind === "spr";
+        const bg = isTot ? (r.id === "total" ? "#1d3a63" : "#152a49") : isSpr ? "#1d4170" : isReg ? "#0f1d33" : "#0b1424";
+        const ind = r.kind === "sub" ? 18 : r.kind === "subsub" ? 30 : 8;
+        const nameStyle = (isReg || isTot || isSpr) ? "font-weight:800;color:#e2e8f0" : r.kind === "subsub" ? "font-style:italic;color:" + C.muted : "color:#cbd5e1";
+        h += `<tr style="background:${bg}"><td style="padding:5px 8px 5px ${ind}px;border:${bd};text-align:left;white-space:nowrap;${nameStyle}">${esc(r.name)}${isTot && r.members ? "" : ""}</td>`;
+        GROUPS.forEach(g => {
+          const c = r.cells[g.id];
+          if (!c) { h += `<td colspan="4" style="border:${bd}"></td>`; return; }
+          if (c.status === "na") { h += `<td colspan="4" title="${esc(c.note)}" style="border:${bd};text-align:center;color:${C.muted};font-size:10.5px">n/a</td>`; return; }
+          if (c.status === "stale" || c.status === "missing") {
+            const t = c.status === "stale" ? "Platts series stopped " + c.last : "No data from Platts";
+            h += `<td colspan="4" title="${esc(t + " (" + (c.symbols || []).join(", ") + ")")}" style="border:${bd};text-align:center;color:#f59e0b;font-size:10.5px">${c.status === "stale" ? "stale since " + esc(c.last) : "no data"}</td>`; return;
+          }
+          const partial = c.vs1719 != null && c.base_n < 3;
+          const w = isTot || isReg || isSpr ? "font-weight:700;" : "";
+          const tip = esc((c.symbols || []).join(" + ") + (c.included ? "Includes: " + c.included.join(", ") : "") + " · week " + c.date);
+          h += `<td title="${tip}" style="padding:5px 8px;border:${bd};text-align:right;${w}">${fmt1(c.value)}</td>`;
+          ["wow", "yoy", "vs1719"].forEach(k => {
+            const v = c[k];
+            h += `<td style="padding:5px 8px;border:${bd};text-align:right;color:${v == null ? C.muted : v < 0 ? "#f87171" : "#e2e8f0"}">${v == null ? "" : sfmt(v)}${k === "vs1719" && partial ? "<sup>†</sup>" : ""}</td>`;
+          });
+        });
+        h += "</tr>";
+      });
+      h += "</tbody></table></div>";
+      const tot = summ.rows.find(r => r.id === "total");
+      const incl = {};
+      GROUPS.forEach(g => { const c = tot && tot.cells[g.id]; if (c && c.included) incl[g.name] = c.included.join(", "); });
+      const f = summ.bbl_per_t || {};
+      h += `<div style="color:${C.muted};font-size:11px;line-height:1.6;margin-top:10px">` +
+        `Live from Platts on every refresh (cached 30 min; ↻ forces a pull). US = EIA WPSR; middle distillates = distillate fuel oil + jet/kero; crude = commercial ex-SPR ex-lease. ` +
+        `ARA (Insights Global, kt) converted to mmb at ${f.gasoline} bbl/t gasoline, ${f.naphtha} naphtha, ${f.gasoil} gasoil, ${f.jet} jet, ${f.fueloil} fuel oil. ` +
+        `y-o-y = closest week 52 weeks earlier; vs 2017-19 av = latest minus the average of the same calendar week in 2017, 2018 and 2019. ` +
+        `<sup>†</sup> Fewer than 3 base years in Platts history (ARA starts 2019, so ARA and totals that include it are vs 2019 only). ` +
+        `Japan products: Platts' PAJ product series stopped on 21 Mar 2026, so Japan is crude-only and excluded from product totals. ` +
+        `Totals sum only live hubs — ${Object.entries(incl).map(([k, v]) => k + ": " + v).join("; ")}. Hover a cell for symbols.</div>`;
+      const w = el("div"); w.innerHTML = h; return w;
+    }
+
+    const top = el("div");
+    box.appendChild(top);
+    if (summ) {
+      const rd = summaryRead();
+      if (rd) top.appendChild(card("Read — global observable stocks", rd));
+      top.appendChild(card("Regional oil stocks — mmb, w-o-w, y-o-y, vs 2017-19 average", summaryTable()));
+      const cg = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: "14px" } });
+      const dVs = chartDiv(360), dW = chartDiv(360);
+      cg.appendChild(card("vs 2017-19 average by hub (mmb)", dVs));
+      cg.appendChild(card("Week-on-week change by hub (mmb)", dW));
+      top.appendChild(cg);
+      const hubRows = summ.rows.filter(r => REG_IDS.includes(r.id));
+      const GCOL = { light: "#22c55e", middle: "#38bdf8", fo: "#f59e0b", crude: "#c084fc" };
+      const traces = k => GROUPS.map(g => ({
+        x: hubRows.map(r => r.name), name: g.name, type: "bar", marker: { color: GCOL[g.id] },
+        y: hubRows.map(r => { const c = r.cells[g.id]; return c && c.status === "ok" ? c[k] : null; }),
+        hovertemplate: "%{x} " + g.name + ": %{y:+.1f} mmb<extra></extra>",
+      }));
+      loadPlotly(() => {
+        plot(dVs, traces("vs1719"), baseLayout("Latest minus 2017-19 same-week average", "mmb", { barmode: "group" }));
+        plot(dW, traces("wow"), baseLayout("Latest week change", "mmb", { barmode: "group" }));
+      });
+    }
+
+    // ── latest articles (Platts live + research note on file) ──
+    const newsBox = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: "14px" } });
+    top.appendChild(newsBox);
+    (async () => {
+      let nb;
+      try { const r = await fetch("/api/product_stocks/news" + (refresh ? "?refresh=1" : "")); if (!r.ok) throw new Error(await r.text()); nb = await r.json(); }
+      catch (e) { newsBox.appendChild(card("Latest stocks articles — Platts", `Failed to load: ${e.message}`)); return; }
+      const arts = nb.articles || [];
+      const a = el("div", { style: { maxHeight: "520px", overflowY: "auto" } });
+      a.innerHTML = arts.length ? arts.map(x => `<div style="padding:9px 0;border-bottom:1px solid ${C.border}">` +
+        `<div style="font-size:10.5px;color:${C.muted}">${esc((x.updated || "").slice(0, 16).replace("T", " "))} UTC</div>` +
+        `<a href="${esc(x.url)}" target="_blank" rel="noopener" style="color:${C.text};font-weight:700;font-size:13px;text-decoration:none">${esc(x.headline)}</a>` +
+        (x.lead ? `<div style="color:#cbd5e1;font-size:12px;line-height:1.55;margin-top:4px">${esc(x.lead)}</div>` : "") + "</div>").join("")
+        : `<div style="color:${C.muted}">${nb.error ? "Platts news unavailable: " + esc(nb.error) : "No stocks articles found."}</div>`;
+      newsBox.appendChild(card("Latest stocks articles — Platts (live)", a));
+      if (nb.note) {
+        const n = nb.note, d = el("div", { style: { color: C.text, fontSize: "12.5px", lineHeight: "1.6" } });
+        d.innerHTML = `<div style="font-size:10.5px;color:${C.muted}">${esc(n.source)} · ${esc(n.date)}</div>` +
+          `<div style="font-weight:800;font-size:13.5px;margin:4px 0 8px">${esc(n.title)}</div>` +
+          `<ul style="margin:0;padding-left:18px">${(n.points || []).map(p => `<li style="margin-bottom:4px">${esc(p)}</li>`).join("")}</ul>` +
+          (n.trade ? `<div style="margin-top:8px;color:${C.amber}"><b>Trade read:</b> ${esc(n.trade)}</div>` : "");
+        newsBox.appendChild(card("Latest research note — stocks", d));
+      }
+    })();
+
+    // ── hub detail ──
+    const hrow = el("div", { style: { display: "flex", alignItems: "center", gap: "10px", margin: "18px 0 12px" } });
+    hrow.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "800", color: C.amber } }, "Hub detail"));
     const sel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "7px 14px", fontSize: "13px", fontWeight: "600" } });
     regions.forEach(rg => { const o = document.createElement("option"); o.value = rg.id; o.textContent = rg.name; sel.appendChild(o); });
-    hdr.appendChild(sel);
-    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", marginLeft: "auto" } }, "Weekly refined-product stocks · as of " + (blob.as_of || "")));
-    box.appendChild(hdr);
+    hrow.appendChild(sel);
+    box.appendChild(hrow);
 
     const view = el("div");
     box.appendChild(view);
@@ -4963,50 +5103,50 @@
     function latestTable(rg) {
       let h = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px;color:' + C.text + '">';
       h += '<thead><tr style="background:#111a2e;color:' + C.amber + '">';
-      ["Product", "Latest (" + unitLbl(rg.unit) + ")", "As of", "WoW", "4-wk Δ", "YoY", "52w low", "52w high", "5y %ile"].forEach((c, i) => {
-        h += `<th style="padding:7px 9px;text-align:${i === 0 ? "left" : "right"};border:1px solid ${C.border}">${c}</th>`;
+      ["Product", "Symbol", "Latest (" + unitLbl(rg.unit) + ")", "As of", "WoW", "4-wk Δ", "YoY", "vs 2017-19", "52w low", "52w high", "5y %ile"].forEach((c, i) => {
+        h += `<th style="padding:7px 9px;text-align:${i < 2 ? "left" : "right"};border:1px solid ${C.border}">${c}</th>`;
       });
       h += "</tr></thead><tbody>";
       rg.products.forEach((p, ri) => {
         const s = stats(p); if (!s) return;
         const bg = ri % 2 ? "#0f172a" : C.card;
-        h += `<tr style="background:${bg}">`;
-        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:left">${p.name}</td>`;
-        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;font-weight:700">${fmt1(s.latest)}</td>`;
-        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${C.muted}">${s.latestD}</td>`;
-        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${signCol(s.wow)}">${sfmt(s.wow)}</td>`;
-        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${signCol(s.w4)}">${sfmt(s.w4)}</td>`;
-        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${signCol(s.yoy)}">${sfmt(s.yoy)}</td>`;
-        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${C.muted}">${fmt1(s.lo)}</td>`;
-        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;color:${C.muted}">${fmt1(s.hi)}</td>`;
-        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right">${s.pctile == null ? "—" : s.pctile + "%"}</td>`;
+        const td = (v, st) => `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:right;${st || ""}">${v}</td>`;
+        h += `<tr style="background:${bg};${p.stale ? "opacity:0.55" : ""}">`;
+        h += `<td style="padding:5px 9px;border:1px solid ${C.border};text-align:left">${esc(p.name)}${p.stale ? ' <span style="color:#f59e0b;font-size:10px">stale</span>' : ""}</td>`;
+        h += `<td title="${esc(p.description)}" style="padding:5px 9px;border:1px solid ${C.border};text-align:left;color:${C.muted};font-family:monospace">${esc(p.symbol)}</td>`;
+        h += td(fmt1(s.latest), "font-weight:700") + td(s.latestD, "color:" + (p.stale ? "#f59e0b" : C.muted));
+        h += td(sfmt(s.wow), "color:" + signCol(s.wow)) + td(sfmt(s.w4), "color:" + signCol(s.w4)) + td(sfmt(s.yoy), "color:" + signCol(s.yoy));
+        h += td(sfmt(s.vs) + (s.vs != null && s.baseN < 3 ? "<sup>†</sup>" : ""), "color:" + signCol(s.vs));
+        h += td(fmt1(s.lo), "color:" + C.muted) + td(fmt1(s.hi), "color:" + C.muted) + td(s.pctile == null ? "—" : s.pctile + "%");
         h += "</tr>";
       });
       h += "</tbody></table></div>";
+      const notes = [];
+      if (rg.source) notes.push("Source: " + rg.source + " (Platts API).");
+      if (rg.stale && rg.stale.length) notes.push("Stale on Platts: " + rg.stale.join("; ") + ".");
+      if (rg.unavailable && rg.unavailable.length) notes.push("No data: " + rg.unavailable.join(", ") + ".");
+      if (rg.products.some(p => p.stats && p.stats.vs1719 != null && p.stats.base_n < 3)) notes.push("† vs 2017-19 uses fewer than 3 base years (history starts later).");
+      h += `<div style="color:${C.muted};font-size:11px;margin-top:8px;line-height:1.6">${esc(notes.join(" "))}</div>`;
       const w = el("div"); w.innerHTML = h; return w;
     }
 
     function render(rg) {
       view.innerHTML = "";
       const u = unitLbl(rg.unit);
-      // retrospective analysis
-      view.appendChild(card("Retrospective — " + rg.name + " product stocks", rg.analysis));
-      // latest figures table
+      view.appendChild(card("Retrospective — " + rg.name + " stocks", rg.analysis));
       view.appendChild(card("Latest figures & stats", latestTable(rg)));
-      // combined history (all products)
       const dC = chartDiv(460);
-      view.appendChild(card(rg.name + " product stocks history (weekly)", dC));
+      view.appendChild(card(rg.name + " stocks history (weekly)", dC));
       plot(dC, rg.products.map((p, i) => ({
         x: p.dates, y: p.values, name: p.name, type: "scatter", mode: "lines",
         line: { width: 1.8, color: PAL[i % PAL.length] }, connectgaps: false,
         hovertemplate: "%{x}<br>" + p.name + ": %{y:,.1f} " + u + "<extra></extra>",
-      })), baseLayout(rg.name + " — all products", u));
+      })), baseLayout(rg.name + " — all series", u));
 
-      // per-product detail selector
       const drow = el("div", { style: { display: "flex", alignItems: "center", gap: "10px", margin: "6px 0 12px" } });
       drow.appendChild(el("span", { style: { color: C.muted, fontSize: "12px" } }, "Product detail:"));
       const psel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "6px 12px", fontSize: "12px" } });
-      rg.products.forEach(p => { const o = document.createElement("option"); o.value = p.name; o.textContent = p.name; psel.appendChild(o); });
+      rg.products.forEach(p => { const o = document.createElement("option"); o.value = p.name; o.textContent = p.name + (p.stale ? " (stale)" : ""); psel.appendChild(o); });
       drow.appendChild(psel);
       view.appendChild(drow);
 

@@ -45,6 +45,7 @@ def _ensure_sklearn():
         _sklearn_loaded = True
 import openpyxl
 from app import dated as _dated
+from app import product_stocks_live as _ps_live
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -14481,11 +14482,32 @@ def _load_product_stocks():
 
 
 @app.get("/api/product_stocks")
-async def get_product_stocks():
-    """Weekly refined-product stocks by hub: Fujairah, ARA, Japan (PAJ),
-    Singapore (Enterprise). Each region carries per-product weekly series
-    (million barrels, ARA in kt) plus a data-driven retrospective."""
-    return _load_product_stocks()
+async def get_product_stocks(refresh: bool = Query(False)):
+    """Weekly oil stocks by hub (US, ARA, Singapore, Japan, Fujairah) pulled
+    live from Platts, with per-product history and a regional mmb summary
+    (w/w, y/y, vs 2017-19). Falls back to the last good pull, then the static file."""
+    try:
+        return await asyncio.to_thread(_ps_live.get_payload, _spgci_get, refresh)
+    except Exception as e:
+        cached = _ps_live.cached_payload()
+        if cached is not None:
+            return {**cached, "error": f"Platts refresh failed, showing last pull: {e}"}
+        return {**_load_product_stocks(), "source": "static", "error": f"Platts unavailable: {e}"}
+
+
+@app.get("/api/product_stocks/news")
+async def get_product_stocks_news(refresh: bool = Query(False)):
+    """Latest Platts oil-stocks articles plus the latest research note on file."""
+    note = None
+    path = os.path.join(os.path.dirname(__file__), "product_stocks_note.json")
+    if os.path.isfile(path):
+        with open(path) as f:
+            note = _json.load(f)
+    try:
+        news = await asyncio.to_thread(_ps_live.get_news, _spgci_get, refresh)
+    except Exception as e:
+        news = {"articles": [], "error": str(e)}
+    return {**news, "note": note}
 
 
 _VOLOI_CACHE = None
