@@ -5016,7 +5016,7 @@
           }
           const partial = c.vs1719 != null && c.base_n < 3;
           const w = isTot || isReg || isSpr ? "font-weight:700;" : "";
-          const tip = esc((c.symbols || []).join(" + ") + (c.included ? "Includes: " + c.included.join(", ") : "") + " · week " + c.date);
+          const tip = esc((c.symbols || []).join(" + ") + (c.included ? "Includes: " + c.included.join(", ") : "") + " · latest week " + c.date);
           h += `<td title="${tip}" style="padding:5px 8px;border:${bd};text-align:right;${w}">${fmt1(c.value)}</td>`;
           ["wow", "yoy", "vs1719"].forEach(k => {
             const v = c[k];
@@ -5028,7 +5028,8 @@
       h += "</tbody></table></div>";
       const tot = summ.rows.find(r => r.id === "total");
       const incl = {};
-      GROUPS.forEach(g => { const c = tot && tot.cells[g.id]; if (c && c.included) incl[g.name] = c.included.join(", "); });
+      const rname = id => (summ.rows.find(r => r.id === id) || {}).name || id;
+      GROUPS.forEach(g => { const c = tot && tot.cells[g.id]; if (c && c.included) incl[g.name] = c.included.map(rname).join(", "); });
       const f = summ.bbl_per_t || {};
       h += `<div style="color:${C.muted};font-size:11px;line-height:1.6;margin-top:10px">` +
         `Live from Platts on every refresh (cached 30 min; ↻ forces a pull). US = EIA WPSR; middle distillates = distillate fuel oil + jet/kero; crude = commercial ex-SPR ex-lease. ` +
