@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+app/live_ticks.json
+app/live_positioning.json
+app/voloi_live.json
+bridge/bridge_config.json
+.env
+*.secrets.env
+app/dated_workbook.xlsx
+app/asia_balances.json
+app/outages.json
+app/outages_pack/
+app/session_pricing.json
+app/product_stocks_note.json
+app/cross_moves_intraday.json

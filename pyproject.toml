@@ -1,0 +1,26 @@
+[project]
+name = "app"
+version = "0.1.0"
+description = "Crude Oil Futures Analytics Platform"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.135.1",
+    "pandas>=2.0.0",
+    "numpy>=1.26.0",
+    "python-multipart>=0.0.22",
+    "openpyxl>=3.1.5",
+    "scikit-learn>=1.4.0",
+    "xlrd>=2.0.2",
+    "kpler_sdk>=1.0.64",
+    "requests>=2.31.0",
+    "pyarrow>=14.0.0",
+    "pyodbc>=5.0.0",
+    "sqlalchemy>=2.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
