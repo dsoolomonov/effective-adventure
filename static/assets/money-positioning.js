@@ -4871,6 +4871,251 @@
 
 
   // ─── CRUDE DIFFERENTIALS TAB (live from Platts: /api/crude_diffs) ───
+  async function renderXMove(box, refresh) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading cross-asset moves…</div>';
+    let blob, cdb = null;
+    try {
+      const [r, rc] = await Promise.all([fetch("/api/cross_moves" + (refresh ? "?refresh=1" : "")), fetch("/api/crude_diffs").catch(() => null)]);
+      if (!r.ok) throw new Error(await r.text());
+      blob = await r.json();
+      if (rc && rc.ok) cdb = await rc.json();
+    } catch (e) {
+      box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load cross-asset moves: ${e.message}</div>`;
+      return;
+    }
+    await new Promise(res => loadPlotly(res));
+    box.innerHTML = "";
+    const I = blob.intraday, D = blob.daily;
+    const f2 = v => v == null ? "—" : v.toFixed(2);
+    const s2 = v => v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2);
+    const colr = v => v == null ? C.muted : v > 0 ? "#4ade80" : v < 0 ? "#f87171" : C.text;
+    const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const PAL = ["#38bdf8", "#f97316", "#22c55e", "#facc15", "#c084fc", "#f472b6", "#14b8a6", "#ef4444", "#a3a35a", "#94a3b8", "#818cf8", "#fb7185"];
+    function plot(div, traces, layout) { try { Plotly.newPlot(div, traces, layout, { responsive: true, displayModeBar: false }); } catch (e) { div.innerHTML = `<div style="color:#ef4444;padding:12px">${e.message}</div>`; } }
+    function chartDiv(h) { return el("div", { style: { width: "100%", height: (h || 380) + "px" } }); }
+    function lay(extra) {
+      const b = {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: C.muted, size: 11 },
+        showlegend: true, hovermode: "x unified", legend: { orientation: "h", y: -0.16, font: { size: 11 } },
+        margin: { l: 55, r: 20, t: 20, b: 55 },
+        yaxis: { gridcolor: "#1e293b", color: C.muted, zeroline: true, zerolinecolor: "#64748b" },
+        xaxis: { gridcolor: "#1e293b", color: C.muted, tickfont: { size: 10 } },
+      };
+      return Object.assign(b, extra || {});
+    }
+    const grid2 = () => el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(520px, 1fr))", gap: "14px" } });
+    const note = t => el("div", { style: { color: C.muted, fontSize: "11px", marginTop: "6px", lineHeight: "1.5" } }, t);
+    const INF = I ? I.info : {}, MV = I ? I.moves : {};
+    const lab = k => (INF[k] && INF[k].label) || k;
+
+    // ── header ──
+    const hdr = el("div", { style: { display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px", flexWrap: "wrap" } });
+    hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "🔀 Cross-Asset Moves"));
+    const live = D && !blob.daily_error;
+    hdr.appendChild(el("span", { style: { fontSize: "11px", fontWeight: "700", padding: "3px 9px", borderRadius: "10px", background: live ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)", color: live ? C.green : C.red } }, live ? "● Platts daily live" : "○ Platts daily unavailable"));
+    const rbtn = el("button", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "6px 12px", fontSize: "12px", cursor: "pointer" } }, "↻ Refresh from Platts");
+    rbtn.addEventListener("click", () => renderXMove(box, true));
+    hdr.appendChild(rbtn);
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", marginLeft: "auto" } },
+      (I ? `Intraday (Bloomberg ${I.source_file}) to ${I.asof} Dubai` : "No intraday file") + (D ? ` · Platts daily to ${D.as_of}` : "")));
+    box.appendChild(hdr);
+    if (blob.daily_error) box.appendChild(el("div", { style: { color: "#f59e0b", fontSize: "12px", marginBottom: "10px" } }, blob.daily_error));
+
+    // ── read ──
+    if (I) {
+      const m = k => MV[k] || {};
+      const fo = (k, f) => s2((m(k) || {})[f]);
+      const ratio = (a, b) => (m(a).yday != null && m(b).yday) ? (m(a).yday / m(b).yday) : null;
+      const sess = k => m(k).sess ? `Asia ${s2(m(k).sess.Asia)} / Europe ${s2(m(k).sess.Europe)} / US ${s2(m(k).sess.US)}` : "";
+      const P = [];
+      P.push(`<b>Yesterday (${esc(I.yday_start.slice(0, 10))}, 02:00–02:00 Dubai):</b> Brent Dec ${fo("co1", "yday")} to ${f2(m("co1").y1)} (${sess("co1")}). Gasoil Nov ${fo("qs1", "yday")} $/t = ${fo("qs1b", "yday")} $/bbl, i.e. ${f2(ratio("qs1b", "co1"))}× Brent, so the Nov crack widened ${fo("gcn", "yday")}. Brent Dec/Jan ${fo("b12", "yday")}, Dubai Nov/Dec ${fo("d12", "yday")}, WTI Dec/Jan ${fo("w12", "yday")}, DFL Nov ${fo("dfl1", "yday")}.`);
+      P.push(`<b>Week (since Mon 02:00):</b> Brent ${fo("co1", "wk")}, gasoil ${fo("qs1b", "wk")} $/bbl, Nov crack ${fo("gcn", "wk")}, Dec crack ${fo("gcd", "wk")}. Structure: Brent Dec/Feb ${fo("b13", "wk")}, Dubai Nov/Jan ${fo("d13", "wk")}, WTI Dec/Feb ${fo("w13", "wk")}. DFL Nov ${fo("dfl1", "wk")}; Brent-Dubai Dec EFS ${fo("bd2", "wk")} to ${f2(m("bd2").last)}.`);
+      const ll = I.leadlag || {};
+      const best = k => ll[k] ? `${ll[k].best >= 0 ? "+" : ""}${ll[k].best}h (r ${f2(ll[k].lags[String(ll[k].best)].r)}, β ${(ll[k].lags[String(ll[k].best)].beta).toFixed(2)})` : "—";
+      P.push(`<b>Lags vs Brent (4h bars):</b> gasoil flat price ${best("qs1b")}, Brent spreads ${best("b12")}, Dubai spreads ${best("d12")}, WTI spreads ${best("w12")} (WTI bars are offset 2h), DFL ${best("dfl1")}. Products move in the same 4h bar as crude; nothing systematically lags by a full bar intraday.`);
+      if (D) {
+        const L = D.lags, w = "250";
+        const g = k => L[k] ? L[k][w] : null;
+        const lagTxt = k => { const x = g(k); if (!x) return "—"; return `lag0 ${f2(x["0"].r)} / lag+1 ${f2(x["1"].r)}`; };
+        P.push(`<b>Daily Platts (1y):</b> NWE gasoil ${lagTxt("go_bbl")}, Eurobob ${lagTxt("ebob_bbl")}, Singapore gasoil ${lagTxt("sgo_bbl")}, Singapore 92 ${lagTxt("s92_bbl")}, Dubai ${lagTxt("dubai")}. Asian assessments close at 16:30 Singapore, before London, so part of each Brent move only shows up in Asia the next day.`);
+      }
+      const d = el("div", { style: { color: C.text, fontSize: "13px", lineHeight: "1.7" } });
+      d.innerHTML = P.map(p => `<div style="margin-bottom:5px">${p}</div>`).join("");
+      box.appendChild(card("Read — crude move and product follow-through", d));
+    }
+
+    // ── moves table ──
+    if (I) {
+      const ROWS = [["Crude flat", ["co1", "co2"]], ["Products", ["qs1", "qs1b", "qs2", "g12", "gcn", "gcd"]],
+        ["Crude structure", ["b12", "b23", "b13", "w12", "w23", "w13", "d12", "d23", "d13", "dmb"]], ["Physical / East-West", ["dfl1", "dfl2", "bd1", "bd2"]]];
+      const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "12px" } });
+      const th = ["Instrument", "Unit", "Last", "Yesterday", "Asia", "Europe", "US", "Today", "Week", "Week hi", "Week lo", "Last bar"];
+      t.innerHTML = "<thead><tr>" + th.map((h, i) => `<th style="text-align:${i < 2 ? "left" : "right"};padding:6px 8px;color:${C.muted};border-bottom:1px solid ${C.border};font-weight:600">${h}</th>`).join("") + "</tr></thead>";
+      const tb = el("tbody");
+      ROWS.forEach(([g, ks]) => {
+        tb.insertAdjacentHTML("beforeend", `<tr><td colspan="12" style="padding:8px 8px 4px;color:${C.amber};font-size:11px;font-weight:700;text-transform:uppercase">${g}</td></tr>`);
+        ks.filter(k => MV[k]).forEach(k => {
+          const m = MV[k], ss = m.sess || {};
+          const c = v => `<td style="text-align:right;padding:5px 8px;color:${colr(v)}">${s2(v)}</td>`;
+          tb.insertAdjacentHTML("beforeend", `<tr style="border-bottom:1px solid #111a2c"><td style="padding:5px 8px;color:${C.text}">${esc(lab(k))}</td><td style="padding:5px 8px;color:${C.muted}">${esc(INF[k].unit)}</td>` +
+            `<td style="text-align:right;padding:5px 8px;color:${C.text};font-weight:700">${f2(m.last)}</td>${c(m.yday)}${c(ss.Asia)}${c(ss.Europe)}${c(ss.US)}${c(m.today)}${c(m.wk)}` +
+            `<td style="text-align:right;padding:5px 8px;color:${C.muted}">${f2(m.hi_wk)}</td><td style="text-align:right;padding:5px 8px;color:${C.muted}">${f2(m.lo_wk)}</td><td style="text-align:right;padding:5px 8px;color:${C.muted}">${esc(m.last_ts)}</td></tr>`);
+        });
+      });
+      t.appendChild(tb);
+      const w = el("div", { style: { overflowX: "auto" } }); w.appendChild(t);
+      const c = card(`Moves — yesterday by session, today, this week (Dubai time)`, w);
+      c.appendChild(note(`Yesterday = ${I.yday_start} → ${I.yday_end}. Sessions: Asia 02–10, Europe 10–18, US 18–02 Dubai; a 4h bar spanning a session boundary is split by linear interpolation. Week = since ${I.week_start}. Brent-Dubai EFS sheets are daily, so they have no session split.`));
+      box.appendChild(c);
+    }
+
+    // ── intraday paths ──
+    if (I) {
+      const S = I.series;
+      function rebased(k, t0) {
+        const s = S[k] || []; let base = null;
+        for (const [t, v] of s) { if (t <= t0) base = v; else break; }
+        if (base == null) return { x: [], y: [] };
+        const pts = s.filter(p => p[0] > t0);
+        return { x: [t0, ...pts.map(p => p[0])], y: [0, ...pts.map(p => p[1] - base)] };
+      }
+      function sessShapes(t0, t1) {
+        const sh = [], cols = { Asia: "rgba(250,204,21,0.06)", Europe: "rgba(56,189,248,0.07)", US: "rgba(244,114,182,0.06)" };
+        let d = new Date(t0.slice(0, 10) + "T00:00:00Z");
+        const end = new Date(t1.slice(0, 10) + "T00:00:00Z"); end.setUTCDate(end.getUTCDate() + 1);
+        const iso = (x, h) => { const y = new Date(x); y.setUTCHours(h); return y.toISOString().slice(0, 16).replace("T", " "); };
+        while (d <= end) {
+          if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) {
+            [["Asia", 2, 10], ["Europe", 10, 18], ["US", 18, 26]].forEach(([n, a, b]) => sh.push({ type: "rect", xref: "x", yref: "paper", x0: iso(d, a), x1: iso(d, b), y0: 0, y1: 1, fillcolor: cols[n], line: { width: 0 }, layer: "below" }));
+          }
+          d.setUTCDate(d.getUTCDate() + 1);
+        }
+        return sh;
+      }
+      const SETS = [
+        ["Brent vs gasoil — change since start of yesterday, $/bbl", I.yday_start, ["co1", "qs1b", "gcn", "gcd"]],
+        ["Crude structure & DFL — change since start of yesterday, $/bbl", I.yday_start, ["b12", "b13", "d12", "d13", "w12", "dfl1", "dfl2", "dmb"]],
+        ["This week: Brent vs gasoil — change since Mon 02:00, $/bbl", I.week_start, ["co1", "qs1b", "gcn", "gcd"]],
+        ["This week: structure & DFL — change since Mon 02:00, $/bbl", I.week_start, ["b12", "b13", "d12", "d13", "w12", "dfl1", "dfl2", "dmb"]],
+      ];
+      const g = grid2();
+      SETS.forEach(([title, t0, ks]) => {
+        const d = chartDiv(380); g.appendChild(card(title, d));
+        setTimeout(() => plot(d, ks.filter(k => S[k]).map((k, i) => {
+          const r = rebased(k, t0);
+          return { x: r.x, y: r.y, name: lab(k), type: "scatter", mode: "lines+markers", marker: { size: (INF[k].bar || 4) < 1 ? 0 : 4 }, line: { width: k === "co1" ? 3 : 1.8, color: k === "co1" ? "#ffffff" : PAL[i % PAL.length], shape: "linear" }, hovertemplate: "%{y:+.2f}<extra>" + lab(k) + "</extra>" };
+        }), lay({ shapes: sessShapes(t0, I.asof), xaxis: { gridcolor: "#1e293b", color: C.muted, tickformat: "%a %H:%M", range: [t0, I.asof] }, yaxis: { title: { text: "Δ $/bbl" }, gridcolor: "#1e293b", zeroline: true, zerolinecolor: "#64748b" } })), 0);
+      });
+      box.appendChild(g);
+      box.appendChild(note("Shading: yellow Asia, blue Europe, pink US session (Dubai time). Points are bar close times. Gasoil is converted with 7.45 bbl/t; the Nov crack is QS1/7.45 − CO1 on the same bars, the Dec crack is Bloomberg's own series on bars offset 2h."));
+    }
+
+    // ── lead-lag ──
+    const lg = grid2();
+    if (I && I.leadlag) {
+      const d = chartDiv(380);
+      lg.appendChild(card("Intraday lead-lag vs Brent Dec — correlation of 4h changes", d));
+      const ks = ["qs1b", "gcn", "g12", "b12", "d12", "w12", "dfl1", "dfl2", "dmb"];
+      setTimeout(() => plot(d, ks.filter(k => I.leadlag[k]).map((k, i) => {
+        const L = I.leadlag[k].lags, xs = Object.keys(L).map(Number).sort((a, b) => a - b);
+        return { x: xs, y: xs.map(x => L[String(x)].r), name: lab(k), type: "scatter", mode: "lines+markers", line: { color: PAL[i % PAL.length], width: 2 },
+          customdata: xs.map(x => [L[String(x)].beta, L[String(x)].n]), hovertemplate: "%{x:+d}h r=%{y:.2f} β=%{customdata[0]:.3f} n=%{customdata[1]}<extra>" + lab(k) + "</extra>" };
+      }), lay({ hovermode: "closest", legend: { orientation: "v", x: 1.02, y: 1, font: { size: 10 } }, margin: { l: 55, r: 10, t: 20, b: 50 }, xaxis: { title: { text: "hours: + = instrument moves after Brent, − = before" }, gridcolor: "#1e293b", dtick: 2, zeroline: true, zerolinecolor: "#64748b" }, yaxis: { title: { text: "correlation" }, gridcolor: "#1e293b", range: [-0.5, 1], zeroline: true, zerolinecolor: "#64748b" } })), 0);
+    }
+    if (D) {
+      const d = chartDiv(380);
+      const wsel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "3px 6px", fontSize: "11px", marginBottom: "6px" } });
+      D.lag_windows.forEach(w => wsel.appendChild(el("option", { value: String(w) }, w + " trading days")));
+      wsel.value = String(D.lag_windows[D.lag_windows.length - 1]);
+      const wrap = el("div"); wrap.appendChild(wsel); wrap.appendChild(d);
+      lg.appendChild(card("Daily lead-lag vs Dated Brent (Platts) — correlation of daily changes", wrap));
+      const rows = ["brent1", "wti", "dubai", "murban", "dfl", "go_bbl", "ulsd_bbl", "jet_bbl", "ebob_bbl", "nap_bbl", "fo35_bbl", "sgo_bbl", "s92_bbl", "s380_bbl"].filter(k => D.lags[k]);
+      const draw = () => {
+        const w = wsel.value;
+        const z = rows.map(k => D.lag_list.map(L => D.lags[k][w][String(L)].r));
+        const tx = rows.map(k => D.lag_list.map(L => { const c = D.lags[k][w][String(L)]; return c.r == null ? "" : `${c.r.toFixed(2)}`; }));
+        plot(d, [{ type: "heatmap", z, x: D.lag_list.map(L => (L > 0 ? "+" : "") + L + "d"), y: rows.map(k => D.names[k].replace(" ($/bbl)", "")), text: tx, texttemplate: "%{text}", colorscale: [[0, "#ef4444"], [0.5, "#0b101c"], [1, "#22c55e"]], zmin: -1, zmax: 1, hovertemplate: "%{y} lag %{x}: r=%{z:.2f}<extra></extra>" }],
+          lay({ showlegend: false, hovermode: "closest", margin: { l: 200, r: 20, t: 10, b: 50 }, yaxis: { autorange: "reversed", color: C.muted }, xaxis: { title: { text: "+1d = moves the day after Dated" }, color: C.muted } }));
+      };
+      wsel.addEventListener("change", draw); setTimeout(draw, 0);
+    }
+    box.appendChild(lg);
+
+    // ── pass-through ──
+    if (D) {
+      const g = grid2();
+      const prods = ["go", "ulsd", "jet", "ebob", "nap", "fo35", "sgo", "s92", "s380"];
+      const d1 = chartDiv(360);
+      g.appendChild(card("Pass-through: $/bbl product move per $1 Dated move (same day + next day)", d1));
+      setTimeout(() => plot(d1, D.lag_windows.map((w, i) => ({
+        type: "bar", name: `${w}d β same day`, x: prods.map(p => D.names[p + "_bbl"].replace(" ($/bbl)", "")), y: prods.map(p => D.lags[p + "_bbl"][String(w)]["0"].beta), marker: { color: i ? "#38bdf8" : "#f97316" } }))
+        .concat([{ type: "bar", name: "250d β next day", x: prods.map(p => D.names[p + "_bbl"].replace(" ($/bbl)", "")), y: prods.map(p => D.lags[p + "_bbl"]["250"]["1"].beta), marker: { color: "#64748b" } }]),
+        lay({ barmode: "group", hovermode: "closest", legend: { orientation: "h", y: 1.12 }, margin: { l: 55, r: 20, t: 30, b: 110 }, xaxis: { tickangle: -30, tickfont: { size: 10 } }, yaxis: { title: { text: "β" }, gridcolor: "#1e293b", zeroline: true, zerolinecolor: "#64748b" } })), 0);
+      const d2 = chartDiv(360);
+      g.appendChild(card(`Yesterday & week: crude benchmarks and products, $/bbl (Platts ${D.as_of})`, d2));
+      const ks = ["dated", "brent1", "wti", "dubai", "murban"].concat(prods.map(p => p + "_bbl"));
+      setTimeout(() => plot(d2, [["dod", "d/d", "#38bdf8"], ["wow", "w/w", "#f97316"]].map(([f, n, c]) => ({
+        type: "bar", name: n, x: ks.map(k => D.names[k].replace(" ($/bbl)", "")), y: ks.map(k => D.stats[k][f]), marker: { color: c } })),
+        lay({ barmode: "group", hovermode: "closest", xaxis: { tickangle: -35, tickfont: { size: 10 } }, margin: { l: 55, r: 20, t: 10, b: 120 }, yaxis: { title: { text: "$/bbl" }, gridcolor: "#1e293b", zeroline: true, zerolinecolor: "#64748b" } })), 0);
+      box.appendChild(g);
+    }
+
+    // ── crude types ──
+    if (cdb && cdb.groups) {
+      const g = grid2();
+      cdb.groups.forEach(gr => {
+        const xs = gr.grades.filter(x => x.default && x.stats && x.stats.status !== "missing");
+        const d = chartDiv(340);
+        g.appendChild(card(`Crude types — ${gr.short || gr.name} diffs vs Dated strip: d/d and w/w ($/bbl, Platts ${cdb.as_of})`, d));
+        setTimeout(() => plot(d, [["dod", "d/d", "#38bdf8"], ["wow", "w/w", "#f97316"], ["value", "level", "#64748b"]].map(([f, n, c]) => ({
+          type: "bar", name: n, x: xs.map(x => x.name), y: xs.map(x => x.stats[f]), marker: { color: c }, visible: f === "value" ? "legendonly" : true })),
+          lay({ barmode: "group", hovermode: "closest", yaxis: { title: { text: "$/bbl" }, gridcolor: "#1e293b", zeroline: true, zerolinecolor: "#64748b" } })), 0);
+      });
+      box.appendChild(g);
+    }
+
+    // ── spreads: Brent-Dubai vs DFL, WTI ──
+    if (D) {
+      const g = grid2();
+      const sr = k => D.series[k] || { dates: [], values: [] };
+      const cut = (() => { const d = new Date(D.as_of + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() - 6); return d.toISOString().slice(0, 10); })();
+      const tr = (k, name, c, ax, dash) => { const s = sr(k); const i = s.dates.findIndex(x => x >= cut); return { x: s.dates.slice(i), y: s.values.slice(i), name, type: "scatter", mode: "lines", yaxis: ax || "y", line: { color: c, width: 2, dash: dash || "solid" }, hovertemplate: "%{y:.2f}<extra>" + name + "</extra>" }; };
+      const d1 = chartDiv(380);
+      g.appendChild(card("Brent-Dubai vs DFL — 6 months daily, $/bbl", d1));
+      const t1 = [tr("bd", "Brent Mo01 − Dubai Mo01 (Platts)", "#38bdf8"), tr("dfl", "Dated − Brent Mo01 (Platts DFL proxy)", "#f97316", "y2")];
+      if (I) {
+        const ef = I.series.bd2 || []; t1.push({ x: ef.map(p => p[0].slice(0, 10)), y: ef.map(p => p[1]), name: "Brent-Dubai Dec EFS (file)", type: "scatter", mode: "lines", line: { color: "#93c5fd", dash: "dot" } });
+        const dl = (I.dfl_daily || {}).dfl1 || []; t1.push({ x: dl.map(p => p[0]), y: dl.map(p => p[1]), name: "DFL Nov swap (file, 19:30 Dubai)", type: "scatter", mode: "lines", yaxis: "y2", line: { color: "#fdba74", dash: "dot" } });
+      }
+      setTimeout(() => plot(d1, t1, lay({ yaxis: { title: { text: "Brent-Dubai" }, gridcolor: "#1e293b", zeroline: true, zerolinecolor: "#64748b" }, yaxis2: { title: { text: "DFL" }, overlaying: "y", side: "right", color: "#f97316", showgrid: false, zeroline: false } })), 0);
+      const d2 = chartDiv(380);
+      g.appendChild(card("Rolling 60-day correlation of daily changes: Brent-Dubai vs DFL", d2));
+      const rr = D.bd_dfl_roll60.filter(p => p[1] != null);
+      setTimeout(() => plot(d2, [{ x: rr.map(p => p[0]), y: rr.map(p => p[1]), type: "scatter", mode: "lines", fill: "tozeroy", line: { color: "#c084fc" }, name: "r(ΔBD, ΔDFL) 60d" }],
+        lay({ showlegend: false, yaxis: { range: [-1, 1], gridcolor: "#1e293b", zeroline: true, zerolinecolor: "#64748b" } })), 0);
+      const d3 = chartDiv(380);
+      g.appendChild(card("Brent vs WTI vs Dubai — 6 months daily, $/bbl", d3));
+      setTimeout(() => plot(d3, [tr("bd", "Brent − Dubai", "#38bdf8"), tr("bwti", "Brent − WTI", "#22c55e"), tr("wtidub", "WTI − Dubai", "#facc15"), tr("murdub", "Murban − Dubai", "#f472b6", "y", "dot")], lay({ yaxis: { gridcolor: "#1e293b", zeroline: true, zerolinecolor: "#64748b" } })), 0);
+      const d4 = chartDiv(380);
+      g.appendChild(card("Product cracks vs Dated Brent — 6 months daily, $/bbl", d4));
+      setTimeout(() => plot(d4, ["go", "ulsd", "jet", "ebob", "nap", "fo35", "sgo", "s92", "s380"].map((p, i) => tr(p + "_crk", D.names[p + "_crk"].replace(" crack vs Dated", ""), PAL[i % PAL.length])), lay({ yaxis: { gridcolor: "#1e293b", zeroline: true, zerolinecolor: "#64748b" } })), 0);
+      box.appendChild(g);
+    }
+
+    // ── correlation matrices ──
+    const cg = grid2();
+    function heat(title, keys, names, m, sub, noText) {
+      const d = chartDiv(460); const c = card(title, d); c.appendChild(note(sub)); cg.appendChild(c);
+      setTimeout(() => plot(d, [{ type: "heatmap", z: m, x: names, y: names, text: m.map(r => r.map(v => v == null || noText ? "" : v.toFixed(2))), texttemplate: "%{text}", textfont: { size: 9 }, colorscale: [[0, "#ef4444"], [0.5, "#0b101c"], [1, "#22c55e"]], zmin: -1, zmax: 1, hovertemplate: "%{y} vs %{x}: %{z:.2f}<extra></extra>" }],
+        lay({ showlegend: false, hovermode: "closest", margin: { l: 150, r: 10, t: 10, b: 120 }, xaxis: { tickangle: -45, tickfont: { size: 9 } }, yaxis: { autorange: "reversed", tickfont: { size: 9 } } })), 0);
+    }
+    if (I && I.corr) heat("Intraday correlation of 4h changes", I.corr.keys, I.corr.keys.map(lab), I.corr.m, `${I.corr.nbars} 4h bars since 25 Sep, same-grid instruments only (WTI and the Dec crack are on bars offset 2h, so they are left out).`);
+    if (D && D.corr) heat("Daily correlation of changes (Platts, last ~60 days)", D.corr.keys, D.corr.keys.map(k => D.names[k].replace(" ($/bbl)", "")), D.corr.m, "Daily close-to-close changes. Asian assessments (Dubai, Oman, Murban, Singapore) close before London, which lowers their same-day correlation with London-close series. Hover a cell for the value.", true);
+    box.appendChild(cg);
+
+    box.appendChild(card("Sources & method", note(`Intraday: Bloomberg export (${I ? I.source_file : "—"}), Dubai time, bar-start stamps converted to bar close; 4h bars, DFL 30-min, Brent-Dubai EFS daily. Daily: Platts close assessments (bate c) — ${D ? Object.entries(D.meta).map(([k, v]) => `${v.label} ${v.symbol}`).join(", ") : "unavailable"}. Products in $/t converted to $/bbl with 7.45 (gasoil/ULSD), 7.88 (jet), 8.33 (Eurobob), 8.9 (naphtha), 6.35 (fuel oil). Cracks are product $/bbl − Dated Brent. The Platts DFL proxy is Dated vs Brent Mo01 cash, not the DFL swap, so its level differs from the file's DFL Nov/Dec.`)));
+  }
+
   async function renderCDiff(box, refresh) {
     box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading crude differentials from Platts…</div>';
     let blob;
@@ -9888,6 +10133,7 @@
         { id: "voloi", label: "Volume & OI Tracker", icon: "📊" },
         { id: "pricing", label: "Pricing", icon: "🏷️" },
         { id: "sessp", label: "Session Pricing", icon: "🕒" },
+        { id: "xmove", label: "Cross-Asset Moves", icon: "🔀" },
         { id: "margins", label: "Refinery Margins", icon: "📈" },
       ]},
       { name: "Brent Complex", items: [
@@ -9979,6 +10225,7 @@
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }
       if (id === "ksql" && !panes.ksql._loaded) { panes.ksql._loaded = true; renderKSQL(panes.ksql); }
+      if (id === "xmove" && !panes.xmove._loaded) { panes.xmove._loaded = true; renderXMove(panes.xmove); }
       if (id === "cdiff" && !panes.cdiff._loaded) { panes.cdiff._loaded = true; renderCDiff(panes.cdiff); }
       if (id === "dated" && !panes.dated._loaded) { panes.dated._loaded = true; renderDated(panes.dated); }
       if (id === "signal" && !panes.signal._loaded) { panes.signal._loaded = true; renderSignal(panes.signal); }

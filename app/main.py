@@ -47,6 +47,7 @@ import openpyxl
 from app import dated as _dated
 from app import product_stocks_live as _ps_live
 from app import crude_diffs_live as _cd_live
+from app import cross_moves_live as _xm_live
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -14507,6 +14508,24 @@ async def get_crude_diffs(refresh: bool = Query(False)):
         if cached is not None:
             return {**cached, "error": f"Platts refresh failed, showing last pull: {e}"}
         raise HTTPException(status_code=502, detail=f"Platts unavailable: {e}")
+
+
+@app.get("/api/cross_moves")
+async def get_cross_moves(refresh: bool = Query(False)):
+    """Intraday crude/product/spread moves from the latest Bloomberg export plus
+    live Platts daily crude benchmarks, spreads and products with lead-lag stats."""
+    path = os.path.join(os.path.dirname(__file__), "cross_moves_intraday.json")
+    intraday = None
+    if os.path.exists(path):
+        with open(path) as f:
+            intraday = _json.load(f)
+    out = {"intraday": intraday, "daily": None}
+    try:
+        out["daily"] = await asyncio.to_thread(_xm_live.get_payload, _spgci_get, refresh)
+    except Exception as e:
+        out["daily"] = _xm_live.cached_payload()
+        out["daily_error"] = f"Platts daily refresh failed{', showing last pull' if out['daily'] else ''}: {e}"
+    return out
 
 
 @app.get("/api/product_stocks/news")
