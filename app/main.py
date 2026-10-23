@@ -46,6 +46,7 @@ def _ensure_sklearn():
 import openpyxl
 from app import dated as _dated
 from app import product_stocks_live as _ps_live
+from app import crude_diffs_live as _cd_live
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -14493,6 +14494,19 @@ async def get_product_stocks(refresh: bool = Query(False)):
         if cached is not None:
             return {**cached, "error": f"Platts refresh failed, showing last pull: {e}"}
         return {**_load_product_stocks(), "source": "static", "error": f"Platts unavailable: {e}"}
+
+
+@app.get("/api/crude_diffs")
+async def get_crude_diffs(refresh: bool = Query(False)):
+    """North Sea and Med/Black Sea/Caspian crude differentials vs the Dated
+    Brent strips, live from Platts, with daily history and per-grade stats."""
+    try:
+        return await asyncio.to_thread(_cd_live.get_payload, _spgci_get, refresh)
+    except Exception as e:
+        cached = _cd_live.cached_payload()
+        if cached is not None:
+            return {**cached, "error": f"Platts refresh failed, showing last pull: {e}"}
+        raise HTTPException(status_code=502, detail=f"Platts unavailable: {e}")
 
 
 @app.get("/api/product_stocks/news")

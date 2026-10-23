@@ -4870,6 +4870,187 @@
   }
 
 
+  // ─── CRUDE DIFFERENTIALS TAB (live from Platts: /api/crude_diffs) ───
+  async function renderCDiff(box, refresh) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading crude differentials from Platts…</div>';
+    let blob;
+    try {
+      const r = await fetch("/api/crude_diffs" + (refresh ? "?refresh=1" : ""));
+      if (!r.ok) throw new Error(await r.text());
+      blob = await r.json();
+    } catch (e) {
+      box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load crude differentials: ${e.message}</div>`;
+      return;
+    }
+    box.innerHTML = "";
+    const groups = blob.groups || [];
+    const COLS = {
+      northsea: ["#3b82f6", "#f97316", "#93c5fd", "#22c55e", "#facc15", "#a3a35a", "#c084fc", "#f472b6", "#14b8a6", "#94a3b8", "#fb7185", "#a78bfa"],
+      med: ["#38bdf8", "#f97316", "#bfdbfe", "#a3a35a", "#facc15", "#22c55e", "#818cf8", "#f472b6", "#ef4444", "#94a3b8", "#14b8a6"],
+    };
+    const YRCOL = { 2021: "#5b6577", 2022: "#64748b", 2023: "#0ea5e9", 2024: "#8b5cf6", 2025: "#ec4899", 2026: "#ffffff" };
+    const f2 = v => v == null ? "—" : v.toFixed(2);
+    const s2 = v => v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2);
+    const col = v => v == null ? C.muted : v > 0 ? "#4ade80" : v < 0 ? "#f87171" : C.text;
+    const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const dfmt = d => d ? new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }) : "—";
+    function plot(div, traces, layout) { try { Plotly.newPlot(div, traces, layout, { responsive: true, displayModeBar: false }); } catch (e) { div.innerHTML = `<div style="color:#ef4444;padding:12px">${e.message}</div>`; } }
+    function chartDiv(h) { return el("div", { style: { width: "100%", height: (h || 420) + "px" } }); }
+    function addMonths(iso, m) { const d = new Date(iso + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() + m); return d.toISOString().slice(0, 10); }
+    function layout(title, x0, extra) {
+      return Object.assign({
+        title: { text: title, font: { color: C.text, size: 13 } },
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+        font: { color: C.muted, size: 11 }, showlegend: true, hovermode: "x unified",
+        legend: { orientation: "h", y: -0.12, font: { size: 11 } },
+        margin: { l: 50, r: 20, t: 40, b: 50 },
+        yaxis: { title: { text: "$/bbl", font: { color: C.muted, size: 11 } }, gridcolor: "#1e293b", color: C.muted, zeroline: true, zerolinecolor: "#64748b" },
+        xaxis: { gridcolor: "#1e293b", color: C.muted, tickfont: { size: 10 }, tickformat: "%b-%y", range: [x0, blob.as_of] },
+      }, extra || {});
+    }
+
+    // ── header ──
+    const hdr = el("div", { style: { display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px", flexWrap: "wrap" } });
+    hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "📉 Crude Differentials"));
+    const live = blob.source === "platts" && !blob.error;
+    hdr.appendChild(el("span", { style: { fontSize: "11px", fontWeight: "700", padding: "3px 9px", borderRadius: "10px", background: live ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)", color: live ? C.green : C.red } }, live ? "● Platts live" : "○ last pull"));
+    const rbtn = el("button", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "6px 12px", fontSize: "12px", cursor: "pointer" } }, "↻ Refresh from Platts");
+    rbtn.addEventListener("click", () => renderCDiff(box, true));
+    hdr.appendChild(rbtn);
+    const RANGES = [["3M", -3], ["6M", -6], ["Since Feb-26", "2026-02-01"], ["YTD", "ytd"], ["1Y", -12], ["2Y", -24], ["5Y", -60], ["All", "all"]];
+    let x0 = "2026-02-01";
+    const rsel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "5px 8px", fontSize: "12px" } });
+    RANGES.forEach(([l]) => rsel.appendChild(el("option", { value: l }, l)));
+    rsel.value = "Since Feb-26";
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "12px" } }, "Chart range"));
+    hdr.appendChild(rsel);
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", marginLeft: "auto" } }, "Latest assessment " + (blob.as_of || "—") + (blob.generated_at ? " · pulled " + blob.generated_at.replace("T", " ").replace("Z", " UTC") : "")));
+    box.appendChild(hdr);
+    if (blob.error) box.appendChild(el("div", { style: { color: "#f59e0b", fontSize: "12px", marginBottom: "10px" } }, blob.error));
+
+    // ── read ──
+    function read() {
+      const parts = [];
+      groups.forEach(g => {
+        const gs = g.grades.filter(x => x.default && x.stats.status === "ok");
+        if (!gs.length) return;
+        const avgW = gs.reduce((a, x) => a + (x.stats.wow || 0), 0) / gs.length;
+        const byW = [...gs].sort((a, b) => (a.stats.wow || 0) - (b.stats.wow || 0));
+        const byV = [...gs].sort((a, b) => b.stats.value - a.stats.value);
+        const by5 = [...gs].filter(x => x.stats.vs5y != null).sort((a, b) => b.stats.vs5y - a.stats.vs5y);
+        const nm = x => `${x.name} ${s2(x.stats.value)}`;
+        let t = `<b>${esc(g.short)}:</b> average ${s2(avgW)} $/bbl w/w. Strongest ${esc(nm(byV[0]))}, weakest ${esc(nm(byV[byV.length - 1]))}. ` +
+          `Biggest w/w move ${esc(byW[0].name)} ${s2(byW[0].stats.wow)}` + (byW[byW.length - 1].stats.wow > 0 ? `, firmest ${esc(byW[byW.length - 1].name)} ${s2(byW[byW.length - 1].stats.wow)}` : "") + ". ";
+        if (by5.length) t += `Most above the 5-year same-date average: ${esc(by5[0].name)} ${s2(by5[0].stats.vs5y)}; most below: ${esc(by5[by5.length - 1].name)} ${s2(by5[by5.length - 1].stats.vs5y)}.`;
+        parts.push(t);
+      });
+      const find = n => { for (const g of groups) for (const x of g.grades) if (x.name === n) return x.stats; return null; };
+      const fo = find("Forties"), cpc = find("CPC"), az = find("Azeri"), ur = find("Urals NWE"), mid = find("Midland CIF");
+      const sp = [];
+      if (fo && mid && fo.value != null && mid.value != null) sp.push(`Midland CIF − Forties ${s2(mid.value - fo.value)}`);
+      if (fo && cpc && fo.value != null && cpc.value != null) sp.push(`CPC − Forties ${s2(cpc.value - fo.value)}`);
+      if (az && cpc && az.value != null && cpc.value != null) sp.push(`Azeri − CPC ${s2(az.value - cpc.value)}`);
+      if (fo && ur && fo.value != null && ur.value != null) sp.push(`Urals NWE − Forties ${s2(ur.value - fo.value)}`);
+      if (sp.length) parts.push(`<b>Cross-grade spreads ($/bbl):</b> ${sp.join(" · ")}.`);
+      const d = el("div", { style: { color: C.text, fontSize: "13px", lineHeight: "1.7" } });
+      d.innerHTML = parts.map(p => `<div style="margin-bottom:4px">${p}</div>`).join("");
+      return d;
+    }
+    box.appendChild(card("Read — physical crude diffs", read()));
+
+    // ── charts (screenshot style) ──
+    const cg = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(520px, 1fr))", gap: "14px" } });
+    const charts = groups.map((g, gi) => {
+      const d = chartDiv(440);
+      cg.appendChild(card(`Fig. ${gi + 4}: ${g.name}, $/bbl`, d));
+      return { g, d };
+    });
+    box.appendChild(cg);
+    box.appendChild(el("div", { style: { color: C.muted, fontSize: "11px", margin: "-6px 0 14px 2px" } }, "Source: Platts (S&P Global Commodity Insights). Click a legend entry to hide/show a grade; greyed entries are extra grades off by default."));
+    function drawCharts() {
+      charts.forEach(({ g, d }) => {
+        const traces = g.grades.map((x, i) => ({
+          x: x.dates, y: x.values, name: x.name, type: "scatter", mode: "lines",
+          line: { width: x.default ? 2 : 1.4, color: COLS[g.id][i % COLS[g.id].length] },
+          visible: x.default ? true : "legendonly",
+          hovertemplate: "%{y:.2f}<extra>" + x.name + "</extra>",
+        }));
+        const lo = x0 || (g.grades[0].dates || [])[0];
+        let ymin = Infinity, ymax = -Infinity;
+        g.grades.filter(x => x.default).forEach(x => x.dates.forEach((dt, i) => { if (dt >= lo) { ymin = Math.min(ymin, x.values[i]); ymax = Math.max(ymax, x.values[i]); } }));
+        const pad = isFinite(ymin) ? Math.max(1, (ymax - ymin) * 0.06) : 0;
+        const lay = layout("", lo);
+        if (isFinite(ymin)) lay.yaxis.range = [ymin - pad, ymax + pad];
+        plot(d, traces, lay);
+      });
+    }
+    rsel.addEventListener("change", () => {
+      const r = RANGES.find(z => z[0] === rsel.value)[1];
+      x0 = typeof r === "number" ? addMonths(blob.as_of, r) : r === "ytd" ? blob.as_of.slice(0, 4) + "-01-01" : r === "all" ? null : r;
+      drawCharts();
+    });
+
+    // ── tables ──
+    function table(g) {
+      const bd = "1px solid #24385a", HB = "#16325a", HB2 = "#0f2747";
+      const cols = [["Last", "value"], ["d/d", "dod"], ["w/w", "wow"], ["m/m", "mom"], ["3m", "m3"], ["y/y", "yoy"], ["30d avg", "avg30"], ["YTD avg", "ytd_avg"], ["52w high", "hi52"], ["52w low", "lo52"], ["5y avg", "avg5y"], ["vs 5y", "vs5y"], ["5y %ile", "pctile5y"]];
+      const chgKeys = new Set(["dod", "wow", "mom", "m3", "yoy", "vs5y"]);
+      let h = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px;color:' + C.text + ';min-width:1100px">';
+      h += `<thead><tr style="background:${HB};color:#e2e8f0"><th style="padding:6px 8px;border:${bd};text-align:left">Grade</th><th style="padding:6px 8px;border:${bd};text-align:left">Platts symbol / basis</th>`;
+      cols.forEach(c => { h += `<th style="padding:6px 8px;border:${bd};text-align:right">${c[0]}</th>`; });
+      h += `</tr></thead><tbody>`;
+      g.grades.forEach((x, i) => {
+        const s = x.stats || {};
+        const bg = x.default ? (i % 2 ? "#0b1424" : "#0f1d33") : "#0a111e";
+        h += `<tr style="background:${bg};${x.default ? "" : "opacity:0.8"}">`;
+        h += `<td style="padding:5px 8px;border:${bd};white-space:nowrap;font-weight:${x.default ? 700 : 400}"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:${COLS[g.id][i % COLS[g.id].length]}"></span>${esc(x.name)}</td>`;
+        h += `<td style="padding:5px 8px;border:${bd};color:${C.muted};font-size:10.5px;white-space:nowrap"><code style="color:#93c5fd">${esc(x.symbol)}</code> ${esc(x.desc)}</td>`;
+        if (s.status === "missing") { h += `<td colspan="${cols.length}" style="border:${bd};text-align:center;color:#f59e0b">no data from Platts</td></tr>`; return; }
+        cols.forEach(([, k]) => {
+          const v = s[k];
+          let txt = k === "pctile5y" ? (v == null ? "—" : v + "%") : chgKeys.has(k) ? s2(v) : f2(v);
+          let tip = "";
+          if (k === "value") { tip = "Assessed " + s.date; if (s.status === "stale") txt += ` <span style="color:#f59e0b;font-size:10px">(${dfmt(s.date)})</span>`; }
+          if (k === "hi52") tip = s.hi52_date; if (k === "lo52") tip = s.lo52_date;
+          if (k === "vs5y" && s.five_n < 5 && v != null) txt += "<sup>†</sup>";
+          const c = chgKeys.has(k) ? col(v) : k === "value" ? (v < 0 ? "#f87171" : "#e2e8f0") : C.text;
+          h += `<td title="${esc(tip)}" style="padding:5px 8px;border:${bd};text-align:right;color:${c};${k === "value" ? "font-weight:700" : ""}">${txt}</td>`;
+        });
+        h += "</tr>";
+      });
+      h += "</tbody></table></div>";
+      const w = el("div"); w.innerHTML = h; return w;
+    }
+    groups.forEach(g => box.appendChild(card(g.name + " — $/bbl", table(g))));
+    const fy = blob.five_years || [];
+    box.appendChild(el("div", { style: { color: C.muted, fontSize: "11px", lineHeight: "1.6", margin: "-4px 2px 14px" } },
+      `Platts daily close assessments, live on every refresh (cached 30 min; ↻ forces a pull). North Sea grades are FOB vs the North Sea Dated strip; Midland CIF is CIF Rotterdam vs forward Dated. ` +
+      `Med grades are vs the Med, BTC or CPC Dated strip as named. w/w, m/m, 3m and y/y compare with the last assessment on or before 7, 30, 91 and 365 days earlier. ` +
+      `5y avg = average of the same date in ${fy[0]}–${fy[fy.length - 1]}; † fewer than 5 years of history. 5y %ile = rank of today's value in the last 5 years of daily assessments. Hover 52w high/low for dates.`));
+
+    // ── seasonal view of one grade ──
+    const sc = el("div");
+    const gsel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "5px 8px", fontSize: "12px", marginBottom: "8px" } });
+    groups.forEach(g => g.grades.forEach(x => gsel.appendChild(el("option", { value: x.symbol }, `${x.name} (${g.short})`))));
+    const sd = chartDiv(380);
+    sc.appendChild(gsel); sc.appendChild(sd);
+    box.appendChild(card("Seasonal — one grade by year ($/bbl)", sc));
+    function drawSeasonal() {
+      let x = null; groups.forEach(g => g.grades.forEach(z => { if (z.symbol === gsel.value) x = z; }));
+      if (!x) return;
+      const byYr = {};
+      x.dates.forEach((d, i) => { const y = +d.slice(0, 4); if (y >= 2021) (byYr[y] = byYr[y] || []).push(["2000-" + d.slice(5), x.values[i]]); });
+      const tr = Object.keys(byYr).sort().map(y => ({ x: byYr[y].map(z => z[0]), y: byYr[y].map(z => z[1]), name: y, type: "scatter", mode: "lines",
+        line: { width: +y >= 2026 ? 3 : +y >= 2024 ? 2 : 1.2, color: YRCOL[y] || "#64748b" }, hovertemplate: "%{y:.2f}<extra>" + y + "</extra>" }));
+      const lay = layout(x.name + " — " + x.desc, null);
+      lay.xaxis.tickformat = "%b"; lay.xaxis.range = ["2000-01-01", "2000-12-31"];
+      plot(sd, tr, lay);
+    }
+    gsel.addEventListener("change", drawSeasonal);
+
+    loadPlotly(() => { drawCharts(); drawSeasonal(); });
+  }
+
   // ─── PRODUCT STOCKS TAB (weekly hub stocks, live from Platts: /api/product_stocks) ───
   // Regional summary (mmb, w/w, y/y, vs 2017–19), latest Platts stocks articles,
   // then per-hub detail: retrospective, stats table, history / seasonal / YoY charts.
@@ -9711,6 +9892,7 @@
       ]},
       { name: "Brent Complex", items: [
         { id: "dated", label: "Dated Brent", icon: "⚖️" },
+        { id: "cdiff", label: "Crude Differentials", icon: "📉" },
       ]},
       { name: "Balances & Stocks", items: [
         { id: "gb", label: "Gasoline Balances", icon: "⛽" },
@@ -9797,6 +9979,7 @@
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }
       if (id === "ksql" && !panes.ksql._loaded) { panes.ksql._loaded = true; renderKSQL(panes.ksql); }
+      if (id === "cdiff" && !panes.cdiff._loaded) { panes.cdiff._loaded = true; renderCDiff(panes.cdiff); }
       if (id === "dated" && !panes.dated._loaded) { panes.dated._loaded = true; renderDated(panes.dated); }
       if (id === "signal" && !panes.signal._loaded) { panes.signal._loaded = true; renderSignal(panes.signal); }
     }
