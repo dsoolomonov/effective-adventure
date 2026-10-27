@@ -1,0 +1,317 @@
+TL;DR
+Hormuz at standstill, flat price already stalling — physical weakness underneath means any transit resumption triggers a sharp unwind.
+
+Paper has priced the disruption; physical has not confirmed it. Brent rallied 5% then gave back overnight gains, hitting the $80 options wall (50k+ lots). FOB differentials sit at 60-day lows across all quality tiers simultaneously — lights, mediums, heavies — while the US just posted its first crude build in 11 weeks. The flat price bid is pure risk premium over a physically soft market; fade into any diplomatic progress or Hormuz reopening signal.
+
+Diesel, not crude, is the real squeeze. Russia's diesel export ban through July 31 — compounding Hormuz-stranded AG product flows — has blown European diesel margins to a record $60/bbl and drained US distillate stocks by 5 mb in a single week. This product tightness is structural and multi-sourced; it will outlast any crude risk-premium unwind and is the highest-conviction long in the market right now.
+
+Angolan mediums are the actionable buy; Nigerian grades need material OSP cuts. Cabinda, Hungo, and Girassol are $3–5/bbl cheap to basket with clearing momentum. Nigerian grades are $4–7/bbl rich with half of Far East routes shut and Dangote at a record 660 kb/d absorbing domestic barrels. The WAF bifurcation is widening — position for Angolan differential recovery and against Nigerian premiums.
+
+Hormuz binary dominates everything — July 17 OFAC deadline is the hard catalyst. Traffic has collapsed from ~40 daily crossings to near zero; war insurers are advising shipowners to pause. AG barrels are stranded, not destroyed — the distinction is critical. Any escort arrangement or ceasefire progress releases a wall of deferred supply into an already oversupplied physical market. The OFAC grace period expiry on July 17 is the next forcing function.
+
+2026-07-09 - UK Crude Market Open Brief
+Market State
+The US struck Iran for a second consecutive night, hitting ~90 military targets along Iran's coastline (Reuters). Hormuz traffic has ground to a near standstill (Bloomberg) — a sharp deterioration from ~40 daily crossings yesterday. Iran's Parliament Speaker declared the strait will reopen only "under Tehran's terms" (Benzinga); Trump floated reinstating a US blockade and seizing Kharg Island (Yahoo Finance). Yet Brent rose ~1% overnight on the second strike wave, then gave it all back — trading flat near $78 at the UK open (X). The market appears to have priced the current disruption level and is waiting for the next catalyst. Sep Brent settled $77.96 Wednesday (+5.1%), with the intraday peak touching +8% before hitting heavy options OI around the $80 strike — 50,000+ lots — which may cap near-term upside (Bloomberg). WTI settled $73.52 (+4.4%). The paper-physical divergence flagged yesterday has widened further.
+
+Products are the real story. Russia banned diesel exports through July 31 after Ukrainian drone strikes hit the Saratov and Nizhnekamsk refineries — combined capacity exceeding 14 million tonnes/year (Bloomberg). European diesel margins surged to a record $60.17/bbl; US diesel futures posted their biggest daily gains in four years (Reuters). This compounds Hormuz-driven product tightness — AG refinery product exports are stranded alongside crude — while record US fuel exports strain domestic stockpiles (Bloomberg). Partial offset: China relaxed product export restrictions this month, granting permits for gasoline, diesel, and jet fuel in a major easing of wartime curbs (Bloomberg). EIA distillates plunged 5.0 mb w/w vs expectations for a 1.1 mb build.
+
+Refining margins sit at 60-day highs across all quality tiers — heavy coking ~$44/bbl, NWE light cracking ~$21/bbl, Med medium cracking surging +$13/bbl w/w to $25/bbl. But the critical tension persists: margins are screaming "buy crude" while physical differentials remain pinned near 60-day lows. US refinery utilisation easing to 95.8% from 96.6% suggests capacity constraints are limiting the translation of margin strength into incremental crude demand. Cheap feedstock is feeding the margin strength — a self-reinforcing loop that will eventually break.
+
+The EIA report added a bearish counterweight ignored amid the geopolitical noise: US commercial crude posted a surprise 3.0 mb build — the first in 11 weeks — vs expectations for a 1.9 mb draw (WSJ). SPR draws continued at 6.2 mb. Goldman flagged the Hormuz flare-up may delay ME supply recovery (Bloomberg), but the physical market tells a different story: the barrels are stranded, not lost. That distinction matters enormously when transit resumes.
+
+Physical Update
+Paper-physical divergence deepens. The global FOB composite remains pinned near 60-day lows across lights, mediums, and heavies simultaneously — rare breadth that confirms the flat price rally is a paper phenomenon driven by geopolitical risk premia, not physical tightness. Momentum across most basins is flagging "turning up," with USGC mediums posting the largest w/w move higher (+$3.29/bbl) and LATAM grades bouncing (+$2.59/bbl w/w), hinting the cheapest barrels are finding clearing levels. But differentials remain deeply depressed — the market is probing for a floor, not confirming the flat price move. Murban's $9+/bbl discount to its basket is a symptom of market fracture, not a tradeable signal: with Hormuz at a standstill, arbs that calculate as open cannot translate into physical flows.
+
+North Sea lights deeply competitive; supply-side catalysts accumulating. Forties sits nearly $2/bbl cheap to its basket with NWE arbs wide open, supported by rock-bottom Aframax rates (TD7 at $13.93/mt, near 60-day lows). Competitiveness is softening d/d but remains strong across the North Sea complex. The Azeri BTC programme is tightening — August Ceyhan loadings at 13.8 mb vs 15.8 mb in July (X) — providing incremental support for Med light sweets. A Chevron CPC tanker was attacked by drones off Novorossiysk (Reuters), adding a Black Sea supply risk vector. Deeply competitive arbs paired with depressed FOBs is a classic setup for differential recovery — the catalysts are accumulating.
+
+WAF bifurcation: Angola clearing, Nigeria under structural pressure. Angolan mediums (Cabinda, Hungo, Girassol) are deeply competitive at $3–5/bbl undervaluation; Hungo still firming. Nigerian grades (Bonny Light, Bonga, Egina, Forcados) are deeply uncompetitive at $4–7/bbl overvaluation, with 26 of 48 Far East routes closed. Dangote at a record 660,000 b/d is the structural headwind — absorbing Nigerian crude domestically while its product exports displace the flows that historically justified premium Nigerian pricing (Yahoo Finance). Nigerian OSPs need to come in materially lower. WTI Midland is similarly uncompetitive (~$1.55/bbl rich to basket), with the NWE arb tightening toward closure and Far East shut, compounded by TD25 at $50.45/mt in the upper quartile.
+
+Key Takeaways & What to Watch
+The paper-physical divergence is the dominant signal. Flat prices rallied ~5% on Hormuz escalation; the physical market has not confirmed the move. FOBs at 60-day lows, first US crude build in 11 weeks, and evident cargo overhang all point to abundant supply. Margins at 60-day highs are the one genuinely bullish fundamental — but they are fed by cheap feedstock, not physical tightness. This is inherently unstable. The Russia diesel ban and Ukrainian refinery strikes add a structural product-tightness layer that could sustain margins longer than crude fundamentals suggest.
+
+Hormuz has materially worsened overnight — from ~40 crossings to near standstill. War insurers advising shipowners to pause (Reuters). Pakistan scrambling for emergency LNG (Bloomberg); India negotiating passage for nine trapped tankers (Bloomberg). AG barrels are stranded, not lost. The July 17 OFAC grace period deadline is a hard catalyst.
+
+Watch: (1) Hormuz traffic — any resumption deflates the risk premium fast given underlying physical weakness; (2) Dated Brent/Forties diffs for first signs of physical tightening; (3) $80 Brent options wall — breach triggers delta-hedging acceleration; (4) Russian diesel ban duration and Ukrainian refinery strike cadence; (5) ADNOC bypass strategy and Gulf market-share push into Asia (Reuters, Yahoo Finance) — reshaping the competitive landscape, though near-term delivery remains constrained by the Hormuz shutdown.
+
+UK Freight Market Open Briefing - 2026-07-09
+Leonidas
+Leonidas
+Sparta AI
+09 Jul 26 - 11:16:41
+This briefing is AI-generated, may be inaccurate or outdated, and shouldn't be relied on as the sole basis for decisions.
+
+TL;DR
+Hormuz shutdown is the only trade — AG tonnage is stranded, not surplus, and every other route prices off the binary.
+
+TD3c's 64-ship list is fiction; effective AG supply is collapsing. Near-zero Hormuz transits, insurer pause advisories, and 9 ships shed in 7 days mean the bearish tonnage signal describes ships that cannot trade. The $12.53 M01–M03 backwardation reflects real panic, not seasonal tightening. If chartering in on AG, fix immediately — optionality is gone. If chartering out, hold firm; the event premium persists until transit physically resumes.
+
+TD25 USGC–Rotterdam is the cleanest confirmed momentum trade outside the Gulf. Price above 5-day above 20-day, freight RBI undervalued by $22/mt (most stretched on the board), and WTI Midland competitiveness into NWE is improving. The 23-ship list is still long versus the 18-ship average, so the move has room if availability contracts — but the signal is already confirmed and running.
+
+TD7 North Sea Aframax is the contrarian setup to act on now. Rates pinned at 60-day lows while the list has shed 13 ships w/w toward the 51-ship average, Forties is deeply competitive into NWE, and the CPC drone strike on a Chevron tanker could redirect Black Sea Aframax demand into the North Sea. Fix early before the list breaks below average and rates reprice.
+
+TD20 Suezmax WAF–UKC tightness is a mirage — charterers retain leverage. The 11-ship list looks tight, but Bonny Light is uncompetitive into NWE and Dangote at 660 kb/d is absorbing Nigerian barrels domestically. Angolan mediums provide some support, but this is residual demand, not a structural bid. No reason to chase.
+
+Freight Morning Brief — 9 July 2026
+Market State
+TD3c VLCC has repriced to $62.65/mt (Aug), up $11.62 w/w — accelerating from yesterday's $55.07 as the Hormuz dislocation deepens overnight. Despite the move, TD3c remains below average in its 60-day range and well under its $71.76 two-month mean. Momentum is turning up but unconfirmed, with the 5-day average still lagging the 20-day. Yesterday's brief flagged TD25 as the clearest bullish trade and TD3c as an early-stage bounce — both calls are confirmed and extended this morning.
+
+TD25 USGC–Rotterdam Aframax at $50.45/mt (Aug), up $9.23 w/w, is the only route with fully confirmed momentum — price above the 5-day, 5-day above the 20-day, range positioning above average. That is the clearest directional move on the board, decoupling from a broader Aframax class at 60-day lows and down 11% w/w. TD7 North Sea Aframax at $13.93/mt (Aug) is flat on the week, pinned at 60-day lows, momentum fading — the most depressed rate on the board. TD22 VLCC USGC–Asia at $57.41/mt (Aug) is up just $1.85 w/w, confirming the MEG–Asia leg is leading VLCC repricing. TD20 Suezmax WAF–UKC at $31.54/mt (Aug) is up $1.42 w/w, turning up from mid-range but insufficient to call a class-level turn against Suezmaxes down 15% w/w.
+
+FFA Recap
+Hormuz dislocation overrides AG VLCC fundamentals. The US struck ~90 Iranian military targets overnight for the second consecutive day (Bloomberg), Iran's parliament speaker declared the Strait will reopen "only under Tehran's terms" (Benzinga), and war insurers are advising shipowners to pause voyages (Reuters). Transit has collapsed from ~40 daily crossings to near zero. TD3c's signal reads bearish on 64 open VLCCs against a 54-ship average, but that signal describes a world where those ships can trade — right now they cannot. The AG list is bifurcated: tonnage stranded inside the Gulf is removed from the effective fleet. The list has shed 9 ships in seven days — the sharpest tightening across all routes — and the curve sits in unusually steep backwardation at $12.53/mt M01–M03, but the self-correcting mechanism is broken because no one can ballast in. If Hormuz reopens, the 64-ship overhang reasserts violently. Chartering in, fix immediately — the dislocation has removed optionality. Chartering out, hold firm; the event premium is real until transit resumes.
+
+Atlantic Aframax: TD25 momentum confirmed, TD7 fundamentals turning ahead of rates. TD25 carries the strongest signal conviction: freight RBI is undervalued by $22.24/mt and deepening — the most stretched undervaluation on the board — while the USGC Aframax list at 23 ships against an 18-ship average is beginning to tighten. WTI Midland competitiveness into NWE is improving w/w, generating implied vessel demand. TD22 VLCC on the same USGC origin tells the opposite story — only 4 open ships against a 6-ship average, severely tight, but WTI is deeply uncompetitive on a delivered basis into Asia, starving the route of stems. TD7 has the strongest bullish fundamental picture: Forties is deeply competitive on a delivered basis into NWE, the 58-ship list has dropped 13 ships w/w and is tightening toward the 51-ship average — yet rates have not repriced. Chartering in on TD7, fix early before the list tightens further. The CPC drone strike on a Chevron tanker off Novorossiysk (Quantum Commodity Intelligence) could redirect Aframax demand toward North Sea alternatives, accelerating list contraction. TD20 Suezmax WAF–UKC has an 11-ship list that looks tight, but Bonny Light is deeply uncompetitive on a delivered basis into NWE and Dangote at 660 kb/d is absorbing Nigerian crude domestically. Angolan mediums remain competitive on a delivered basis, supporting some WAF-to-UKC demand, but the tightness is residual. Charterers retain leverage on TD20.
+
+What to Watch
+Hormuz: position for the binary or wait for resolution? Iran has threatened full closure if struck again — that would strand dozens more VLCCs inside the Gulf, sending TD3c toward its $71.76 two-month mean. Any diplomatic breakthrough releases the stranded tonnage overhang and the bearish snapback is severe.
+
+July 17 OFAC deadline: does fleet segmentation deepen or ease? The sanctions grace period expires in eight days. Enforcement tightening removes tonnage from the compliant pool; any extension lengthens the compliant VLCC list.
+
+Fade or follow TD7 at 60-day lows with fundamentals turning? If the North Sea Aframax list breaks below the 51-ship average, the bullish signal confirms. Black Sea disruption from the CPC drone strike could accelerate this.
+
+Does TD25's list contract from 23 toward 18 ships to flip the signal? Confirmed momentum is running against a still-long list. If availability contracts toward the average, the repricing higher has significant room given extreme freight RBI undervaluation.
+
+UK Gasoline Market Open Briefing - 2026-07-09
+Leonidas
+Leonidas
+Sparta AI
+09 Jul 26 - 11:14:18
+This briefing is AI-generated, may be inaccurate or outdated, and shouldn't be relied on as the sole basis for decisions.
+
+TL;DR
+Hormuz shutdown and Russian refinery hits are compounding — EBOB cracks at 2× seasonal norms with no supply response pathway open.
+
+EBOB is bid on dual supply destruction with blending blocked. Hormuz tanker traffic has essentially stopped, AG gasoline is stranded, and Ukrainian drone strikes on two more Russian refineries triggered a diesel export ban that is collapsing gas-diesel and pushing refiners toward gasoline yield — but reformate at 60-day highs and alkylate at multi-year highs mean the octane needed to assemble export barrels isn't available. EBOB Brent crack at $32/bbl (vs $16.46 seasonal norm) holds until either the octane squeeze breaks or a ceasefire headline lands.
+
+SING is absorbing AG displacement but stretching thin. Tanzania and Pakistan have flipped from AG to SING, and SING now undercuts ARA into WAF by ~$50/mt — stripping ARA's primary export outlet. But Sing92 is easing despite AG removal because SING is being pulled across too many markets simultaneously; Aug/Sep weakening toward $3.00/bbl would signal capacity exhaustion and could hand WAF back to ARA.
+
+ARA is stealing Mexico East from HOU — RVO wedge makes it stick. Mexico East flipped to ARA for early-Aug, a rare inversion in HOU's most dominant corridor (cheapest 90% of pricing days). Elevated D6 RIN compliance costs are structurally widening the USGC cost disadvantage. Bearish RBOB relative value near-term; the TA arb is shut on both views, so this competitive loss has no offsetting Atlantic flow.
+
+July 17 OFAC waiver expiry is the binary that reprices everything. Any diplomatic signal — waiver extension, back-channel talks — triggers rapid premium deflation, with EBOB crack most exposed from $32/bbl. Until then, physical supply chain damage accumulates and the displacement pattern deepens. Trade the headline calendar, not the spread level.
+
+Gasoline Morning Brief — 2026-07-09
+Market Overview
+Brent surged above $78 after Trump declared the Iran ceasefire "over" at the NATO summit and the US struck Iranian targets for a second consecutive day, with IRGC retaliating against US bases in Bahrain and Kuwait (Reuters). Hormuz tanker traffic has essentially stopped (Bloomberg), war insurers are advising pause (Reuters), and OFAC revoked the Iran oil sales waiver — grace period expires July 17. The gasoline complex is repricing unevenly: EBOB Brent crack at $32/bbl — nearly double the week-28 five-year norm of $16.46/bbl — and RBOB WTI crack at $49.75/bbl are both at 60-day highs, while Sing92 Brent crack at $17.50/bbl eases week-on-week. EBOB Aug/Sep at $58/mt and RBOB Aug/Sep at 28.27 cpg sit in strong backwardation; Sing92 Aug/Sep at $3.20/bbl is weakening. E/W hit –$14.50/bbl, at 60-day and near multi-year lows.
+
+This extends yesterday's dual supply destruction thesis — EBOB cracks widened from $30.45/bbl as Hormuz escalated and Ukrainian drone strikes hit two more Russian refineries (Saratov and TAIF-NK), prompting Russia to ban diesel exports through July 31 (Reuters). EBOB is bid on event-driven scarcity with no near-term resolution pathway. But the rally is bounded: ARA's anchor WAF outlet is lost to SING by ~$50/mt, and the TA arb is shut on both views. Any ceasefire headline triggers rapid premium deflation, though physical supply chain damage persists beyond headlines.
+
+Arbitrage & Flows
+SING fills the AG vacuum — displacement reaches ARA's anchor market
+
+AG gasoline is stranded by the Hormuz closure, and SING is absorbing demand across AG's home markets. Tanzania (50–100 kb/d, AG cheapest 72% of pricing days, longest streak 222 days) flipped to SING for late-Aug delivery — medium signal weight, counter-seasonal with AG volume share peaking in August. Pakistan (80–150 kb/d, AG cheapest 69% historically) has been inverted 12 sessions with SING ahead by $1.84/bbl. The displacement ripple extends west: SING is cheapest into WAF for early-Aug delivery, undercutting ARA by ~$50/mt in ARA's primary export destination (34% of typical ARA exports, 350–580 kb/d, ARA cheapest 95% of pricing days) — high signal weight, widening from a ~$39/mt gap yesterday. SING is being stretched across too many displacement markets simultaneously, which explains why Sing92 is weakening despite AG removal — the export pull is diluting SING's own regional balance. E/W narrowing to multi-year lows is EBOB-driven, not Sing92-driven.
+
+ARA undercuts HOU across the Atlantic — RVO wedge bites
+
+Mexico East (220–350 kb/d, HOU cheapest 90% of pricing days, longest streak 362 days) flipped to ARA for early-Aug delivery — high signal weight, with ARA's 0.53 cpg undercut structurally supported by elevated RVO compliance costs widening the cost wedge against USGC exporters. Montreal (50–130 kb/d, medium weight) inverted 12 sessions, ARA 9.19 cpg ahead; Colombia (20–70 kb/d) is 0.57 cpg from flipping. HOU retains Florida comfortably (200–360 kb/d, 13.9 cpg cushion). Bearish RBOB on competitive loss — the Mexico East flip is rare and high-weight, and the RVO wedge makes it durable while D6 RIN prices remain elevated.
+
+TA shut on both views — NYH waterborne-isolated
+
+Both TA margins shut for AUG 26: blender at –6.5 cpg, NWE refiner at –1.85 cpg — part of the bounded ceiling on EBOB. The NWE refiner view has improved from –3.50 cpg yesterday and is the nearer solver, but TC2 at $23.10/mt is turning up, working against reopening. With EBOB rallying faster than RBOB, the spread is more likely to widen near-term. NYH relies on domestic supply; heavy naphtha or component flows remain a potential alternative western outlet for ARA if the finished-product arb stays blocked.
+
+Blend Economics & Components
+NWE gas-nap at $250.5/mt sits in the corrective zone — blending nominally attractive — yet all ARA margins (AUG 26) remain deeply shut: E5 blender near –$22/mt, refinery near –$20/mt. The disconnect is octane costs: reformate at $145/mt (+$13/mt w/w, 60-day highs) and alkylate at $266/mt (+$21/mt w/w, multi-year highs for this week) are both rallying into a narrowing gas-nap. Stranded AG naphtha is compressing gas-nap from below while reduced reformer capacity constrains octane supply from above — a pincer keeping blenders dormant and blocking the supply response that would normally cap EBOB gains. WAF and Mexico East — ARA's live arb outlets — are non-oxy markets, so the octane squeeze feeds directly into the cost of every export barrel ARA can assemble.
+
+The yield switch is collapsing — NWE gas-diesel cratered to $55.77/mt, with European diesel margins hitting a record $60.17/bbl after Russia's export ban (Reuters). Refiners have every incentive to maximise gasoline yield, but incremental FCC and reformer output faces the same octane cost squeeze — the supply response is real in volume but ineffective in quality. This is the structural explanation for EBOB cracks sustaining 2× seasonal norms.
+
+What to Watch
+Track OFAC grace period into July 17 — the displacement pattern's expiry date Any headline suggesting waiver extension or a new diplomatic channel triggers rapid premium deflation. EBOB Brent crack most exposed to downside from current $32/bbl.
+
+NWE refiner TA margin — first signal of Atlantic flow resumption Currently –1.85 cpg and trending toward zero. Requires either RBOB strengthening relative to EBOB or TC2 easing below $20/mt. Opening would be bullish RBOB timespreads and bearish EBOB.
+
+SING displacement capacity — can SING sustain WAF + EoS simultaneously? Sing92 Aug/Sep breaking below $3.00/bbl would signal capacity exhaustion. If SING reaches its limits, Sing92 firms, E/W widens from multi-year lows, and ARA may recapture WAF — the constructive scenario for E/W longs.
+
+NWE reformate below $140/mt unblocks the blending response Reformate easing would move ARA blender margins (AUG 26) toward opening, adding supply and capping EBOB Aug/Sep. Currently $145/mt — the gap is narrow but the direction is wrong (still firming).
+
+Leonidas Briefs
+Distillate
+UK Distillate Market Open Briefing - 2026-07-09
+Leonidas
+Leonidas
+Sparta AI
+09 Jul 26 - 11:09:11
+This briefing is AI-generated, may be inaccurate or outdated, and shouldn't be relied on as the sole basis for decisions.
+
+TL;DR
+Hormuz shutdown plus Russian diesel ban has sealed every corrective channel — cracks repricing to structural scarcity, not headline noise.
+
+Every relief valve is blocked simultaneously. AG barrels can't load (Hormuz), USGC barrels are being pulled to LatAm (Russian ban backfill), and transatlantic arbs are shut in both directions. Yanbu→Rotterdam at +$27.70/mt is the sole profitable Middle Eastern diesel route into NWE, narrowing from +$40/mt yesterday — if it approaches breakeven, NWE has zero incremental supply at any origin, and ICE Gasoil M1/M2 (already at $36.40/mt, 7x the seasonal norm) reprices higher.
+
+HOGO widening is the asymmetric trade on any ceasefire. A Hormuz resolution compresses ICE Gasoil but HO retains a structural floor from the Russian ban and LatAm pull — HOGO widens further on diplomatic progress. The spread is already at a multi-year week-28 high (31.70 cpg vs prior max 23.20 cpg), and record-high 2026 RVOs are inflating the headline number by an unknown amount; ex-RVO decomposition is unavailable, so treat the absolute level with caution.
+
+Regrade confirms diesel is the scarce molecule, not jet. NWE Regrade compressing in peak aviation season — diesel outperforming jet 2:1 on the week — is the clearest signal that the joint-product loss from Hormuz and destroyed Russian hydrocracker capacity (Saratov, TAIF-NK hit again) is concentrating in middle distillates. Conversion economics (GOFO +$95/mt w/w) are screaming for throughput, but the capacity to respond is physically gone.
+
+Ceasefire is the dominant binary but insurance lag blunts the physical response. Kalshi prices Hormuz normalisation by December 1 at only 44%. Even a diplomatic breakthrough does not restore AG flow quickly — war insurers are advising shipowners to pause, and months-to-years refinery repair timelines in Russia are unaffected. Fade the first ceasefire headline on ICE Gasoil only if Yanbu margin is still open; otherwise the physical floor holds.
+
+Diesel Morning Brief — 2026-07-09
+Market Overview
+The dual supply shock — Hormuz traffic at a near standstill (Bloomberg) compounded by Russia's formal diesel export ban until July 31 (Reuters) — has pushed all three diesel cracks to multi-year highs for week 28: ICE Gasoil/Brent (Aug) at $66.78/bbl (vs 6-year week-28 average $33.38/bbl), HO/WTI (Aug) at $76.84/bbl (vs prior week-28 max $69.59/bbl), SG GO/Brent (Aug) at $50.00/bbl. Timespreads confirm the scarcity read — ICE Gasoil M1/M2 (Aug/Sep) at $36.40/mt (vs 5-year week-28 average $5.33/mt), a summer-plateau spread printing deep-winter levels. HOGO (Aug) at 31.70 cpg has reversed yesterday's compression and is widening w/w to a multi-year high for week 28 (vs prior max 23.20 cpg), driven by the Russian ban pulling USGC barrels south to backfill stranded LatAm demand. E/W (Aug) at −$67.50/mt sits at a multi-year low for week 28, the deep west premium reflecting AG supply physically removed from East-of-Suez. US diesel futures posted their biggest daily gains in four years (Reuters).
+
+The three channels that would normally correct extreme cracks — AG barrels swinging west, USGC exporting to NWE, LatAm absorbing Russian supply — are all blocked simultaneously. The primary near-term risk is a ceasefire headline, but even full Hormuz normalisation does not resolve the Russian ban or the months-to-years refinery repair timeline.
+
+Arbitrage & Flows
+Yanbu sole Middle Eastern diesel lifeline into NWE — margin narrowing
+
+Yanbu (LR2), historically open ~82% of comparable late-Aug / early-Sep delivery windows, is the only profitable Middle Eastern diesel origin into Rotterdam at +$27.70/mt for late-Aug / early-Sep delivery. Its westbound route runs via Suez direct (loaded in upper Red Sea, does not transit Bab-el-Mandeb). Jubail, historically open ~47% of comparable windows, is stranded behind Hormuz at ~−$30/mt for late-Aug / early-Sep delivery. Sikka (~28% of comparable windows) has shut into both Rotterdam and Singapore (AUG 26), deteriorating further. Saint John (MR, AUG 26) remains open at +$15.9/mt but weakening — typical flow is modest. Houston→Rotterdam (MR, AUG 26) has worsened to −$13/mt, gated by TC14 (Aug) at $50.72/mt near multi-year week-28 highs. War insurers are advising shipowners to pause Hormuz voyages (Reuters), meaning even a diplomatic signal would not immediately restore AG flow. The UK trade licence authorising diesel imports refined from Russian crude in India and Turkey creates a potential channel, but at current TC20 levels ($72.22/mt, 60-day highs) the freight economics do not yet clear. Bullish ICE Gasoil structure while Rotterdam's incremental clearing depends on Yanbu alone at scale.
+
+HOGO widening — Russian ban pulls USGC barrels to LatAm, both transatlantic arbs shut
+
+HOGO is widening w/w, driven by the Russian diesel export ban tightening the US complex via LatAm pull — Brazil loses Russian supply, USGC barrels are pulled south, and the US domestic balance tightens on a shock NWE does not face directly. EIA data (week ended July 3) already showed record US fuel exports before the ban (Reuters). The reverse-TA (NWE→NYH, MR, AUG 26) is shut at −29.47 cpg — the corrective ceiling on US (NYH/USAC) distillate strength is not engaging. The forward-TA (USGC→NWE, MR, AUG 26) is also shut, a marginal narrowing lean on HOGO but overwhelmed by the LatAm pull. With record-high 2026 RVOs inflating headline HOGO, the ex-RVO decomposition is not yet available — how much of the width is compliance cost versus physical tightness is a gap worth flagging. A Hormuz ceasefire would compress ICE Gasoil but HO retains a structural floor from the Russian ban — HOGO widens further on resolution.
+
+E/W at multi-year lows — corrective impaired on both legs
+
+AG-Hormuz origins cannot load; Sikka is shut into both Singapore (AUG 26) and NYH (AUG 26); TC20 gates the westbound corrective freight. No spot-arb route into Singapore is profitable — Ulsan (LR2, AUG 26) is the least-shut at −$1.03/bbl. Singapore's marginal diesel clearing relies on inventory drawdown and term flows until either Sikka or an AG origin reopens.
+
+Conversion Economics & Regrade
+Diesel-specific tightness across NWE, ARA, and East simultaneously — the most bullish regrade configuration. NWE Regrade (Aug) at $57.75/mt, $20/mt above the 6-year week-28 norm, compressed $11.25/mt w/w as the ICE GO/Brent crack gained $18/bbl w/w against the NWE jet crack's $9/bbl — diesel outperforming jet roughly 2:1, driven by AG joint-product loss compounded by Russian conversion capacity destruction (Saratov, TAIF-NK struck again (Bloomberg)). USGC Regrade (Aug) at −39.15 cpg sits at a multi-year low for week 28. SG Regrade (Aug) at −$2.00/bbl, near the multi-year high in diesel-premium terms. Regrade compression in peak aviation season — when jet should be pulling — is the clearest signal that diesel is the scarce molecule.
+
+Rotterdam jet: only 1 of 9 tracked spot-arb routes open (Sikka LR1 at +$6.31/mt for late-Aug / early-Sep delivery), with AG-Ras Laffan — historically open 57% of late-Aug windows — Hormuz-stranded at −$18.20/mt for late-Aug / early-Sep delivery. NWE GOFO (Aug) at $584/mt, widened $95/mt w/w — conversion economics strongly favour maximising throughput, but destroyed Russian hydrocracker capacity caps the supply response. Counter-seasonal diesel-over-gasoline yield premium at multi-year highs — NWE at $112/mt, $161/mt above the week-28 norm — confirms the incentive is global, yet structurally unable to close the gap.
+
+What to Watch
+Track Yanbu→Rotterdam diesel margin for breakeven approach Currently +$27.70/mt for late-Aug / early-Sep delivery, narrowed from ~+$40/mt yesterday. If Yanbu shuts, NWE has no profitable Middle Eastern diesel origin — the most bullish near-term signal for ICE Gasoil M1/M2.
+
+Hormuz transit count and ceasefire headline risk Kalshi prices normalisation by December 1 at 44% (CNBC). A ceasefire headline triggers sharp ICE Gasoil crack compression and E/W snap toward mean — but HOGO widens on resolution. Insurance normalisation lags diplomacy.
+
+Russian diesel export ban — July 31 expiry or extension Russia will begin importing fuel in July, signalling domestic severity (Reuters). Ban extension sustains the LatAm pull and keeps HOGO wide.
+
+Ulsan→Singapore diesel approaching breakeven at −$1.03/bbl (AUG 26) If Ulsan flips open, Singapore is pulling barrels from Korea — a sign of acute regional stress that would deepen the E/W spread.
+
+DUBAI Gasoline Market Open Briefing - 2026-07-09
+Leonidas
+Leonidas
+Sparta AI
+09 Jul 26 - 09:05:05
+This briefing is AI-generated, may be inaccurate or outdated, and shouldn't be relied on as the sole basis for decisions.
+
+TL;DR
+Hormuz functionally closed, Russia bans diesel — two supply shocks compound with no arbitrage relief valve open.
+
+EBOB cracks at $32/bbl are crisis-priced but not yet at ceiling. Full Hormuz closure confirmation (Iranian retaliation on commercial shipping) pushes toward the $54.30/bbl week-28 record; any diplomatic re-engagement triggers a 30–40% drawdown. The dominant binary is escalation vs. negotiation — Kalshi prices normalisation by December at only 44%. Size for premium persistence, not further upside, unless the next headline is kinetic.
+
+Every arbitrage relief valve is shut or closing. TA is closed on both blender and refiner views (–6.5 cpg / –1.85 cpg) with TC2 turning up, WAF is lost to Singapore by $48.50/mt, and ARA is now undercutting HOU into Mexico East by a knife-edge 0.17 cpg — threatening HOU's largest export market (~28% of its book). With no clearing route open for surplus ARA barrels, EBOB M1/M2 backwardation at ~3× seasonal has no active pressure release. Watch the NWE refiner TA margin through –1.85 cpg toward zero as the earliest signal of Atlantic flow resumption.
+
+Octane components are the binding constraint, not finished gasoline. Reformate at $145/mt (60-day highs) and alkylate at $266/mt (multi-year highs) are consuming the entire gas-nap spread despite it widening to $250.50/mt. Stranded AG naphtha tightens feedstock costs globally, and Russia's diesel ban incentivises refiners to maximise diesel yield — marginal gasoline output that does emerge skews low-octane, reinforcing the reformate/alkylate squeeze rather than relieving it.
+
+Sing92 is most exposed to a Hormuz resolution. Singapore is stretching to fill AG's vacuum across Pakistan, Saudi Red Sea, Tanzania, and WAF, but TC5 freight at $65.37/mt near multi-year highs caps physical throughput. The Sing92 crack at $17.50/bbl is drifting lower w/w with weakening timespreads even as Atlantic benchmarks surge — any Hormuz reopening snaps Singapore's displacement chain first and hardest.
+
+Gasoline Morning Brief — 2026-07-09
+Market Overview
+EBOB cracks hit $32.00/bbl — nearly double the $16.46/bbl week-28 seasonal average — as the Hormuz crisis escalated from fragile ceasefire to active military conflict. CENTCOM struck approximately 90 Iranian military targets on July 8 (Reuters), Iran's parliament speaker declared Hormuz opens only on Tehran's terms (Benzinga), and tanker traffic ground to a near-halt (Bloomberg). EBOB Aug/Sep at $58.00/mt is roughly 3× the $19.92/mt week-28 norm. RBOB crack at $49.75/bbl approaches the $54.30/bbl week-28 record. E/W fell to –$14.50/bbl, 60-day lows and near multi-year lows for this week — EBOB's discount to Sing92 is at its widest in 60 days, reflecting AG supply removal tightening East-of-Suez balances even as Atlantic cracks surge. Sing92 diverges: crack at $17.50/bbl is still nearly double the seasonal average but drifting lower w/w with weakening timespreads, as Singapore stretches to fill the AG vacuum across multiple markets. ARA has lost its anchor export outlet — Singapore undercuts ARA into WAF by $48.50/mt for early-Aug delivery (up from $39.45/mt), removing ARA's primary clearing route (~34% of typical exports).
+
+Both supply-destruction vectors intensified: Hormuz is now functionally closed, and Russia formally banned diesel exports through July 31 after Ukrainian drone strikes hit Saratov and TAIF-NK refining capacity (Reuters). European diesel margins hit a record $60.17/bbl (Reuters), giving refiners strong incentive to maximise diesel yield — but incremental gasoline barrels from any yield rebalancing skew low-octane, tightening reformate and alkylate rather than relieving the squeeze. Kalshi traders price Hormuz normalisation by December at just 44% (CNBC).
+
+Arbitrage & Flows
+ARA inverts HOU's anchor market — Hormuz displacement cascade reaches the Americas
+
+ARA became cheapest into Mexico East for early-Aug delivery, undercutting HOU by just 0.17 cpg — a fresh, high-weight flip. Mexico East is a large market (220–350 kb/d typical imports) where HOU has been lowest-cost on ~90% of pricing days (longest streak: 362 days), representing ~28% of HOU's export book. Montreal (50–130 kb/d, HOU cheapest ~76% historically) has been persistently inverted for 12 sessions with ARA undercutting by 8.9 cpg. ARA winning two of HOU's four tracked home markets — including its single largest — is bearish RBOB. This is third-order displacement: Hormuz strands AG → Singapore fills the EoS vacuum → Singapore stretches into WAF → ARA extends into HOU's franchise. ARA MR vessel supply at 12 versus a 17 average tempers the signal — paper advantage overstates physical flow potential. The Mexico East margin at 0.17 cpg is knife-edge and reverses when Hormuz reopens.
+
+AG stranded across East of Suez — Singapore fills the vacuum but freight constrains volume
+
+AG has lost three of four tracked home markets to Singapore for mid-Aug delivery: Pakistan (80–150 kb/d, AG cheapest ~69% historically, persistent inversion at $1.80/bbl for 12 sessions), Saudi Red Sea (20–80 kb/d, established inversion at $0.20/bbl), and Tanzania (50–100 kb/d, fresh flip at $1.00/bbl margin). AG holds only Kenya at –$30.50/mt with a comfortable $27.25/mt cushion. AG cheapest into Australia (110–210 kb/d) by $1.79/bbl for late-Aug delivery reflects stranded barrels seeking any outlet, not competitive strength. TC5 at $65.37/mt near multi-year highs and turning up constrains the volume Singapore can deliver — competitive wins are real but throughput is freight-gated. Sing92 is the most exposed benchmark to any Hormuz resolution.
+
+TA shut on both views — NYH waterborne-isolated, two constraints now binding
+
+Both TA margins (AUG 26) remain shut — blender at ~–6.5 cpg, NWE refiner at –1.85 cpg. ARA is cheapest into NYH (310–610 kb/d, ARA cheapest ~57% historically) at –21.90 cpg for early-Aug delivery, but no profitable waterborne route clears from any origin. The NWE refiner margin has improved from –3.50 cpg — but TC2 at $23.10/mt has moved from 60-day lows to mid-range and is turning up, reversing yesterday's thesis that freight was not the constraint. Record RFS biofuel obligations effective June 15 add a durable compliance wedge. For TA to reopen, RBOB needs to outpace EBOB and TC2 needs to ease — neither is trending favourably. With TA shut and WAF lost, ARA's only remaining clearing options are heavy naphtha or component flows into the petchem pool — a lower-value outlet. NYH depends on Colonial Pipeline until these constraints lift.
+
+Blend Economics & Components
+NWE gas-nap at $250.50/mt is wide enough that blending should be approaching viability — but octane component costs are consuming the entire margin. NWE reformate at $145/mt (+$13/mt w/w, 60-day highs) and alkylate at $266/mt (+$21/mt w/w, multi-year highs for this week) are both strengthening into the gas-nap narrowing, keeping ARA E5 blender margin (AUG 26) at –$22/mt and E10 refinery margin (AUG 26) at –$8.75/mt deeply shut. All USGC blender margins are also shut. Stranded AG naphtha is tightening the global naphtha balance from the cost side, while East gas-nap has collapsed to 60-day lows at $15.40/bbl. With no local supply corrective available in ARA or USGC and both TA and E/W arbs shut or compressed, there is no active pressure-release valve — bullish EBOB M1/M2 until either reformate or alkylate premiums ease.
+
+What to Watch
+Size for EBOB crack premium persistence, not further upside. Kalshi at 44% for Hormuz normalisation by December. On full closure confirmation (further Iranian retaliation on commercial shipping), EBOB cracks move toward the $54.30/bbl week-28 record. On any diplomatic re-engagement, size for a 30–40% drawdown from the current $32.00/bbl.
+
+Track NWE refiner TA margin (AUG 26) through –1.85 cpg toward zero. The margin closest to reopening and the key signal for Atlantic flow resumption. A move past zero would cap EBOB M1/M2 — but TC2 turning up and RVO compliance costs create headwinds. Lean long TA only on a confirmed break above zero.
+
+OFAC sanctions waiver grace period expires July 17. No extension confirms AG supply remains stranded — incrementally bullish EBOB and Sing92 cracks.
+
+Watch Russia diesel ban for extension beyond July 31. Continued Ukrainian refinery strikes make extension likely. If refiners shift yield toward diesel to capture record margins, marginal gasoline output falls — and the gasoline barrels that do come skew low-octane, reinforcing reformate and alkylate premiums.
+
+t’s getting Messier
+Crude oil
+15 hours ago | 8 min read
+
+
+00:00
+EA LIVE: CLICK FOR REAL-TIME ANALYSIS ACROSS ENERGY, QUANT AND MACRO
+
+Weak exports and unexpected PADD 5 build drive surprise US stockbuild in EIA data.
+Atlantic oversupply pressures July USGC exports; August exports revised lower, but fragile Middle East situation could renew US crude demand.
+USEC gasoline production to rise from partial restart of Trainer, but inventories to remain tight on thin imports.
+Competition for USGC diesel barrels to intensify on limited east–west flows, Russian diesel export ban.
+Rising propane exports to Asia pull US stocks lower; returning Chinese interest set to underpin summer flows.
+Fig 1: US oil inventory projections, mb
+
+
+Source: EIA, Energy Aspects
+
+Fig 2: US crude oil weekly and monthly balance forecasts, mb/d
+
+
+Source: Energy Aspects
+
+Crude
+Fig 3: Cushing inventories, mb
+
+
+Source: EIA, Energy Aspects
+
+EIA data for the week ending 3 July show total US crude inventories building more than we expected. Total US stocks increased by 3 mb w/w, versus our revised forecast of a 3 mb draw. The largest forecast miss came from PADD 5, which accounted for the entire 3 mb build in total US crude inventories, despite PADD 5 imports falling by 30 kb/d more than runs in the EIA's weekly data. Excluding PADD 5, total US stocks were flat w/w, matching our initial expectations. Total US exports also underperformed our expectations, dropping to the lowest weekly level since early November 2025. 
+
+Cushing inventories fell by 0.1 mb w/w, compared with our 0.2 mb stockbuild forecast. We maintain our forecast for a Cushing stockbuild of around 2 mb this month, attributing tighter-than-expected stocks this week to short-term month-end dynamics that drove draws from Enbridge’s Cushing tanks.
+
+We have cut our July–August USGC exports forecast by 0.13 mb/d to 4.05 mb/d (on top of the 0.20 mb/d cut to July that we made last week), flipping our July–August PADD 3 balances to a combined counter-seasonal stockbuild of 4.9 mb (vs an 8.6 mb five-year average stockdraw). 
+
+Updated EA Maritime Analytics data and our market soundings indicate July exports are likely to underperform our prior expectations, pressured by weak Asian demand and an oversupplied Atlantic basin. Moreover, our preliminary August-loading USGC fixture tracking shows loadings slowing further m/m. We have reduced August exports by 0.15 mb/d w/w to 4.20 mb/d for now, but note the fragile US–Iran MoU situation could drive renewed interest in US crude.
+
+WTI–Brent spreads have remained narrow recently as rising availability of Middle Eastern crude initially weighed more on Brent pricing versus WTI. Until Asian fundamentals tighten and Brent–Dubai spreads narrow, WTI–Brent spreads will remain constrained by an oversupplied Atlantic basin weighing on Brent. This  would keep prompt WTI and HOU timespreads pressured, though recent Middle East developments create the risk this pressure may begin to ease. Local US fundamentals are unlikely to provide a solver, as ongoing SPR releases will conclude just as seasonal refinery maintenance drives seasonal PADD 3 stockbuilds this autumn (6 mb in our balances over September–October). 
+
+Alongside SPR releases outpacing USGC exports in Q3 26, the return of Middle Eastern imports for USGC and USWC markets would be another drag on US balances. But given events including the US removal of Iranian sanctions waivers over the last two days, risks of renewed disruptions to Strait of Hormuz shipments have emerged— the roughly 30 mb of July-loading Middle Eastern sour supplies we understood was assigned for delivery across PADDs 3 and 5 for August–September arrivals is now in jeopardy. We understand Saudi Arabia would be the primary source of the 30 mb, and any incremental supply from the kingdom would depend on its ability to move cargoes through the Strait of Hormuz.
+
+The recent US–Iran escalation occurred after Aramco set US-bound August OSPs at their most competitive level in months. We also understand Aramco’s downstream joint-ventures, such as Motiva, would be left with residual length (up to 20 mb) should shipments occur as planned and additionally interest from Atlantic buyers fails to materialise. We have already flagged the strong negative relationship between Saudi arrivals to the Houston area and Southern Green Canyon (SGC) differentials, which means the current scenario creates elevated downside risk to August–September SGC differentials.
+
+ Fig 4: US refinery runs and oil inventories by PADD, w/w change, mb/d, mb
+
+
+
+Note: NGLs inventory data are combined for PADDs 4 and 5
+
+Source: EIA, Energy Aspects
+
+Products
+Fig 5: Gasoline inventories, mb
+
+
+Source: EIA, Energy Aspects
+
+US gasoline stocks drew by 1.9 mb w/w, compared to our revised forecast of a 3.1 mb stockdraw, as product supplied declined by 0.3 mb/d w/w, underperforming our forecast. The stockdraw was concentrated in PADD 1, where inventories declined by 1.7 mb w/w, driven by lower regional production from the outage at Trainer and imports falling by 0.1 mb/d w/w. We anticipate PADD 1 production will rebound by 50 kb/d in next week’s data, with both CDUs and reformers back online at the Trainer refinery, but production will remain below normal levels until the FCC restarts in August. The transatlantic arbitrage has closed on a narrower RBOB–EBOB spread, as European inventories have drawn to near five-year lows and lower water levels on the Rhine have driven up regional pricing. But with PADD 1’s supply issues persisting into August, RBOB will have to price up to attract resupply. We are tracking higher PADD 5 imports in the week ending 10 July (+50 kb/d w/w), per EA Maritime Analytics, along with higher inflows from PADD 3 (+0.1 mb/d w/w). Our modelling indicates that USMW is now incentivised to run in maximum-distillate mode, but this will have to flip back, as gasoline inventories are tighter than diesel. We anticipate a stockbuild of 1 mb w/w in next week’s EIA weekly data as imports to PADD 5 rise and gasoline production in PADD 1 ramps up.
+
+Diesel inventories drew by 5.0 mb w/w, versus our revised expectation of a 0.5 mb stockbuild, as exports and product supplied combined exceeded our expectations. The surge in diesel exports was driven mainly by a strong pull on USGC barrels from Latin America—supporting a 3.2 mb w/w PADD 3 stockdraw, compared to a 0.1 mb stockbuild in the week ending 26 June—and by production holding steady w/w. Exports to Peru surged last week, amid reduced operations at the Talara refinery, which will likely persist in July given no crude arrivals or loadings signalling for Talara MTD. Still-limited diesel flows from the Middle East and the recently imposed Russia diesel export ban will support ICE gasoil spreads and may reopen USGC–Europe arbitrage later in the summer. Our balances show a small 0.1 mb w/w stockbuild in next week's EIA weekly data as demand comes off seasonally.
+
+Jet stocks drew by 0.4 mb w/w, compared to our revised forecast of 0.8 mb stockbuild as exports and product supplied exceeded our expectations. EA Maritime Analytics shows the non-Jones Act MR Gem Turquoise loaded with jet in PADD 3 and scheduled to land in PADD 1B in the week ending 10 July, likely a result of lost supply from the Trainer outage. PADD 1 regrades have flipped negative again over the past few days, possibly due to the CDUs restarting at the Trainer refinery. We expect jet inventories to build by 1.1 mb w/w in next week's data on softer exports.
+
+NGLs
+US propane/propylene stocks declined by 0.8 mb w/w to 90.4 mb, contrary to our revised call, as propane exports rose by more than we had expected. US propane exports rose by 0.7 mb/d w/w to 2.6 mb/d, driven primarily by higher flows to Japan and Korea, according to EA Maritime Analytics data. The data highlight a shift towards propane in the US LPG export mix as Asian buyers move away from US butane purchases as the availability of Middle Eastern LPG, which has a higher butane content, increases. The export strength was further underpinned by a lull in VLEC availability on the USGC that redirected dock space away from ethane loadings towards LPG, with EA Maritime Analytics data showing a w/w drop in US ethane exports. Flows were also supported by higher propane loadings at Nederland (+0.12 mb/d w/w), suggesting compressor-related loading delays have been resolved. 
+
+We expect elevated LPG loadings to continue in July as Chinese buyer interest firms, with Middle East supply still slow to return, especially after the recent escalation. Spot netbacks from Asia moved into positive territory late last week, prompting 16 spot fixtures on the USGC for late July and early August loadings. This should support US LPG exports through the summer months. We also expect US propane/propylene production to slip in next week’s data due to lower holiday weekend gas production in Appalachia. Impeded production growth and buoyant exports should drive a propane/propylene stockdraw of 0.4 mb w/w to 90.0 mb in next week’s EIA data.
+
+Alert: Strait of Hormuz flow monitor – week 28
+
+This is the second edition of Rystad Energy's weekly Strait of Hormuz flow monitor, which provides a regular snapshot of crude oil and refined product flows through the strait and the key developments shaping oil markets in the Persian Gulf. The analysis combines vessel AIS data, cargo attribution and voyage intelligence to monitor physical oil flows through the strait on a near-real-time basis.
+
+Strait of Hormuz flows weakened last week as visible mainstream commercial traffic pulled back. Total observed crossings averaged 33 vessels per day on a seven-day basis, down 21% from 42 vessels in the prior week. Mainstream crossings fell more sharply, dropping 24% from 37 to 28 over the same period, indicating weaker participation from conventional operators. The fall in mainstream crossings this week points to weaker operator confidence and less predictable tanker scheduling.
+
+The sharper move was in non-Iranian oil and product crossings, which tumbled 49%. However, associated exit volumes fell by a more muted 23%, with oil volumes – which slid from 6.76 million barrels per day (bpd) to 5.36 million bpd week on week – accounting for nearly all that figure. Meanwhile, Iran-linked total oil and product volumes rose 23%. The increase was crude-led, with oil volumes rising from 1.4 million bpd to 1.79 million bpd.
+
+Saudi Arabia, Iran and the UAE together accounted for about 84% of the observed cumulative flows last week. Saudi Arabia remained the largest visible contributor to cumulative outbound flows over the last seven days, at 22.6 million barrels. Iran followed with 12.5 million barrels, while the UAE was responsible for 10.5 million barrels. Iraq contributed 4.8 million barrels, while Qatar and Kuwait added much smaller volumes of about 1.1 million and 900,000 barrels, respectively. Bahrain had no observed volumes in the latest seven-day cumulative origin split.
+
+
+
+VLCC positioning
+Fujairah very large crude carrier (VLCC) staging increased 12% to 15 vessels from 13.4 in the prior week, even as mainstream crossings and non-Iranian movements declined. The divergence suggests owners are keeping tonnage positioned outside the Gulf rather than immediately committing to Strait of Hormuz transits, reflecting caution around timing, routing and clearance. Higher staging also creates a buffer of available capacity that could support a faster recovery in flows if conditions normalize – but this shows shipowners are not yet treating Gulf access as fully normalized.
+
+Renewed escalation threatens recovery in visible tanker activity
+Transit behavior remains fragmented. Non-Iranian cargoes continued to use both the Oman Route and Dark Crossing patterns, while Iranian-linked vessels relied more on the Iran Route and dark movements. Operators are adapting transit strategies based on security assessments rather than returning to a single normalized route.
+
+The recent recovery in traffic along the Strait of Hormuz is now exposed to a renewed escalation in tensions between the US and Iran. Behavior is likely to be impacted first, instead of a full halt to flows. Shipowners may delay Gulf entry, stay positioned near Fujairah or Sohar, request higher freight and insurance compensation, or avoid voyages linked to Iranian exposure. These moves would reduce visible crossings before they reduce physical exports on a barrel-for-barrel basis.
+
+The change in sanctions also alters the outlook for Iranian-linked cargoes. With new Iranian-origin oil transactions no longer authorized, future Iranian movements are likely to become less transparent. More cargoes may move through indirect trading structures, ship-to-ship transfers, dark Automatic Identification System (AIS) periods or layered ownership arrangements. This will make official and visible flow tracking less representative of Iranian export activity.
+
+Access our Middle East conflict – Oil and Gas Infrastructure Impact Analysis dashboard here.
