@@ -48,6 +48,7 @@ from app import dated as _dated
 from app import product_stocks_live as _ps_live
 from app import crude_diffs_live as _cd_live
 from app import cross_moves_live as _xm_live
+from app import ea_live as _ea_live
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -14526,6 +14527,18 @@ async def get_cross_moves(refresh: bool = Query(False)):
         out["daily"] = _xm_live.cached_payload()
         out["daily_error"] = f"Platts daily refresh failed{', showing last pull' if out['daily'] else ''}: {e}"
     return out
+
+
+@app.get("/api/ea")
+async def get_energy_aspects(refresh: bool = Query(False)):
+    """Energy Aspects licensed forecasts and balances (latest + previous release)."""
+    try:
+        return await asyncio.to_thread(_ea_live.get_payload, refresh)
+    except Exception as e:
+        cached = _ea_live.cached_payload()
+        if cached is not None:
+            return {**cached, "error": f"EA refresh failed, showing last pull: {e}"}
+        raise HTTPException(status_code=502, detail=f"Energy Aspects unavailable: {e}")
 
 
 @app.get("/api/product_stocks/news")

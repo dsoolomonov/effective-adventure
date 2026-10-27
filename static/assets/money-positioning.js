@@ -5116,6 +5116,211 @@
     box.appendChild(card("Sources & method", note(`Intraday: Bloomberg export (${I ? I.source_file : "—"}), Dubai time, bar-start stamps converted to bar close; 4h bars, DFL 30-min, Brent-Dubai EFS daily. Daily: Platts close assessments (bate c) — ${D ? Object.entries(D.meta).map(([k, v]) => `${v.label} ${v.symbol}`).join(", ") : "unavailable"}. Products in $/t converted to $/bbl with 7.45 (gasoil/ULSD), 7.88 (jet), 8.33 (Eurobob), 8.9 (naphtha), 6.35 (fuel oil). Cracks are product $/bbl − Dated Brent. The Platts DFL proxy is Dated vs Brent Mo01 cash, not the DFL swap, so its level differs from the file's DFL Nov/Dec.`)));
   }
 
+  async function renderEA(box, refresh) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Energy Aspects data…</div>';
+    let P;
+    try {
+      const r = await fetch("/api/ea" + (refresh ? "?refresh=1" : ""));
+      if (!r.ok) throw new Error(await r.text());
+      P = await r.json();
+    } catch (e) { box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load Energy Aspects: ${e.message}</div>`; return; }
+    await new Promise(res => loadPlotly(res));
+    box.innerHTML = "";
+    const M = P.meta, SR = P.series;
+    const PAL = ["#38bdf8", "#f97316", "#22c55e", "#facc15", "#c084fc", "#f472b6", "#14b8a6", "#ef4444", "#a3a35a", "#94a3b8", "#818cf8", "#fb7185", "#4ade80", "#fde047"];
+    const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const SC = { bbl: [1e-6, "mb"], kbbl: [1e-3, "mb"], kbbl_d: [1, "kb/d"], Mbbl_d: [1, "mb/d"], usd_bbl: [1, "$/bbl"], usd_t: [1, "$/t"], usd_gal: [1, "$/gal"], pct: [1, "%"], d: [1, "days"] };
+    const unitOf = id => (SC[(M[id] || {}).unit] || [1, (M[id] || {}).unit || ""])[1];
+    const k = id => (SC[(M[id] || {}).unit] || [1])[0];
+    const lab = id => (M[id] || {}).label || id;
+    const pts = (id, which) => { const s = SR[id]; if (!s || !s[which || "data"]) return []; const f = k(id); return Object.entries(s[which || "data"]).sort().map(([d, v]) => [d, v == null ? null : v * f]); };
+    const val = (id, d, which) => { const s = SR[id]; const x = s && s[which || "data"] ? s[which || "data"][d] : null; return x == null ? null : x * k(id); };
+    const rel = P.latest_release ? P.latest_release.slice(0, 10) : null;
+    const m0 = (rel || new Date().toISOString()).slice(0, 7) + "-01";
+    const addM = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 10); };
+    const fmt = (v, u) => v == null ? "—" : Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(u === "mb/d" ? 2 : 1);
+    const sg = (v, u) => v == null ? "—" : (v >= 0 ? "+" : "") + fmt(v, u);
+    const colr = v => v == null || Math.abs(v) < 1e-9 ? C.muted : v > 0 ? "#4ade80" : v < 0 ? "#f87171" : C.text;
+    const lastVal = (id, upto) => { const xs = pts(id).filter(p => p[1] != null && p[0] <= upto); return xs.length ? xs[xs.length - 1][1] : null; };
+    const yavg = (id, y, which) => { const xs = pts(id, which).filter(p => p[0].startsWith(String(y)) && p[1] != null); return xs.length ? xs.reduce((a, p) => a + p[1], 0) / xs.length : null; };
+    function plot(div, traces, layout) { try { Plotly.newPlot(div, traces, layout, { responsive: true, displayModeBar: false }); } catch (e) { div.innerHTML = `<div style="color:#ef4444;padding:12px">${e.message}</div>`; } }
+    const chartDiv = h => el("div", { style: { width: "100%", height: (h || 360) + "px" } });
+    const grid2 = () => el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(520px, 1fr))", gap: "14px" } });
+    const note = t => el("div", { style: { color: C.muted, fontSize: "11px", marginTop: "6px", lineHeight: "1.5" } }, t);
+    function lay(extra, unit) {
+      return Object.assign({ paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: C.muted, size: 11 }, showlegend: true, hovermode: "x unified",
+        legend: { orientation: "h", y: -0.16, font: { size: 10 } }, margin: { l: 55, r: 20, t: 15, b: 55 },
+        yaxis: { title: { text: unit || "" }, gridcolor: "#1e293b", zeroline: true, zerolinecolor: "#64748b" },
+        xaxis: { gridcolor: "#1e293b", range: ["2025-01-01", "2027-12-31"] },
+        shapes: [{ type: "line", xref: "x", yref: "paper", x0: m0, x1: m0, y0: 0, y1: 1, line: { color: "#64748b", dash: "dot", width: 1 } }] }, extra || {});
+    }
+    function lines(title, ids, opt) {
+      opt = opt || {}; const d = chartDiv(opt.h); const c = card(title, d);
+      const ok = ids.map(String).filter(id => SR[id]);
+      const tr = [];
+      ok.forEach((id, i) => {
+        const p = pts(id), col = PAL[i % PAL.length], name = (opt.names && opt.names[ids.indexOf(Number(id))]) || lab(id);
+        tr.push({ x: p.map(z => z[0]), y: p.map(z => z[1]), name, type: "scatter", mode: "lines", line: { color: col, width: 2 }, stackgroup: opt.stack ? "s" : undefined, hovertemplate: "%{y:.2f}<extra>" + esc(name) + "</extra>" });
+        if (opt.prev !== false && !opt.stack && SR[id].prev) { const q = pts(id, "prev"); tr.push({ x: q.map(z => z[0]), y: q.map(z => z[1]), name: name + " (prev)", type: "scatter", mode: "lines", line: { color: col, width: 1, dash: "dot" }, showlegend: false, hovertemplate: "prev %{y:.2f}<extra>" + esc(name) + "</extra>" }); }
+      });
+      setTimeout(() => plot(d, tr, lay(opt.lay, opt.unit || (ok[0] ? unitOf(ok[0]) : ""))), 0);
+      if (!ok.length) c.appendChild(note("No licensed data returned for these series."));
+      return c;
+    }
+    function revTable(title, ids, months) {
+      const ok = ids.map(String).filter(id => SR[id]);
+      const ms = months || [0, 1, 2, 3, 6, 9, 12].map(n => addM(m0, n));
+      const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "12px" } });
+      const th = (h, i) => `<th style="text-align:${i ? "right" : "left"};padding:5px 7px;color:${C.muted};border-bottom:1px solid ${C.border};font-weight:600">${h}</th>`;
+      t.innerHTML = "<thead><tr>" + ["Series", "Unit", ...ms.map(m => new Date(m + "T00:00:00Z").toLocaleDateString("en-GB", { month: "short", year: "2-digit", timeZone: "UTC" }))].map(th).join("") + "</tr></thead>";
+      const tb = el("tbody");
+      ok.forEach(id => {
+        const u = unitOf(id);
+        const cells = ms.map(m => { const v = val(id, m), p = val(id, m, "prev"), dv = v != null && p != null ? v - p : null;
+          return `<td style="text-align:right;padding:4px 7px;color:${C.text}">${fmt(v, u)}<div style="font-size:10px;color:${colr(dv)}">${dv == null ? "" : sg(dv, u)}</div></td>`; }).join("");
+        tb.insertAdjacentHTML("beforeend", `<tr style="border-bottom:1px solid #111a2c"><td style="padding:4px 7px;color:${C.text}">${esc(lab(id))}</td><td style="padding:4px 7px;color:${C.muted}">${esc(u)}</td>${cells}</tr>`);
+      });
+      t.appendChild(tb); const w = el("div", { style: { overflowX: "auto" } }); w.appendChild(t);
+      const c = card(title, w); c.appendChild(note("Latest EA release; small figure = change vs EA's previous release of the same series.")); return c;
+    }
+    function bars(title, items, unit) {
+      const d = chartDiv(360); const c = card(title, d);
+      setTimeout(() => plot(d, items.map((it, i) => ({ type: "bar", name: it.name, x: it.x, y: it.y, marker: { color: it.color || PAL[i % PAL.length] } })),
+        lay({ barmode: "group", hovermode: "closest", shapes: [], xaxis: { tickangle: -35, tickfont: { size: 10 } }, margin: { l: 55, r: 20, t: 15, b: 100 } }, unit)), 0);
+      return c;
+    }
+    const section = (t) => box.appendChild(el("div", { style: { fontSize: "13px", fontWeight: "800", color: C.gold, margin: "18px 0 8px", textTransform: "uppercase", letterSpacing: "1px" } }, t));
+    const findIds = (sec, re) => ((P.sections.find(s => s.key === sec) || {}).ids || []).filter(id => re.test(lab(id)));
+
+    // header
+    const hdr = el("div", { style: { display: "flex", alignItems: "center", gap: "14px", marginBottom: "14px", flexWrap: "wrap" } });
+    hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "📘 Energy Aspects"));
+    const live = !P.error && !(P.errors || []).length;
+    hdr.appendChild(el("span", { style: { fontSize: "11px", fontWeight: "700", padding: "3px 9px", borderRadius: "10px", background: live ? "rgba(16,185,129,0.15)" : "rgba(245,158,11,0.15)", color: live ? C.green : "#f59e0b" } }, live ? "● EA API live" : "○ partial / last pull"));
+    const rb = el("button", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "6px 12px", fontSize: "12px", cursor: "pointer" } }, "↻ Refresh from EA");
+    rb.addEventListener("click", () => renderEA(box, true)); hdr.appendChild(rb);
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", marginLeft: "auto" } }, `Latest EA release ${P.latest_release ? P.latest_release.replace("T", " ") : "—"} UK · pulled ${P.generated_at ? P.generated_at.replace("T", " ").replace("Z", " UTC") : "—"} · ${Object.keys(SR).length} series`));
+    box.appendChild(hdr);
+    if (P.error || (P.errors || []).length) box.appendChild(el("div", { style: { color: "#f59e0b", fontSize: "12px", marginBottom: "10px" } }, [P.error, ...(P.errors || [])].filter(Boolean).join(" · ")));
+
+    // read
+    {
+      const q = addM(m0, 1), q2 = addM(m0, 3);
+      const L = [];
+      const dated = val(3310, m0), datedP = val(3310, m0, "prev"), dq = val(3310, q2), dqP = val(3310, q2, "prev");
+      L.push(`<b>Price deck:</b> Dated Brent ${fmt(dated)} $/bbl for ${m0.slice(0, 7)} (${sg(dated != null && datedP != null ? dated - datedP : null)} vs previous release), ${fmt(dq)} for ${q2.slice(0, 7)} (${sg(dq != null && dqP != null ? dq - dqP : null)}). WTI ${fmt(val(3311, m0))}, Dubai ${fmt(val(3312, m0))}, ULSD NWE ${fmt(val(3910, m0))} $/bbl.`);
+      const sc = [m0, q, addM(m0, 2)].map(m => val(6471, m)), scP = [m0, q, addM(m0, 2)].map(m => val(6471, m, "prev"));
+      const avg = a => a.filter(x => x != null).length ? a.filter(x => x != null).reduce((s, x) => s + x, 0) / a.filter(x => x != null).length : null;
+      const s3 = avg(sc), s3p = avg(scP);
+      L.push(`<b>Global liquids balance:</b> implied stock change ${sg(s3, "mb/d")} mb/d over the next 3 months (${sg(s3 != null && s3p != null ? s3 - s3p : null, "mb/d")} vs previous release; + = build). 2027 average ${sg(yavg(6471, 2027), "mb/d")} mb/d. Demand ${fmt(yavg(5214, 2026))} → ${fmt(yavg(5214, 2027))} kb/d (2026 → 2027), supply ${fmt(yavg(6769, 2026))} → ${fmt(yavg(6769, 2027))}.`);
+      L.push(`<b>OPEC+:</b> actual spare capacity ${fmt(val(3306, m0))} kb/d (${fmt(val(3298, m0))}% of demand); Saudi spare ${fmt(val(3285, m0))}. Unplanned disruptions ${fmt(lastVal(114, m0))} kb/d worldwide (latest month).`);
+      L.push(`<b>Europe diesel:</b> inventories ${fmt(val(11314, m0))} mb (${sg(val(11314, m0) != null && val(11314, m0, "prev") != null ? val(11314, m0) - val(11314, m0, "prev") : null)} vs previous), imports ${fmt(val(11283, m0))} kb/d, demand ${fmt(val(2067, m0))} kb/d.`);
+      const d = el("div", { style: { color: C.text, fontSize: "13px", lineHeight: "1.7" } });
+      d.innerHTML = L.map(x => `<div style="margin-bottom:4px">${x}</div>`).join("");
+      box.appendChild(card("Read — what EA's latest release says", d));
+    }
+
+    section("1 · Price forecasts");
+    let g = grid2();
+    g.appendChild(lines("Crude price forecasts, $/bbl (dotted = previous release)", [3310, 3309, 3311, 3312, 3323, 3321]));
+    g.appendChild(lines("Product price forecasts, $/bbl", [3910, 3911, 7250, 3920, 7248, 3915, 11955]));
+    box.appendChild(g);
+    box.appendChild(revTable("Price deck — latest vs previous release", [3310, 3309, 3311, 3312, 3323, 3321, 3322, 3910, 3911, 7250, 3920, 7248, 3921, 3915, 11955]));
+
+    section("2 · Global crude & liquids balance");
+    g = grid2();
+    g.appendChild(lines("World liquids demand vs supply, kb/d", [5214, 6769]));
+    g.appendChild(lines("Implied stock change, mb/d (+ = build)", [6471, 11234, 6470], { lay: { hovermode: "x unified" } }));
+    box.appendChild(g);
+    box.appendChild(revTable("Global balance — latest vs previous release", [5214, 6769, 14, 1063, 6471, 11234, 6470, 5239, 5240, 5269]));
+
+    section("3 · Stocks & forward cover");
+    g = grid2();
+    g.appendChild(lines("Crude closing inventories by region (OilX nowcast), mb", findIds("stocks", /^crude oil closing inventories/), { prev: false, lay: { xaxis: { gridcolor: "#1e293b", range: ["2024-01-01", m0] } } }));
+    g.appendChild(lines("Oil products closing inventories by region, mb", findIds("stocks", /^oil products closing inventories/), { prev: false, lay: { xaxis: { gridcolor: "#1e293b", range: ["2024-01-01", m0] } } }));
+    g.appendChild(lines("OECD days of forward cover", findIds("stocks", /days of forward cover/), { prev: false, lay: { xaxis: { gridcolor: "#1e293b", range: ["2024-01-01", m0] } } }));
+    g.appendChild(lines("Diesel closing inventories by region, mb", findIds("stocks", /^diesel closing inventories/), { prev: false, lay: { xaxis: { gridcolor: "#1e293b", range: ["2024-01-01", m0] } } }));
+    box.appendChild(g);
+
+    section("4 · US weekly product stock forecast (EA, 6 weeks ahead)");
+    {
+      const ids = (P.sections.find(s => s.key === "usweekly") || {}).ids || [];
+      const inv = ids.filter(id => /closing inventories in United States/i.test(lab(id)));
+      const pick = inv.length ? inv : ids.filter(id => /inventor|stock/i.test(lab(id))).slice(0, 8);
+      g = grid2();
+      g.appendChild(lines("US product inventories — weekly forecast", pick.slice(0, 8), { prev: false, lay: { xaxis: { gridcolor: "#1e293b", range: [addM(m0, -6), addM(m0, 2)] } } }));
+      g.appendChild(lines("US refinery runs by PADD — weekly forecast, kb/d", ids.filter(id => /^refinery runs in PADD \d$/.test(lab(id))), { prev: false, lay: { xaxis: { gridcolor: "#1e293b", range: [addM(m0, -6), addM(m0, 2)] } } }));
+      box.appendChild(g);
+    }
+
+    section("5 · OPEC+ quotas, spare capacity & disruptions");
+    {
+      const q = findIds("opec", /^crude oil production quota in OPEC\+: /);
+      const prodBy = {}; findIds("opec", / OPEC crude production$/).forEach(id => { prodBy[lab(id).replace(" OPEC crude production", "")] = id; });
+      const alias = { "United Arab Emirates": "UAE" };
+      const rows = q.map(id => { const c = lab(id).replace("crude oil production quota in OPEC+: ", ""); const pid = prodBy[c] || prodBy[alias[c]]; return { c, quota: val(id, m0) ?? (pts(id).filter(p => p[1] != null).slice(-1)[0] || [])[1], prod: pid ? val(pid, m0) : null }; }).filter(r => r.quota != null && r.prod != null);
+      g = grid2();
+      g.appendChild(bars(`OPEC quota vs EA production forecast, ${m0.slice(0, 7)}, kb/d`, [{ name: "Quota", x: rows.map(r => r.c), y: rows.map(r => r.quota), color: "#64748b" }, { name: "EA production", x: rows.map(r => r.c), y: rows.map(r => r.prod), color: "#38bdf8" }, { name: "Over (+) / under (−)", x: rows.map(r => r.c), y: rows.map(r => r.prod - r.quota), color: "#f97316" }], "kb/d"));
+      const sp = findIds("opec", /: spare crude production capacity$/);
+      g.appendChild(bars(`Spare capacity by country, ${m0.slice(0, 7)}, kb/d`, [{ name: "Latest", x: sp.map(id => lab(id).split(":")[0]), y: sp.map(id => val(id, m0)) }, { name: "Previous release", x: sp.map(id => lab(id).split(":")[0]), y: sp.map(id => val(id, m0, "prev")), color: "#64748b" }], "kb/d"));
+      g.appendChild(lines("Total OPEC+ spare capacity & world disruptions, kb/d", [3306, 3283, 114]));
+      const dis = findIds("opec", /unplanned disruptions in (?!World)/).map(id => ({ id, v: lastVal(id, m0) })).filter(x => x.v).sort((a, b) => b.v - a.v).slice(0, 14);
+      g.appendChild(bars(`Largest unplanned disruptions, latest month, kb/d`, [{ name: "Latest", x: dis.map(x => lab(x.id).replace("crude oil production unplanned disruptions in ", "")), y: dis.map(x => x.v) }, { name: "Previous release", x: dis.map(x => lab(x.id).replace("crude oil production unplanned disruptions in ", "")), y: dis.map(x => { const q = pts(x.id, "prev").filter(p => p[1] != null && p[0] <= m0); return q.length ? q[q.length - 1][1] : null; }), color: "#64748b" }], "kb/d"));
+      box.appendChild(g);
+    }
+
+    section("6 · NWE/Med & Asia crude balances");
+    g = grid2();
+    g.appendChild(lines("NW Europe crude imports by origin, kb/d", findIds("regional", /^crude oil (pipeline )?imports to NW Europe from/), { stack: true }));
+    g.appendChild(lines("Mediterranean crude imports by origin, kb/d", findIds("regional", /^crude oil imports to Mediterranean from/), { stack: true }));
+    g.appendChild(lines("Asia Pacific crude imports by origin, kb/d", findIds("regional", /^crude oil (pipeline )?imports to Asia Pacific from/), { stack: true }));
+    g.appendChild(lines("Refinery runs: NWE, Med, Asia, China, India, kb/d", [9051, 9072, 1671, 1655, 1657]));
+    g.appendChild(lines("NWE and Med crude inventories, mb", [9058, 9077]));
+    box.appendChild(g);
+
+    section("7 · Product balances");
+    g = grid2();
+    g.appendChild(lines("Europe diesel: demand, supply, imports, exports, kb/d", [2067, 2081, 11283, 11282]));
+    g.appendChild(lines("Europe diesel & jet inventories, mb", [11314, 583250, 19920]));
+    g.appendChild(lines("Europe gasoline: end-user demand, supply, imports, exports, kb/d", [181243, 3051, 19917, 19918]));
+    g.appendChild(lines("Europe jet/kero: demand, supply, imports, exports, kb/d", [2335, 2471, 13925, 13926]));
+    box.appendChild(g);
+    {
+      const P4 = [["Diesel", 5224, 5221], ["Gasoline", 5236, 5233], ["Jet/kero", 2478, 2342], ["Fuel oil", 5230, 5227]];
+      const t = el("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: "12px" } });
+      const yrs = [2025, 2026, 2027];
+      t.innerHTML = `<thead><tr>${["World, kb/d", ...yrs.map(y => y + " supply"), ...yrs.map(y => y + " demand"), ...yrs.map(y => y + " S−D")].map((h, i) => `<th style="text-align:${i ? "right" : "left"};padding:5px 7px;color:${C.muted};border-bottom:1px solid ${C.border}">${h}</th>`).join("")}</tr></thead>`;
+      const tb = el("tbody");
+      P4.forEach(([n, s, d]) => { const S = yrs.map(y => yavg(s, y)), D = yrs.map(y => yavg(d, y));
+        tb.insertAdjacentHTML("beforeend", `<tr style="border-bottom:1px solid #111a2c"><td style="padding:4px 7px;color:${C.text}">${n}</td>${S.map(v => `<td style="text-align:right;padding:4px 7px">${fmt(v)}</td>`).join("")}${D.map(v => `<td style="text-align:right;padding:4px 7px">${fmt(v)}</td>`).join("")}${S.map((v, i) => { const x = v != null && D[i] != null ? v - D[i] : null; return `<td style="text-align:right;padding:4px 7px;color:${colr(x)}">${sg(x)}</td>`; }).join("")}</tr>`); });
+      t.appendChild(tb); const c = card("Global product balances — annual averages (EA)", t);
+      c.appendChild(note("Supply − demand is EA's regional supply minus demand summed to World; it is not a stock change (transfers, blending and statistical differences sit in between)."));
+      box.appendChild(c);
+    }
+    box.appendChild(revTable("Product balances — latest vs previous release", [2067, 2081, 11283, 11282, 11314, 181243, 3051, 19920, 2335, 13925, 5221, 5224, 5233, 5236]));
+
+    section("8 · Forward margins & freight");
+    g = grid2();
+    g.appendChild(lines("Daily forward crude refining margins (CDU/VDU), $/bbl", findIds("margins", /refining margins/), { lay: { xaxis: { gridcolor: "#1e293b", range: [addM(m0, -2), addM(m0, 3)] } } }));
+    g.appendChild(lines("Dirty freight forecasts, $/t", findIds("margins", /^dirty freight/)));
+    g.appendChild(lines("Clean freight forecasts, $/t", findIds("margins", /^clean freight/)));
+    box.appendChild(g);
+
+    // explorer
+    {
+      const wrap = el("div"); const sel = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "5px 8px", fontSize: "12px", maxWidth: "100%" } });
+      P.sections.forEach(s => { const og = el("optgroup"); og.setAttribute("label", s.title); s.ids.filter(id => SR[id]).forEach(id => og.appendChild(el("option", { value: String(id) }, lab(id) + " (" + unitOf(id) + ")"))); sel.appendChild(og); });
+      const d = chartDiv(380); wrap.appendChild(sel); wrap.appendChild(d);
+      const draw = () => { const id = sel.value; const p = pts(id), q = pts(id, "prev");
+        plot(d, [{ x: p.map(z => z[0]), y: p.map(z => z[1]), name: "Latest " + ((SR[id] || {}).release || "").slice(0, 10), type: "scatter", mode: "lines", line: { color: "#38bdf8", width: 2 } },
+          { x: q.map(z => z[0]), y: q.map(z => z[1]), name: "Previous " + ((SR[id] || {}).prev_release || "").slice(0, 10), type: "scatter", mode: "lines", line: { color: "#f97316", width: 1.5, dash: "dot" } }],
+          lay({ xaxis: { gridcolor: "#1e293b" } }, unitOf(id))); };
+      sel.addEventListener("change", draw); setTimeout(draw, 0);
+      box.appendChild(card(`Series explorer — all ${Object.keys(SR).length} licensed series on this tab`, wrap));
+    }
+    box.appendChild(card("Source", note("Energy Aspects Data Service API (licensed to SOCAR). Forecast series are EA's latest release; dotted lines/small figures are EA's previous release of the same series. The vertical dotted line marks the current month. OilX-sourced inventories are nowcasts. Not licensed (not shown): refinery outages, quant paper balances/options, OilX flows/terminals/TankWatch, detailed refining margins, NGLs, biofuels.")));
+  }
+
   async function renderCDiff(box, refresh) {
     box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading crude differentials from Platts…</div>';
     let blob;
@@ -10125,6 +10330,7 @@
 
     const navGroups = [
       { name: "Intelligence", items: [
+        { id: "ea", label: "Energy Aspects", icon: "📘" },
         { id: "mktcomm", label: "Market Commentary", icon: "🧭" },
         { id: "xmkt", label: "Cross-Market", icon: "🧠" },
       ]},
@@ -10225,6 +10431,7 @@
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }
       if (id === "ksql" && !panes.ksql._loaded) { panes.ksql._loaded = true; renderKSQL(panes.ksql); }
+      if (id === "ea" && !panes.ea._loaded) { panes.ea._loaded = true; renderEA(panes.ea); }
       if (id === "xmove" && !panes.xmove._loaded) { panes.xmove._loaded = true; renderXMove(panes.xmove); }
       if (id === "cdiff" && !panes.cdiff._loaded) { panes.cdiff._loaded = true; renderCDiff(panes.cdiff); }
       if (id === "dated" && !panes.dated._loaded) { panes.dated._loaded = true; renderDated(panes.dated); }
