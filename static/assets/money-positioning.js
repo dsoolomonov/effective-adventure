@@ -6727,7 +6727,7 @@
     const hdr = el("div", { style: { marginBottom: "14px" } });
     hdr.appendChild(el("h2", { style: { color: C.amber, margin: "0 0 6px 0", fontSize: "20px" } }, "🛠️ Global Refinery Outages"));
     hdr.appendChild(el("p", { style: { color: C.muted, fontSize: "12px", margin: 0 } },
-      `Offline capacity in KBD by unit (crude & condensate, FCC & reforming, coking & hydrocracking) · planned & economic vs unplanned · Oct 2026 – Mar 2027 · report ${data.report_date}, revisions vs ${data.prior_date} pack`));
+      `Offline capacity in KBD by unit (crude & condensate, FCC & reforming, coking & hydrocracking) · planned & economic vs unplanned · ${M[0]} – ${M[M.length - 1]} · report ${data.report_date}, revisions vs ${data.prior_date} pack`));
     box.appendChild(hdr);
 
     // KPI strip: revision vs prior per unit
@@ -6737,22 +6737,27 @@
       const c = el("div", { style: { background: C.card, border: `1px solid ${C.border}`, borderRadius: "10px", padding: "12px 14px" } });
       c.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "700", color: C.text, marginBottom: "6px" } }, lbl));
       const row = (t, v, col) => { const r = el("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11.5px", padding: "2px 0" } }); r.appendChild(el("span", { style: { color: C.muted } }, t)); r.appendChild(el("span", { style: { color: col || C.text, fontWeight: "600", fontVariantNumeric: "tabular-nums" } }, v)); return r; };
-      c.appendChild(row("Revision Oct vs prior", sg(rv[0]) + " kb/d", sgCol(rv[0])));
-      c.appendChild(row("Revision Nov–Mar (sum)", sg(rv.slice(1).reduce((a, b) => a + b, 0)) + " kb/d", sgCol(rv.slice(1).reduce((a, b) => a + b, 0))));
-      c.appendChild(row("Listed key outages Oct (P&E / unpl.)", `${ls.planned[0].toLocaleString()} / ${ls.unplanned[0].toLocaleString()}`));
+      c.appendChild(row("Revision " + M[0] + " vs prior", sg(rv[0]) + " kb/d", sgCol(rv[0])));
+      c.appendChild(row("Revision " + M[1] + "–" + M[M.length - 1] + " (sum)", sg(rv.slice(1).reduce((a, b) => a + b, 0)) + " kb/d", sgCol(rv.slice(1).reduce((a, b) => a + b, 0))));
+      c.appendChild(row("Listed key outages " + M[0] + " (P&E / unpl.)", `${ls.planned[0].toLocaleString()} / ${ls.unplanned[0].toLocaleString()}`));
       kp.appendChild(c);
     });
     box.appendChild(kp);
 
     // Desk read
-    const rd = card("Desk read");
-    [
-      "Oct offline revised up in all three units vs 25 Sep: crude +884 kb/d (about half unplanned; Middle East is +620 of it), FCC +247, coking/hydrocracking +259 (mostly unplanned). Prompt runs are lower than the last pack assumed.",
-      "Crude outages then fall away fast: global offline drops from ~11.1 mb/d (Oct) to ~7.4 (Nov) and ~5.6 (Dec) booked, below 2025's ~12.2/8.6 and under the ~9.2/7.0 forecast. Dec crude was revised down −417 kb/d (Middle East and Latin America returns). Crude runs recover into Nov–Dec → supportive for crude demand / Dated structure into year-end.",
-      "Conversion stays tight while crude units come back: FCC revised up +140/+168 and coking/hydrocracking +83/+123 for Dec/Jan. More crude through less upgrading = longer resid/VGO, tighter light ends and middle distillates → favours cracks (gasoil, gasoline) over crude spreads, and is bearish HSFO relative to crude.",
-      "Unplanned is concentrated in Russia (970 kb/d Oct, 517 Nov–Dec), Ukraine (~500), Saudi Arabia (383 Oct), Kuwait (263 Oct) and long-running Libya/Nigeria/Yemen. Russian drone-hit units are the swing for export diesel and naphtha/fuel oil.",
-      "Watch: Russian unplanned rolling off (bearish cracks if it does), Middle East units returning in Nov (crude-bullish for Murban/Dubai grades), and next pack's Q1 revision — Feb crude already −230.",
-    ].forEach((t, i) => rd.appendChild(el("div", { style: { fontSize: "12.5px", color: C.text, padding: "3px 0", lineHeight: "1.45" } }, `${i + 1}. ${t}`)));
+    const rd = card("Desk read — " + data.report_date + " pack vs " + data.prior_date);
+    const N = data.note || {};
+    if (N.headline) rd.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber, margin: "2px 0 6px" } }, N.headline));
+    if (N.verdict) rd.appendChild(el("div", { style: { fontSize: "12.5px", color: C.text, background: "rgba(245,158,11,0.10)", borderLeft: `3px solid ${C.amber}`, padding: "6px 10px", borderRadius: "4px", marginBottom: "8px" } }, "Verdict: " + N.verdict));
+    const sg3 = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px" } });
+    (N.sections || []).forEach(sec => {
+      const col = el("div", {}); col.appendChild(el("div", { style: { fontSize: "12px", fontWeight: "700", color: C.accent, marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.04em" } }, sec.title));
+      sec.items.forEach(t => col.appendChild(el("div", { style: { fontSize: "12.3px", color: C.text, padding: "3px 0 3px 10px", lineHeight: "1.45", borderLeft: `2px solid ${C.border}`, marginBottom: "3px" } }, t)));
+      sg3.appendChild(col);
+    });
+    rd.appendChild(sg3);
+    const tl = (lbl, t, col) => { if (!t) return; const r = el("div", { style: { fontSize: "12.5px", marginTop: "8px", lineHeight: "1.45" } }); r.appendChild(el("span", { style: { fontWeight: "700", color: col } }, lbl + " ")); r.appendChild(el("span", { style: { color: C.text } }, t)); rd.appendChild(r); };
+    tl("Trade:", N.trade, C.green); tl("Kill line:", N.kill, C.red); tl("Caveat:", N.caveat, C.muted);
     box.appendChild(rd);
 
     // Plotly charts row
@@ -6763,7 +6768,7 @@
     c2.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "4px" } }, data.crude_seasonal_total.note + "; 2026 = known outages only."));
     g2.appendChild(c1); g2.appendChild(c2); box.appendChild(g2);
     const g3 = el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" } });
-    const c3 = card("Crude & condensate — Oct 2026 key outages by country (booked, kb/d)"), d3 = el("div", { style: { height: "330px" } }); c3.appendChild(d3);
+    const c3 = card("Crude & condensate — " + (data.m0 || M[0]) + " key outages by country (booked, kb/d)"), d3 = el("div", { style: { height: "330px" } }); c3.appendChild(d3);
     const c4 = card("Listed key outages — monthly average capacity offline (kb/d)"), d4 = el("div", { style: { height: "330px" } }); c4.appendChild(d4);
     c4.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, marginTop: "4px" } }, "Computed from the appendix list (days-weighted per month, duplicates removed). Key outages only, not the full pack totals."));
     g3.appendChild(c3); g3.appendChild(c4); box.appendChild(g3);
@@ -6776,6 +6781,7 @@
         { x: MM, y: s["2026_all"], name: "2026 all outages", line: { color: C.text, width: 3 } },
         { x: MM, y: s["2026_forecast"], name: "2026 forecast", line: { color: C.gold, width: 2.5, dash: "dot" } },
         { x: MM, y: s["2027_booked"], name: "2027 booked only", line: { color: "#64748b", width: 2 } },
+        ...(s["2027_forecast"] ? [{ x: MM, y: s["2027_forecast"], name: "2027 forecast", line: { color: "#b45309", width: 2, dash: "dash" } }] : []),
       ], L({ margin: { l: 55, r: 10, t: 10, b: 40 }, legend: { orientation: "h", y: -0.15 } }), cfg);
       const cc = data.crude_country_oct, ctry = [...new Set([...Object.keys(cc.planned), ...Object.keys(cc.unplanned)])].sort((a, b) => ((cc.planned[a] || 0) + (cc.unplanned[a] || 0)) - ((cc.planned[b] || 0) + (cc.unplanned[b] || 0)));
       Plotly.newPlot(d3, [
