@@ -6700,6 +6700,122 @@
   }
 
   // ─── ASIA PRODUCT BALANCES TAB ───
+  // ─── BRENT FORWARD CHAINS TAB (/api/brent_chains, Bloomberg tracker hand-loaded) ───
+  async function renderBChain(box) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Brent chains…</div>';
+    let d;
+    try { const r = await fetch("/api/brent_chains"); if (!r.ok) throw new Error(await r.text()); d = await r.json(); }
+    catch (e) { box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load Brent chains: ${e.message}</div>`; return; }
+    await new Promise(res => loadPlotly(res));
+    box.innerHTML = "";
+    const GCOL = { "WTI Midland": "#38bdf8", "Forties": "#f97316", "Ekofisk": "#22c55e", "Brent": "#facc15", "Oseberg": "#c084fc", "Troll": "#f472b6" };
+    const HCOL = ["#38bdf8", "#f97316", "#22c55e", "#facc15", "#c084fc", "#f472b6", "#14b8a6", "#ef4444", "#a3a35a", "#94a3b8"];
+    const M = d.months, G = d.grades, kb = d.cargo_kb || 700;
+    const tot = m => G.reduce((a, g) => a + (d.counts[m][g] || 0), 0);
+    const T = M.map(tot), last = M[M.length - 1], prev = M[M.length - 2];
+    const plot = (div, tr, ly) => { try { Plotly.newPlot(div, tr, ly, { responsive: true, displayModeBar: false }); } catch (e) { div.innerHTML = `<div style="color:#ef4444;padding:12px">${e.message}</div>`; } };
+    const cdiv = h => el("div", { style: { width: "100%", height: (h || 380) + "px" } });
+    const lay = (extra) => Object.assign({ paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: C.muted, size: 11 }, barmode: "stack", hovermode: "x unified",
+      legend: { orientation: "h", y: -0.15, font: { size: 11 } }, margin: { l: 45, r: 45, t: 10, b: 55 },
+      xaxis: { color: C.muted, gridcolor: "#1e293b", type: "category" }, yaxis: { title: { text: "Cargoes" }, color: C.muted, gridcolor: "#1e293b" } }, extra || {});
+
+    const hdr = el("div", { style: { display: "flex", alignItems: "baseline", gap: "14px", marginBottom: "6px", flexWrap: "wrap" } });
+    hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "⛓️ Brent Forward Chains"));
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11.5px", marginLeft: "auto" } }, `As of ${d.as_of} · ${d.source} · ${kb} kb per cargo · month = loading month`));
+    box.appendChild(hdr);
+
+    // desk read
+    const N = d.note || {};
+    const rd = card("Desk read — " + last + " loading chains");
+    if (N.headline) rd.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber, margin: "2px 0 6px" } }, N.headline));
+    if (N.verdict) rd.appendChild(el("div", { style: { fontSize: "12.5px", color: C.text, background: "rgba(245,158,11,0.10)", borderLeft: "3px solid #f59e0b", padding: "6px 10px", borderRadius: "4px", marginBottom: "8px" } }, "Verdict: " + N.verdict));
+    (N.items || []).forEach(t => rd.appendChild(el("div", { style: { fontSize: "12.5px", color: C.text, padding: "3px 0 3px 10px", lineHeight: "1.5", borderLeft: `2px solid ${C.border}`, marginBottom: "3px" } }, t)));
+    const tl = (lbl, t, col) => { if (!t) return; const r = el("div", { style: { fontSize: "12.5px", marginTop: "8px", lineHeight: "1.45" } }); r.appendChild(el("span", { style: { fontWeight: "700", color: col } }, lbl + " ")); r.appendChild(el("span", { style: { color: C.text } }, t)); rd.appendChild(r); };
+    tl("Trade:", N.trade, C.green); tl("Kill line:", N.kill, C.red); tl("Caveat:", N.caveat, C.muted);
+    box.appendChild(rd);
+
+    // KPIs
+    const m12 = M.slice(-12), s6 = M.slice(-6), p6 = M.slice(-12, -6);
+    const avg = a => a.reduce((x, m) => x + tot(m), 0) / a.length;
+    const pk = m12.reduce((a, m) => tot(m) > tot(a) ? m : a, m12[0]);
+    const kl = Object.entries(d.kept_by[last] || {}).sort((a, b) => b[1] - a[1])[0] || ["—", 0];
+    const w12 = m12.reduce((a, m) => a + d.counts[m]["WTI Midland"], 0) / m12.reduce((a, m) => a + tot(m), 0);
+    const dm = tot(last) - tot(prev);
+    box.appendChild(card(null, statRow([
+      [last + " chained", `${tot(last)} (${(tot(last) * kb / 1000).toFixed(1)} mb)`, C.amber],
+      ["m/m", (dm > 0 ? "+" : "") + dm, dm > 0 ? C.green : dm < 0 ? C.red : C.text],
+      ["6M avg vs prior 6M", `${avg(s6).toFixed(1)} vs ${avg(p6).toFixed(1)}`, avg(s6) < avg(p6) ? C.red : C.green],
+      ["12M peak", `${tot(pk)} (${pk})`],
+      [last + " top holder", `${kl[0]} ${kl[1]}/${tot(last)}`, C.gold],
+      ["WTI Midland share 12M", Math.round(w12 * 100) + "%"],
+    ])));
+
+    // charts row 1
+    const g1 = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(520px, 1fr))", gap: "14px" } });
+    const c1 = cdiv(400), c2 = cdiv(400);
+    g1.appendChild(card("Chained North Sea cargoes by grade (loading month)", c1));
+    g1.appendChild(card("Who kept the cargoes — end-of-chain holder by month", c2));
+    box.appendChild(g1);
+    const tr1 = G.filter(g => M.some(m => d.counts[m][g])).map(g => ({ type: "bar", name: g, x: M, y: M.map(m => d.counts[m][g]), marker: { color: GCOL[g] } }));
+    tr1.push({ type: "scatter", mode: "lines+markers+text", name: "Volume (mb)", x: M, y: T.map(t => t * kb / 1000), yaxis: "y2", line: { color: "#ffffff", width: 1.5, dash: "dot" }, text: T.map(String), textposition: "top center", textfont: { color: C.text, size: 10 }, hovertemplate: "%{y:.1f} mb" });
+    plot(c1, tr1, lay({ yaxis2: { overlaying: "y", side: "right", title: { text: "mb" }, color: C.muted, showgrid: false, rangemode: "tozero" } }));
+    const holders = Object.keys(d.kept_by_12m).slice(0, 8);
+    const tr2 = holders.map((h, i) => ({ type: "bar", name: h, x: M, y: M.map(m => d.kept_by[m][h] || 0), marker: { color: HCOL[i] } }));
+    tr2.push({ type: "bar", name: "Others", x: M, y: M.map(m => Object.entries(d.kept_by[m]).filter(([h]) => !holders.includes(h)).reduce((a, [, v]) => a + v, 0)), marker: { color: "#475569" } });
+    plot(c2, tr2, lay());
+
+    // charts row 2
+    const g2 = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(520px, 1fr))", gap: "14px" } });
+    const c3 = cdiv(360), c4 = cdiv(360);
+    g2.appendChild(card("Chained by (sellers into the chain) — last 12 months", c3));
+    g2.appendChild(card("Kept by (end holders) — last 12 months", c4));
+    box.appendChild(g2);
+    const hb = (o, col) => { const e = Object.entries(o).slice(0, 12).reverse(); return [{ type: "bar", orientation: "h", x: e.map(x => x[1]), y: e.map(x => x[0]), marker: { color: col }, text: e.map(x => x[1]), textposition: "outside", hovertemplate: "%{y}: %{x} cargoes<extra></extra>" }]; };
+    const hl = { showlegend: false, barmode: "group", hovermode: "closest", margin: { l: 100, r: 30, t: 10, b: 35 }, xaxis: { color: C.muted, gridcolor: "#1e293b", title: { text: "Cargoes" } }, yaxis: { color: C.text, type: "category" } };
+    plot(c3, hb(d.chained_by_12m, "#64748b"), lay(hl));
+    plot(c4, hb(d.kept_by_12m, "#f59e0b"), lay(hl));
+
+    // summary table
+    const th = t => `<th style="padding:6px 8px;text-align:right;color:${C.muted};font-weight:600;border-bottom:1px solid ${C.border}">${t}</th>`;
+    const td = (t, s) => `<td style="padding:5px 8px;text-align:right;${s || ""}">${t}</td>`;
+    const sm = el("div", { style: { overflowX: "auto" } });
+    let h = `<table style="width:100%;border-collapse:collapse;font-size:12.5px;color:${C.text}"><tr>${th("Month").replace("right", "left")}${th("Total")}${th("mb")}${G.map(th).join("")}${th("Main holder").replace("right", "left")}</tr>`;
+    [...M].reverse().forEach(m => {
+      const t = tot(m), k = Object.entries(d.kept_by[m]).sort((a, b) => b[1] - a[1])[0];
+      h += `<tr style="border-bottom:1px solid ${C.border}${m === last ? ";background:rgba(56,189,248,0.08)" : ""}">${td(m, "text-align:left;font-weight:600")}${td(t, "font-weight:700")}${td((t * kb / 1000).toFixed(1))}` +
+        G.map(g => td(d.counts[m][g] || `<span style="color:#334155">0</span>`, d.counts[m][g] ? `color:${GCOL[g]}` : "")).join("") + td(`${k[0]} <span style="color:${C.muted}">${k[1]}/${t}</span>`, "text-align:left") + "</tr>";
+    });
+    sm.innerHTML = h + "</table>";
+    box.appendChild(card("Total number of chained North Sea cargoes", sm));
+
+    // cargo list
+    const ctl = el("div", { style: { display: "flex", gap: "10px", marginBottom: "10px", alignItems: "center", flexWrap: "wrap" } });
+    const sel = (opts) => { const s = el("select", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "5px 8px", fontSize: "12px" } }); opts.forEach(o => s.appendChild(el("option", { value: o }, o))); return s; };
+    const sM = sel(["All months", ...[...M].reverse()]), sG = sel(["All grades", ...G]), sH = sel(["All holders", ...Object.keys(d.kept_by_12m)]);
+    ctl.appendChild(sM); ctl.appendChild(sG); ctl.appendChild(sH);
+    const cnt = el("span", { style: { color: C.muted, fontSize: "12px" } }); ctl.appendChild(cnt);
+    const lt = el("div", { style: { overflowX: "auto", maxHeight: "560px", overflowY: "auto" } });
+    const wrap = el("div"); wrap.appendChild(ctl); wrap.appendChild(lt);
+    const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    function drawList() {
+      const rows = d.rows.filter(r => (sM.value === "All months" || r.month === sM.value) && (sG.value === "All grades" || r.grade === sG.value) && (sH.value === "All holders" || r.kept_by === sH.value));
+      cnt.textContent = `${rows.length} cargoes · ${(rows.length * kb / 1000).toFixed(1)} mb`;
+      const L = s => th(s).replace("right", "left");
+      let x = `<table style="width:100%;border-collapse:collapse;font-size:12px;color:${C.text}"><tr>${["Month", "Grade", "Cargo number", "Laycan", "Chained by", "Kept by", "Date of chain"].map(L).join("")}</tr>`;
+      let pm = null;
+      rows.forEach(r => {
+        if (r.month !== pm) { x += `<tr><td colspan="7" style="padding:7px 8px 3px;color:#f87171;font-weight:700">${esc(r.month)}</td></tr>`; pm = r.month; }
+        const c = s => `<td style="padding:4px 8px;border-bottom:1px solid ${C.border}">${s}</td>`;
+        x += `<tr>${c("")}${c(`<span style="color:${GCOL[r.grade] || C.text};font-weight:600">${esc(r.grade)}</span>`)}${c(esc(r.cargo))}${c(esc(r.laycan))}${c(esc(r.chained_by))}${c(`<b>${esc(r.kept_by)}</b>`)}${c(esc(r.chain_date || "—"))}</tr>`;
+      });
+      lt.innerHTML = x + "</table>";
+    }
+    [sM, sG, sH].forEach(s => s.addEventListener("change", drawList));
+    drawList();
+    box.appendChild(card("Brent forward chains — cargo list", wrap));
+    box.appendChild(el("div", { style: { color: C.muted, fontSize: "11px", margin: "-6px 0 14px 2px" } }, "Chains form when forward-cargo sellers nominate loading dates and pass them down to buyers; the last buyer ends up with the physical cargo. Traders use them to accumulate barrels in a bull play."));
+  }
+
   async function renderOutages(box) {
     box.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Loading refinery outages...</div>';
     let data;
@@ -10351,6 +10467,7 @@
       { name: "Brent Complex", items: [
         { id: "dated", label: "Dated Brent", icon: "⚖️" },
         { id: "cdiff", label: "Crude Differentials", icon: "📉" },
+        { id: "bchain", label: "Brent Chains", icon: "⛓️" },
       ]},
       { name: "Balances & Stocks", items: [
         { id: "gb", label: "Gasoline Balances", icon: "⛽" },
@@ -10440,6 +10557,7 @@
       if (id === "ea" && !panes.ea._loaded) { panes.ea._loaded = true; renderEA(panes.ea); }
       if (id === "xmove" && !panes.xmove._loaded) { panes.xmove._loaded = true; renderXMove(panes.xmove); }
       if (id === "cdiff" && !panes.cdiff._loaded) { panes.cdiff._loaded = true; renderCDiff(panes.cdiff); }
+      if (id === "bchain" && !panes.bchain._loaded) { panes.bchain._loaded = true; renderBChain(panes.bchain); }
       if (id === "dated" && !panes.dated._loaded) { panes.dated._loaded = true; renderDated(panes.dated); }
       if (id === "signal" && !panes.signal._loaded) { panes.signal._loaded = true; renderSignal(panes.signal); }
     }

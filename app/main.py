@@ -12937,6 +12937,16 @@ async def outages_summary():
         return _json.load(f)
 
 
+@app.get("/api/brent_chains")
+async def brent_chains():
+    """Brent forward chains tracker (Bloomberg, hand-loaded): monthly chained cargoes by grade, holders, cargo list, desk note."""
+    path = os.path.join(os.path.dirname(__file__), "brent_chains.json")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Brent chains data not available")
+    with open(path) as f:
+        return _json.load(f)
+
+
 @app.get("/api/outages/chart/{name}")
 async def outages_chart(name: str):
     # No file extension in the URL so the password gate's static-asset bypass never applies.

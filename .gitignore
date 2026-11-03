@@ -13,3 +13,4 @@ app/outages_pack/
 app/session_pricing.json
 app/product_stocks_note.json
 app/cross_moves_intraday.json
+app/brent_chains.json
