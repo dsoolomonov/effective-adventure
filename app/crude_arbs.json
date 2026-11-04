@@ -1,0 +1,611 @@
+{
+ "as_of": "2026-11-03",
+ "source": "Energy Aspects \u2014 crude arbs (Argus Media Group, LSEG, CME, Energy Aspects)",
+ "unit": "$/bbl",
+ "tables": [
+  {
+   "fig": 3,
+   "title": "USGC sweet arbs",
+   "kind": "sweet",
+   "region": "Americas",
+   "dest": "USGC",
+   "months": [
+    "Dec-26",
+    "Jan-27",
+    "Feb-27",
+    "Mar-27"
+   ],
+   "rows": [
+    {
+     "grade": "Azeri Lt.",
+     "v": [
+      null,
+      -30.16,
+      -26.93,
+      -24.38
+     ]
+    },
+    {
+     "grade": "Bakken",
+     "v": [
+      0.25,
+      0.23,
+      0.32,
+      0.3
+     ]
+    },
+    {
+     "grade": "Bonga",
+     "v": [
+      null,
+      -21.21,
+      -17.58,
+      -12.73
+     ]
+    },
+    {
+     "grade": "Dalia",
+     "v": [
+      null,
+      -15.19,
+      -11.12,
+      -5.61
+     ]
+    },
+    {
+     "grade": "Es Sider",
+     "v": [
+      null,
+      -30.15,
+      -26.74,
+      -23.91
+     ]
+    }
+   ]
+  },
+  {
+   "fig": 4,
+   "title": "Northwest Europe sweet arbs",
+   "kind": "sweet",
+   "region": "Europe",
+   "dest": "NWE",
+   "months": [
+    "Dec-26",
+    "Jan-27",
+    "Feb-27",
+    "Mar-27"
+   ],
+   "rows": [
+    {
+     "grade": "Azeri Lt.",
+     "v": [
+      1.68,
+      1.02,
+      1.47,
+      2.05
+     ]
+    },
+    {
+     "grade": "CPC Blend",
+     "v": [
+      12.92,
+      12.09,
+      12.67,
+      13.3
+     ]
+    },
+    {
+     "grade": "Forcados",
+     "v": [
+      null,
+      1.79,
+      3.07,
+      5.8
+     ]
+    },
+    {
+     "grade": "Qua Iboe",
+     "v": [
+      null,
+      0.44,
+      1.82,
+      4.57
+     ]
+    },
+    {
+     "grade": "Saharan",
+     "v": [
+      1.59,
+      0.75,
+      1.32,
+      1.91
+     ]
+    },
+    {
+     "grade": "WTI",
+     "v": [
+      null,
+      1.35,
+      4.43,
+      4.73
+     ]
+    }
+   ]
+  },
+  {
+   "fig": 5,
+   "title": "Mediterranean sweet arbs",
+   "kind": "sweet",
+   "region": "Europe",
+   "dest": "Med",
+   "months": [
+    "Dec-26",
+    "Jan-27",
+    "Feb-27",
+    "Mar-27"
+   ],
+   "rows": [
+    {
+     "grade": "CPC Blend",
+     "v": [
+      23.95,
+      24.81,
+      25.31,
+      25.11
+     ]
+    },
+    {
+     "grade": "Ekofisk",
+     "v": [
+      -17.78,
+      -14.77,
+      -15.22,
+      -15.79
+     ]
+    },
+    {
+     "grade": "Es Sider",
+     "v": [
+      -6.71,
+      -7.03,
+      -7.25,
+      -7.5
+     ]
+    },
+    {
+     "grade": "Forties",
+     "v": [
+      -13.0,
+      -10.2,
+      -10.54,
+      -11.02
+     ]
+    },
+    {
+     "grade": "Saharan",
+     "v": [
+      -9.7,
+      -10.44,
+      -10.52,
+      -10.74
+     ]
+    },
+    {
+     "grade": "WTI",
+     "v": [
+      null,
+      -8.27,
+      -7.27,
+      -8.89
+     ]
+    }
+   ]
+  },
+  {
+   "fig": 6,
+   "title": "Asia-Pacific sweet arbs",
+   "kind": "sweet",
+   "region": "Asia",
+   "dest": "Asia-Pac",
+   "months": [
+    "Feb-27",
+    "Mar-27"
+   ],
+   "rows": [
+    {
+     "grade": "Azeri Lt.",
+     "v": [
+      -5.57,
+      -4.92
+     ]
+    },
+    {
+     "grade": "CPC Blend",
+     "v": [
+      6.02,
+      6.76
+     ]
+    },
+    {
+     "grade": "Cabinda",
+     "v": [
+      12.8,
+      12.51
+     ]
+    },
+    {
+     "grade": "Forcados",
+     "v": [
+      9.34,
+      9.48
+     ]
+    },
+    {
+     "grade": "Forties",
+     "v": [
+      -7.49,
+      -5.17
+     ]
+    },
+    {
+     "grade": "WTI",
+     "v": [
+      0.2,
+      1.45
+     ]
+    }
+   ]
+  },
+  {
+   "fig": 7,
+   "title": "India sweet arbs",
+   "kind": "sweet",
+   "region": "Asia",
+   "dest": "India",
+   "months": [
+    "Jan-27",
+    "Feb-27",
+    "Mar-27"
+   ],
+   "rows": [
+    {
+     "grade": "Agbami",
+     "v": [
+      -9.03,
+      -6.84,
+      -4.7
+     ]
+    },
+    {
+     "grade": "Bonny Light",
+     "v": [
+      -9.27,
+      -6.95,
+      -4.75
+     ]
+    },
+    {
+     "grade": "Dalia",
+     "v": [
+      2.62,
+      4.23,
+      6.05
+     ]
+    },
+    {
+     "grade": "Forcados",
+     "v": [
+      -7.2,
+      -5.02,
+      -2.98
+     ]
+    },
+    {
+     "grade": "WTI",
+     "v": [
+      -7.13,
+      -5.34,
+      -3.76
+     ]
+    }
+   ]
+  },
+  {
+   "fig": 8,
+   "title": "USGC sour arbs",
+   "kind": "sour",
+   "region": "Americas",
+   "dest": "USGC",
+   "months": [
+    "Dec-26",
+    "Jan-27",
+    "Feb-27",
+    "Mar-27"
+   ],
+   "rows": [
+    {
+     "grade": "Arab Lt.",
+     "v": [
+      null,
+      -24.16,
+      -22.68,
+      -17.17
+     ]
+    },
+    {
+     "grade": "Basrah Hvy.",
+     "v": [
+      null,
+      -30.71,
+      -29.1,
+      -22.98
+     ]
+    },
+    {
+     "grade": "Castilla",
+     "v": [
+      -2.44,
+      0.38,
+      1.53,
+      2.47
+     ]
+    },
+    {
+     "grade": "Maya",
+     "v": [
+      -1.8,
+      -0.05,
+      0.74,
+      1.3
+     ]
+    },
+    {
+     "grade": "WCS",
+     "v": [
+      13.52,
+      14.35,
+      14.11,
+      14.51
+     ]
+    }
+   ]
+  },
+  {
+   "fig": 9,
+   "title": "Northwest Europe sour arbs",
+   "kind": "sour",
+   "region": "Europe",
+   "dest": "NWE",
+   "months": [
+    "Dec-26",
+    "Jan-27",
+    "Feb-27",
+    "Mar-27"
+   ],
+   "rows": [
+    {
+     "grade": "Arab Lt.",
+     "v": [
+      -26.25,
+      -25.63,
+      -20.62,
+      null
+     ]
+    },
+    {
+     "grade": "Basrah Hvy.",
+     "v": [
+      -31.63,
+      -31.91,
+      -25.66,
+      -23.43
+     ]
+    },
+    {
+     "grade": "Basrah Med.",
+     "v": [
+      -32.84,
+      -33.13,
+      -27.04,
+      -24.91
+     ]
+    },
+    {
+     "grade": "Mars",
+     "v": [
+      null,
+      -12.06,
+      -10.57,
+      -11.28
+     ]
+    },
+    {
+     "grade": "WCS",
+     "v": [
+      null,
+      2.3,
+      4.45,
+      3.83
+     ]
+    }
+   ]
+  },
+  {
+   "fig": 10,
+   "title": "Mediterranean sour arbs",
+   "kind": "sour",
+   "region": "Europe",
+   "dest": "Med",
+   "months": [
+    "Dec-26",
+    "Jan-27",
+    "Feb-27",
+    "Mar-27"
+   ],
+   "rows": [
+    {
+     "grade": "Arab Lt.",
+     "v": [
+      -20.16,
+      -22.17,
+      -17.19,
+      null
+     ]
+    },
+    {
+     "grade": "Basrah Hvy.",
+     "v": [
+      -26.75,
+      -29.64,
+      -23.37,
+      -21.15
+     ]
+    },
+    {
+     "grade": "Basrah Med.",
+     "v": [
+      -27.35,
+      -30.27,
+      -24.19,
+      -22.07
+     ]
+    },
+    {
+     "grade": "Mars",
+     "v": [
+      null,
+      -9.09,
+      -7.6,
+      -8.34
+     ]
+    },
+    {
+     "grade": "WCS",
+     "v": [
+      null,
+      4.93,
+      7.09,
+      6.46
+     ]
+    }
+   ]
+  },
+  {
+   "fig": 11,
+   "title": "Asia-Pacific sour arbs",
+   "kind": "sour",
+   "region": "Asia",
+   "dest": "Asia-Pac",
+   "months": [
+    "Feb-27",
+    "Mar-27"
+   ],
+   "rows": [
+    {
+     "grade": "Castilla",
+     "v": [
+      11.82,
+      11.03
+     ]
+    },
+    {
+     "grade": "Johan Sv.",
+     "v": [
+      -10.01,
+      -7.71
+     ]
+    },
+    {
+     "grade": "Mars",
+     "v": [
+      -5.4,
+      -5.41
+     ]
+    },
+    {
+     "grade": "WCS",
+     "v": [
+      13.29,
+      13.5
+     ]
+    }
+   ]
+  },
+  {
+   "fig": 12,
+   "title": "India sour arbs",
+   "kind": "sour",
+   "region": "Asia",
+   "dest": "India",
+   "months": [
+    "Jan-27",
+    "Feb-27",
+    "Mar-27"
+   ],
+   "rows": [
+    {
+     "grade": "Arab Lt.",
+     "v": [
+      8.56,
+      8.93,
+      null
+     ]
+    },
+    {
+     "grade": "Basrah Hvy.",
+     "v": [
+      2.66,
+      2.52,
+      null
+     ]
+    },
+    {
+     "grade": "Castilla",
+     "v": [
+      -4.72,
+      -3.52,
+      -1.53
+     ]
+    },
+    {
+     "grade": "Mars",
+     "v": [
+      -14.24,
+      -12.59,
+      -10.53
+     ]
+    },
+    {
+     "grade": "WCS",
+     "v": [
+      3.0,
+      4.67,
+      6.52
+     ]
+    }
+   ]
+  }
+ ],
+ "note": {
+  "headline": "Dubai recovered from a weak start to January trade as Asian margins strengthened. Arbs to Asia softened w/w, but the Atlantic has to keep discounting to fill Asia's Q1-27 gap.",
+  "verdict": "East of Suez is the tight market. The Atlantic has to clear cheaply into it: WAF and LatAm are open into Asia, while US barrels (WTI, Mars) are marginal or closed and Middle East sours are shut out of the West.",
+  "ea": [
+   "<b>Hormuz:</b> STS constraints persist. <a href=\"https://my.energyaspects.com/live/blt2432bda58f99d6ee\" target=\"_blank\" rel=\"noopener\">Middle East Gulf flows can be sustained at around 11 mb/d</a> through STS, with weekly loadings picking up to more than 6 vessels a day. <a href=\"https://my.energyaspects.com/research/crude-oil/reports/sour-crude-outlook/2026-10-29-sour-crude-outlook-no-margin-for-error__blte706e1eb0c4906b1\" target=\"_blank\" rel=\"noopener\">Asia is increasingly exposed to supply disruptions</a>.",
+   "<b>Atlantic to Asia:</b> WTI became marginal into Asia late last week, but LatAm and WAF grades will dominate Atlantic flows. <a href=\"https://my.energyaspects.com/live/bltab13c11aec6e7bcc\" target=\"_blank\" rel=\"noopener\">European and US forward balances remain oversupplied</a>, so softer diffs are needed to pull crude East. Atlantic fixtures to Asia need to pick up m/m for Dec-loading to ease Asian tightness in Q1-27.",
+   "<b>Sweet, Americas:</b> LatAm dominates, and Brazil absorbs most incoming VLCC tonnage. <a href=\"https://my.energyaspects.com/research/refining/reports/weekly-margins-report/2026-11-02-weekly-margins-update__blt8e60094d9\" target=\"_blank\" rel=\"noopener\">Weaker Tupi diffs put it in Asian optimised slates</a>, replacing Castilla. Nov-loading USGC fixtures to Asia are below their 11-month minimum and LatAm fixtures above their maximum. WTI arbs to Asia weakened w/w to marginal as Murban fell at the start of Dubai trading.",
+   "<b>Sweet, WAF:</b> flows favour Asia, whose forward balances are tighter than Europe's, and Atlantic inflows to Asia fall sharply from January. Europe's optimised slate favours residue-rich LatAm and WAF (Girassol leads the mediums). Lights are priced out except CPC. WAF to Europe is marginal on paper but closes once Ekofisk is reassessed lower.",
+   "<b>Sour:</b> North American sour oversupply keeps US sour diffs weak, and Oman needs to be stronger to open arbs to Asia. SPR releases from Texas caverns are hitting SGC (about $9/bbl discounts) harder than Mars. Mars is closed to Europe and Asia: it weakened w/w to Asia on softer Oman and improved to Europe on lower TD25."
+  ],
+  "ours": [
+   "<b>Azeri (SOCAR):</b> NWE is the only open outlet, at +1.02 to +2.05 $/bbl and widening to Mar-27. It is closed to Asia-Pac (\u22125.57 Feb, \u22124.92 Mar) and the USGC (\u221224 to \u221230).",
+   "<b>CPC is open everywhere it's quoted:</b> Med +24 to +25, NWE +12 to +13, Asia-Pac +6 to +7. It is the main competitor for light sweet slots in the Med and NWE.",
+   "<b>North Sea lights are shut into the Med:</b> Ekofisk \u221215 to \u221218, Forties \u221210 to \u221213. Forties into Asia is \u22127.49 Feb, narrowing to \u22125.17 Mar.",
+   "<b>WAF:</b> Cabinda (+12.5\u201312.8) and Forcados (+9.3\u20139.5) are wide open into Asia-Pac. Into India only Dalia is open (+2.6 to +6.1); Agbami, Bonny and Forcados are \u22123 to \u22129, narrowing into Mar.",
+   "<b>Middle East sour is shut West:</b> Basrah and Arab Light are \u221217 to \u221233 into NWE, the Med and the USGC, but Arab Lt (+8.6/+8.9) and Basrah Hvy (+2.5/+2.7) are open into India.",
+   "<b>Heavy Canadian/LatAm open:</b> WCS is open in every table (+2.3 to +14.5). Castilla is wide open to Asia-Pac (+11\u201312) but closed to India (\u22124.7 to \u22121.5)."
+  ],
+  "trade": "Place Azeri into NWE rather than offering it East. Expect CPC to keep pressing Med light sweet diffs, and stay positioned for CPC to stay cheap against Azeri/BTC while CPC's arbs are this wide open.",
+  "kill": "Oman/Dubai firming enough to push WTI into Asia above about +2 (more US competition East), or the Azeri NWE arb turning negative.",
+  "caveat": "Typed in by hand from EA's crude arbs report (3 Nov 2026; sources: Argus, LSEG, CME, EA). Positive = arb open (the grade is economic in that destination), negative = closed. Blanks are months EA doesn't assess. The w/w sparklines in EA's tables aren't transcribed; the w/w comments come from EA's text."
+ }
+}

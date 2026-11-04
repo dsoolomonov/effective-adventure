@@ -6701,6 +6701,126 @@
 
   // ─── ASIA PRODUCT BALANCES TAB ───
   // ─── BRENT FORWARD CHAINS TAB (/api/brent_chains, Bloomberg tracker hand-loaded) ───
+  async function renderCArbs(box) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading crude arbs…</div>';
+    let d;
+    try { const r = await fetch("/api/crude_arbs"); if (!r.ok) throw new Error(await r.text()); d = await r.json(); }
+    catch (e) { box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load crude arbs: ${e.message}</div>`; return; }
+    await new Promise(res => loadPlotly(res));
+    box.innerHTML = "";
+    const T = d.tables, N = d.note || {};
+    const MONTHS = ["Dec-26", "Jan-27", "Feb-27", "Mar-27"], DEST = ["USGC", "NWE", "Med", "Asia-Pac", "India"];
+    const DCOL = { "USGC": "#94a3b8", "NWE": "#38bdf8", "Med": "#22c55e", "Asia-Pac": "#f59e0b", "India": "#f472b6" };
+    const f2 = v => v == null ? "" : (v > 0 ? "+" : "") + v.toFixed(2);
+    const plot = (div, tr, ly) => { try { Plotly.newPlot(div, tr, ly, { responsive: true, displayModeBar: false }); } catch (e) { div.innerHTML = `<div style="color:#ef4444;padding:12px">${e.message}</div>`; } };
+    const cdiv = h => el("div", { style: { width: "100%", height: (h || 380) + "px" } });
+    const val = (t, r, m) => { const i = t.months.indexOf(m); return i < 0 ? null : r.v[i]; };
+    const cells = []; T.forEach(t => t.rows.forEach(r => t.months.forEach((m, i) => { if (r.v[i] != null) cells.push({ t, g: r.grade, m, v: r.v[i] }); })));
+
+    const hdr = el("div", { style: { display: "flex", alignItems: "baseline", gap: "14px", marginBottom: "6px", flexWrap: "wrap" } });
+    hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "🧭 Crude Arbs"));
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11.5px", marginLeft: "auto" } }, `As of ${d.as_of} · ${d.source} · ${d.unit} · positive = arb open`));
+    box.appendChild(hdr);
+
+    // desk read
+    const rd = card("Desk read — crude arbs");
+    if (N.headline) rd.appendChild(el("div", { style: { fontSize: "15px", fontWeight: "700", color: C.amber, margin: "2px 0 6px" } }, N.headline));
+    if (N.verdict) rd.appendChild(el("div", { style: { fontSize: "12.5px", color: C.text, background: "rgba(245,158,11,0.10)", borderLeft: "3px solid #f59e0b", padding: "6px 10px", borderRadius: "4px", marginBottom: "8px" } }, "Verdict: " + N.verdict));
+    const sub = t => rd.appendChild(el("div", { style: { fontSize: "11px", fontWeight: "700", color: C.muted, textTransform: "uppercase", letterSpacing: "1px", margin: "10px 0 4px" } }, t));
+    const item = h => { const x = el("div", { style: { fontSize: "12.5px", color: C.text, padding: "3px 0 3px 10px", lineHeight: "1.5", borderLeft: `2px solid ${C.border}`, marginBottom: "3px" } }); x.innerHTML = h; x.querySelectorAll("a").forEach(a => { a.style.color = "#38bdf8"; }); rd.appendChild(x); };
+    sub("Energy Aspects read"); (N.ea || []).forEach(item);
+    sub("What the tables say"); (N.ours || []).forEach(item);
+    const tl = (lbl, t, col) => { if (!t) return; const r = el("div", { style: { fontSize: "12.5px", marginTop: "8px", lineHeight: "1.45" } }); r.appendChild(el("span", { style: { fontWeight: "700", color: col } }, lbl + " ")); r.appendChild(el("span", { style: { color: C.text } }, t)); rd.appendChild(r); };
+    tl("Trade:", N.trade, C.green); tl("Kill line:", N.kill, C.red); tl("Caveat:", N.caveat, C.muted);
+    box.appendChild(rd);
+
+    // KPIs
+    const mx = cells.reduce((a, c) => c.v > a.v ? c : a), mn = cells.reduce((a, c) => c.v < a.v ? c : a);
+    const open = cells.filter(c => c.v > 0).length;
+    const lastOf = (dest, kind, g) => { const t = T.find(t => t.dest === dest && t.kind === kind); const r = t && t.rows.find(r => r.grade === g); if (!r) return null; for (let i = r.v.length - 1; i >= 0; i--) if (r.v[i] != null) return [t.months[i], r.v[i]]; return null; };
+    const wti = ["NWE", "Med", "Asia-Pac", "India"].map(x => { const l = lastOf(x, "sweet", "WTI"); return l ? `${x} ${f2(l[1])}` : null; }).filter(Boolean).join(" · ");
+    const az = lastOf("NWE", "sweet", "Azeri Lt.");
+    const asia = cells.filter(c => (c.t.dest === "Asia-Pac" || c.t.dest === "India") && c.m === "Mar-27");
+    box.appendChild(card(null, statRow([
+      ["Open arbs (all cells)", `${open}/${cells.length}`, C.text],
+      ["Widest open", `${mx.g} → ${mx.t.dest} ${f2(mx.v)}`, C.green],
+      ["Most closed", `${mn.g} → ${mn.t.dest} ${f2(mn.v)}`, C.red],
+      ["Azeri → NWE " + (az ? az[0] : ""), az ? f2(az[1]) : "—", az && az[1] > 0 ? C.green : C.red],
+      ["Open into Asia, Mar-27", `${asia.filter(c => c.v > 0).length}/${asia.length}`, C.amber],
+      ["WTI, last month", wti, C.text],
+    ])));
+
+    // arb map heatmaps
+    const ctl = el("div", { style: { display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px", fontSize: "12px", color: C.muted } });
+    ctl.appendChild(el("span", {}, "Loading month:"));
+    const sel = el("select", { style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "4px 8px" } });
+    MONTHS.forEach(m => { const o = el("option", { value: m }, m); if (m === "Mar-27") o.selected = true; sel.appendChild(o); });
+    ctl.appendChild(sel);
+    ctl.appendChild(el("span", { style: { marginLeft: "10px" } }, "Blue = open (economic), red = closed; blank = not assessed for that month"));
+    const mapWrap = el("div"); mapWrap.appendChild(ctl);
+    const gm = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(520px, 1fr))", gap: "14px" } });
+    const hs = cdiv(440), hr = cdiv(440);
+    const cs = card("Sweet arb map — grade × destination", hs), cr = card("Sour arb map — grade × destination", hr);
+    gm.appendChild(cs); gm.appendChild(cr); mapWrap.appendChild(gm);
+    box.appendChild(card("Arb map", mapWrap));
+    const CS = [[0, "#7f1d1d"], [0.3, "#b91c1c"], [0.47, "#fca5a5"], [0.5, "#1e293b"], [0.53, "#93c5fd"], [0.7, "#2563eb"], [1, "#1e3a8a"]];
+    const drawMap = (div, kind, m) => {
+      const ts = T.filter(t => t.kind === kind);
+      const grades = [...new Set(ts.flatMap(t => t.rows.map(r => r.grade)))].sort();
+      const z = grades.map(g => DEST.map(x => { const t = ts.find(t => t.dest === x); const r = t && t.rows.find(r => r.grade === g); return r ? val(t, r, m) : null; }));
+      const txt = z.map(row => row.map(v => v == null ? "" : v.toFixed(1)));
+      plot(div, [{ type: "heatmap", x: DEST, y: grades, z, text: txt, texttemplate: "%{text}", textfont: { size: 11, color: "#f8fafc" }, colorscale: CS, zmin: -25, zmax: 25, zmid: 0, xgap: 3, ygap: 3,
+        hovertemplate: "%{y} → %{x}<br>" + m + ": %{z:.2f} $/bbl<extra></extra>", colorbar: { title: { text: "$/bbl", side: "right" }, tickfont: { color: C.muted }, thickness: 10 } }],
+        { paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: C.muted, size: 11 }, margin: { l: 95, r: 20, t: 34, b: 10 },
+          xaxis: { side: "top", color: C.text, type: "category" }, yaxis: { autorange: "reversed", color: C.text, type: "category" } });
+    };
+    const redraw = () => { drawMap(hs, "sweet", sel.value); drawMap(hr, "sour", sel.value); };
+    sel.addEventListener("change", redraw); redraw();
+
+    // grade forward curve by destination
+    const allG = [...new Set(T.flatMap(t => t.rows.map(r => r.grade)))].sort();
+    const gc = el("div");
+    const gsel = el("select", { style: { background: "#0b1220", color: C.text, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "4px 8px", marginBottom: "6px" } });
+    allG.forEach(g => { const o = el("option", { value: g }, g); if (g === "WTI") o.selected = true; gsel.appendChild(o); });
+    const gdiv = cdiv(360); gc.appendChild(gsel); gc.appendChild(gdiv);
+    const drawG = () => {
+      const g = gsel.value, tr = [];
+      T.forEach(t => { const r = t.rows.find(r => r.grade === g); if (!r) return;
+        tr.push({ type: "scatter", mode: "lines+markers+text", name: `${t.dest} (${t.kind})`, x: t.months, y: r.v, text: r.v.map(v => v == null ? "" : v.toFixed(1)), textposition: "top center", textfont: { size: 10, color: DCOL[t.dest] },
+          line: { color: DCOL[t.dest], width: 2.5, dash: t.kind === "sour" ? "dot" : "solid" }, marker: { size: 7 }, connectgaps: false }); });
+      plot(gdiv, tr, { paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: C.muted, size: 11 }, hovermode: "x unified", margin: { l: 50, r: 20, t: 20, b: 50 },
+        legend: { orientation: "h", y: -0.18 }, xaxis: { type: "category", categoryorder: "array", categoryarray: MONTHS, color: C.muted, gridcolor: "#1e293b" },
+        yaxis: { title: { text: "$/bbl" }, color: C.muted, gridcolor: "#1e293b", zeroline: true, zerolinecolor: "#e2e8f0", zerolinewidth: 1.5 },
+        shapes: [{ type: "rect", xref: "paper", x0: 0, x1: 1, yref: "y", y0: 0, y1: 40, fillcolor: "rgba(37,99,235,0.05)", line: { width: 0 }, layer: "below" }] });
+    };
+    gsel.addEventListener("change", drawG); drawG();
+    box.appendChild(card("Grade arb curve by destination — where can it go, and when?", gc));
+
+    // heatmap tables
+    const bg = v => { if (v == null) return ""; const a = Math.min(Math.abs(v) / 15, 1) * 0.65 + 0.35; return v > 0 ? `background:rgba(37,99,235,${a.toFixed(2)})` : `background:rgba(185,28,28,${a.toFixed(2)})`; };
+    const tbl = t => {
+      const w = el("div", { style: { overflowX: "auto" } });
+      const th = (x, al) => `<th style="padding:6px 8px;text-align:${al || "right"};color:${C.muted};font-weight:600;font-size:11px;border-bottom:1px solid ${C.border}">${x}</th>`;
+      let h = `<table style="width:100%;border-collapse:separate;border-spacing:2px;font-size:12.5px;color:${C.text}"><tr>${th("Crude grade", "left")}${t.months.map(m => th(m)).join("")}${th("Curve Δ")}</tr>`;
+      t.rows.forEach(r => {
+        const nn = r.v.map((v, i) => [i, v]).filter(x => x[1] != null), dl = nn.length > 1 ? nn[nn.length - 1][1] - nn[0][1] : null;
+        h += `<tr><td style="padding:6px 8px;color:${C.text};font-weight:600">${r.grade}</td>` +
+          r.v.map(v => `<td style="padding:6px 8px;text-align:right;border-radius:3px;font-variant-numeric:tabular-nums;${v == null ? "color:#334155" : "color:#f8fafc;font-weight:600;"}${bg(v)}">${v == null ? "—" : v.toFixed(2)}</td>`).join("") +
+          `<td style="padding:6px 8px;text-align:right;color:${dl == null ? C.muted : dl > 0 ? C.green : C.red}">${dl == null ? "" : (dl > 0 ? "▲ " : "▼ ") + f2(dl)}</td></tr>`;
+      });
+      w.innerHTML = h + "</table>";
+      w.appendChild(el("div", { style: { fontSize: "10.5px", color: C.muted, marginTop: "6px" } }, `Fig ${t.fig} · ${t.region} · Curve Δ = last minus first assessed month (positive = arb improves along the curve)`));
+      return w;
+    };
+    ["sweet", "sour"].forEach(kind => {
+      box.appendChild(el("div", { style: { fontSize: "16px", fontWeight: "800", color: C.amber, margin: "18px 0 8px" } }, kind === "sweet" ? "Sweet arb tables" : "Sour arb tables"));
+      const g = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(520px, 1fr))", gap: "14px" } });
+      T.filter(t => t.kind === kind).forEach(t => g.appendChild(card(`${t.region} — ${t.title}, $/bbl`, tbl(t))));
+      box.appendChild(g);
+    });
+    box.appendChild(el("div", { style: { fontSize: "11px", color: C.muted, margin: "6px 0 20px" } }, "Source: Argus Media Group, LSEG, CME, Energy Aspects. Typed in by hand from the EA crude arbs report; not a live feed."));
+  }
+
   async function renderBChain(box) {
     box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Brent chains…</div>';
     let d;
@@ -10468,6 +10588,7 @@
         { id: "dated", label: "Dated Brent", icon: "⚖️" },
         { id: "cdiff", label: "Crude Differentials", icon: "📉" },
         { id: "bchain", label: "Brent Chains", icon: "⛓️" },
+        { id: "carbs", label: "Crude Arbs", icon: "🧭" },
       ]},
       { name: "Balances & Stocks", items: [
         { id: "gb", label: "Gasoline Balances", icon: "⛽" },
@@ -10558,6 +10679,7 @@
       if (id === "xmove" && !panes.xmove._loaded) { panes.xmove._loaded = true; renderXMove(panes.xmove); }
       if (id === "cdiff" && !panes.cdiff._loaded) { panes.cdiff._loaded = true; renderCDiff(panes.cdiff); }
       if (id === "bchain" && !panes.bchain._loaded) { panes.bchain._loaded = true; renderBChain(panes.bchain); }
+      if (id === "carbs" && !panes.carbs._loaded) { panes.carbs._loaded = true; renderCArbs(panes.carbs); }
       if (id === "dated" && !panes.dated._loaded) { panes.dated._loaded = true; renderDated(panes.dated); }
       if (id === "signal" && !panes.signal._loaded) { panes.signal._loaded = true; renderSignal(panes.signal); }
     }
