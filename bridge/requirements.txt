@@ -1,0 +1,4 @@
+xlwings>=0.30
+# Only needed if you use mode="blpapi":
+# blpapi   (install from Bloomberg's index:
+#   pip install --index-url=https://blpapi.bloomberg.com/repository/releases/python/simple blpapi)
