@@ -164,17 +164,13 @@ def fetch_history(get):
     return hist
 
 
-def _nearest(series_dates, series, target, tol=6):
-    """Value of the observation closest to target date within tol days."""
-    t = target.isoformat()
-    i = bisect.bisect_left(series_dates, t)
-    best = None
-    for k in (i - 1, i):
-        if 0 <= k < len(series_dates):
-            dd = abs((date.fromisoformat(series_dates[k]) - target).days)
-            if dd <= tol and (best is None or dd < best[0]):
-                best = (dd, series[series_dates[k]])
-    return None if best is None else best[1]
+def _on_or_before(series_dates, series, target, tol=8):
+    """Value of the last observation on or before target (within tol days) —
+    the report a desk would have had on that calendar date."""
+    i = bisect.bisect_right(series_dates, target.isoformat()) - 1
+    if i < 0 or (target - date.fromisoformat(series_dates[i])).days > tol:
+        return None
+    return series[series_dates[i]]
 
 
 def _same_day(d, year):
@@ -194,8 +190,8 @@ def series_stats(series, today):
     v = series[last]
     prev = series[ds[-2]] if len(ds) >= 2 else None
     p4 = series[ds[-5]] if len(ds) >= 5 else None
-    ly = _nearest(ds, series, ld - timedelta(days=364))
-    base = [b for b in (_nearest(ds, series, _same_day(ld, y)) for y in BASE_YEARS) if b is not None]
+    ly = _on_or_before(ds, series, _same_day(ld, ld.year - 1))
+    base = [b for b in (_on_or_before(ds, series, _same_day(ld, y)) for y in BASE_YEARS) if b is not None]
     avg = sum(base) / len(base) if base else None
     return {
         "date": last, "value": v,

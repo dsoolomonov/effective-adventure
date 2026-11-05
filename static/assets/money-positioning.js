@@ -5665,11 +5665,42 @@
       h += `<div style="color:${C.muted};font-size:11px;line-height:1.6;margin-top:10px">` +
         `Live from Platts on every refresh (cached 30 min; ↻ forces a pull). US = EIA WPSR; middle distillates = distillate fuel oil + jet/kero; crude = commercial ex-SPR ex-lease. ` +
         `ARA (Insights Global, kt) converted to mmb at ${f.gasoline} bbl/t gasoline, ${f.naphtha} naphtha, ${f.gasoil} gasoil, ${f.jet} jet, ${f.fueloil} fuel oil. ` +
-        `y-o-y = closest week 52 weeks earlier; vs 2017-19 av = latest minus the average of the same calendar week in 2017, 2018 and 2019. ` +
+        `y-o-y and vs 2017-19 av compare the latest week with the last report on or before the same calendar date a year earlier / in 2017, 2018 and 2019 (FGE convention). ` +
         `<sup>†</sup> Fewer than 3 base years in Platts history (ARA starts 2019, so ARA and totals that include it are vs 2019 only). ` +
         `Japan products: Platts' PAJ product series stopped on 21 Mar 2026, so Japan is crude-only and excluded from product totals. ` +
         `Totals sum only live hubs — ${Object.entries(incl).map(([k, v]) => k + ": " + v).join("; ")}. Hover a cell for symbols.</div>`;
       const w = el("div"); w.innerHTML = h; return w;
+    }
+
+    function fgeCheck(t) {
+      const FL = { value: "level", wow: "w-o-w", yoy: "y-o-y", vs1719: "vs 2017-19" };
+      const gname = id => (GROUPS.find(g => g.id === id) || {}).name || id;
+      let n = 0, ok = 0; const miss = [], gaps = [];
+      Object.entries(t.rows).forEach(([rid, vals]) => {
+        const r = summ.rows.find(x => x.id === rid);
+        (t.groups || []).forEach((g, gi) => {
+          const f = vals[gi]; if (!f) return;
+          const c = r && r.cells[g];
+          const lbl = (r ? r.name : rid) + " " + gname(g).toLowerCase();
+          if (!c || c.status !== "ok") { gaps.push(lbl + (c && c.status === "stale" ? " (Platts stale since " + c.last + ")" : " (not on Platts)")); return; }
+          t.fields.forEach((k, ki) => {
+            const fv = f[ki], ov = c[k]; if (fv == null || ov == null) return;
+            n++; const d = ov - fv;
+            if (Math.abs(d) <= 0.15) ok++; else miss.push({ lbl, k, fv, ov, d, tot: r.kind === "total" });
+          });
+        });
+      });
+      const real = miss.filter(m => !m.tot), tots = miss.filter(m => m.tot);
+      const line = m => `<tr><td style="padding:3px 8px">${esc(m.lbl)}</td><td style="padding:3px 8px;color:${C.muted}">${FL[m.k]}</td>` +
+        `<td style="padding:3px 8px;text-align:right">${sfmt(m.fv)}</td><td style="padding:3px 8px;text-align:right">${sfmt(m.ov)}</td>` +
+        `<td style="padding:3px 8px;text-align:right;color:${C.amber}">${sfmt(m.d)}</td></tr>`;
+      const w = el("div", { style: { color: C.text, fontSize: "12.5px", lineHeight: "1.6" } });
+      w.innerHTML = `<div style="font-size:10.5px;color:${C.muted}">${esc(t.source)}</div>` +
+        `<div style="margin:6px 0"><b style="color:${ok === n ? "#22c55e" : C.amber}">${ok} of ${n}</b> comparable figures match within ±0.15 mmb (FGE rounds to 0.1).</div>` +
+        (real.length ? `<div style="margin-top:6px"><b>Hub-level differences</b></div><table style="border-collapse:collapse;font-size:11.5px"><tr style="color:${C.muted}"><td style="padding:3px 8px"></td><td></td><td style="padding:3px 8px;text-align:right">FGE</td><td style="padding:3px 8px;text-align:right">Ours</td><td style="padding:3px 8px;text-align:right">Δ</td></tr>${real.map(line).join("")}</table>` : `<div>Every hub-level level, w-o-w, y-o-y and vs 2017-19 figure matches.</div>`) +
+        (gaps.length ? `<div style="margin-top:8px"><b>In FGE, missing from our feed:</b> ${gaps.map(esc).join("; ")}.</div>` : "") +
+        (tots.length ? `<div style="margin-top:6px;color:${C.muted}">Totals differ on ${tots.length} figures only because our totals exclude the hubs above.</div>` : "");
+      return w;
     }
 
     const top = el("div");
@@ -5718,6 +5749,7 @@
           `<ul style="margin:0;padding-left:18px">${(n.points || []).map(p => `<li style="margin-bottom:4px">${esc(p)}</li>`).join("")}</ul>` +
           (n.trade ? `<div style="margin-top:8px;color:${C.amber}"><b>Trade read:</b> ${esc(n.trade)}</div>` : "");
         newsBox.appendChild(card("Latest research note — stocks", d));
+        if (n.table && summ) newsBox.appendChild(card(`Cross-check — ${n.source} table (${n.table.date}) vs our Platts feed`, fgeCheck(n.table)));
       }
     })();
 
