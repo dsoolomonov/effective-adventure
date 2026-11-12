@@ -5116,6 +5116,14 @@
     box.appendChild(card("Sources & method", note(`Intraday: Bloomberg export (${I ? I.source_file : "—"}), Dubai time, bar-start stamps converted to bar close; 4h bars, DFL 30-min, Brent-Dubai EFS daily. Daily: Platts close assessments (bate c) — ${D ? Object.entries(D.meta).map(([k, v]) => `${v.label} ${v.symbol}`).join(", ") : "unavailable"}. Products in $/t converted to $/bbl with 7.45 (gasoil/ULSD), 7.88 (jet), 8.33 (Eurobob), 8.9 (naphtha), 6.35 (fuel oil). Cracks are product $/bbl − Dated Brent. The Platts DFL proxy is Dated vs Brent Mo01 cash, not the DFL swap, so its level differs from the file's DFL Nov/Dec.`)));
   }
 
+  function renderSI(box) {
+    box.style.maxWidth = "none";
+    const bar = el("div", { style: { display: "flex", gap: "12px", alignItems: "center", marginBottom: "8px", fontSize: "12px", color: C.dim } });
+    bar.innerHTML = `<b style="color:${C.text};font-size:15px">Superior Intelligence</b><span>desk analyst over the session notes, ledger, library and live marks · OpenAI</span><a href="/window/" target="_blank" style="color:${C.accent}">open full page</a><a href="/window/diag" target="_blank" style="color:${C.accent}">diag</a>`;
+    box.appendChild(bar);
+    box.appendChild(el("iframe", { src: "/window/", allow: "clipboard-write", style: { width: "100%", height: "calc(100vh - 150px)", border: "1px solid " + C.border, borderRadius: "8px", background: "#fff" } }));
+  }
+
   async function renderEA(box, refresh) {
     box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Energy Aspects data…</div>';
     let P;
@@ -10604,6 +10612,7 @@
 
     const navGroups = [
       { name: "Intelligence", items: [
+        { id: "si", label: "Superior Intelligence", icon: "🪟" },
         { id: "ea", label: "Energy Aspects", icon: "📘" },
         { id: "mktcomm", label: "Market Commentary", icon: "🧭" },
         { id: "xmkt", label: "Cross-Market", icon: "🧠" },
@@ -10707,6 +10716,7 @@
       if (id === "ktf" && !panes.ktf._loaded) { panes.ktf._loaded = true; renderKTF(panes.ktf); }
       if (id === "kinv" && !panes.kinv._loaded) { panes.kinv._loaded = true; renderKINV(panes.kinv); }
       if (id === "ksql" && !panes.ksql._loaded) { panes.ksql._loaded = true; renderKSQL(panes.ksql); }
+      if (id === "si" && !panes.si._loaded) { panes.si._loaded = true; renderSI(panes.si); }
       if (id === "ea" && !panes.ea._loaded) { panes.ea._loaded = true; renderEA(panes.ea); }
       if (id === "xmove" && !panes.xmove._loaded) { panes.xmove._loaded = true; renderXMove(panes.xmove); }
       if (id === "cdiff" && !panes.cdiff._loaded) { panes.cdiff._loaded = true; renderCDiff(panes.cdiff); }

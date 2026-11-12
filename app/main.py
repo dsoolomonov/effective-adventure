@@ -151,7 +151,10 @@ class PasswordGateMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
             from starlette.responses import JSONResponse
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
-        if path.startswith("/api/"):
+        # The Window's MCP connector authenticates with the token in its URL.
+        if path.startswith("/window/mcp/"):
+            return await call_next(request)
+        if path.startswith("/api/") or path.startswith("/window/"):
             from starlette.responses import JSONResponse
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
         # Redirect to login page (avoids browser cache issues)
@@ -159,6 +162,21 @@ class PasswordGateMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(PasswordGateMiddleware)
+
+# ------------- Superior Intelligence (The Window), mounted at /window ----------------
+try:
+    from window.app import main as _window_main
+    app.mount("/window", _window_main.app)
+
+    @app.on_event("startup")
+    def _window_startup():
+        # Mounted sub-apps don't get startup events, so seed the Window from here.
+        try:
+            _window_main._startup()
+        except Exception as e:
+            print(f"[window] startup failed: {e}")
+except Exception as _e:
+    print(f"[window] not mounted: {_e}")
 
 
 @app.get("/auth/login")
