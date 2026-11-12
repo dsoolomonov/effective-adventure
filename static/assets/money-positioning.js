@@ -5118,7 +5118,7 @@
 
   function renderSI(box) {
     box.style.maxWidth = "none";
-    const bar = el("div", { style: { display: "flex", gap: "12px", alignItems: "center", marginBottom: "8px", fontSize: "12px", color: C.dim } });
+    const bar = el("div", { style: { display: "flex", gap: "12px", alignItems: "center", marginBottom: "8px", fontSize: "12px", color: C.muted } });
     bar.innerHTML = `<b style="color:${C.text};font-size:15px">Superior Intelligence</b><span>desk analyst over the session notes, ledger, library and live marks · OpenAI</span><a href="/window/" target="_blank" style="color:${C.accent}">open full page</a><a href="/window/diag" target="_blank" style="color:${C.accent}">diag</a>`;
     box.appendChild(bar);
     box.appendChild(el("iframe", { src: "/window/", allow: "clipboard-write", style: { width: "100%", height: "calc(100vh - 150px)", border: "1px solid " + C.border, borderRadius: "8px", background: "#fff" } }));
