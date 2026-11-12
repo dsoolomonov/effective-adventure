@@ -55,7 +55,11 @@ warnings.filterwarnings("ignore")
 app = FastAPI(title="Crude Oil Futures Backtesting Platform")
 
 # ------------- Password Gate (shared password) ----------------
-_APP_PASSWORD = os.environ.get("APP_PASSWORD", "CrudeOil$Analyt1cs#2026!Secure")
+_APP_PASSWORD = os.environ.get("APP_PASSWORD") or ""
+if not _APP_PASSWORD:
+    import secrets as _secrets
+    _APP_PASSWORD = _secrets.token_urlsafe(24)
+    print("[auth] APP_PASSWORD not set: generated a random one, so login is disabled until you set it")
 _AUTH_SECRET = hashlib.sha256((_APP_PASSWORD + "_coa_signing_key").encode()).hexdigest()
 # Shared token used by the local Bloomberg bridge to push live prices. Defaults
 # to a value derived from the app password so it works without extra config, but
@@ -7942,7 +7946,7 @@ async def get_eia_gasoline_balances(
     end_year: int = Query(2026, description="End year"),
 ):
     """Monthly gasoline S&D balance from EIA /petroleum/sum/snd/ with multi-year overlay."""
-    api_key = os.environ.get("EIA_API_KEY", "7SzAygceNwO58RBgwVgV7dkk163Bk73xzFF36lq6")
+    api_key = os.environ.get("EIA_API_KEY", "")
     if not api_key:
         raise HTTPException(status_code=500, detail="EIA_API_KEY not set")
     if area not in GB_AREA_MAP:
@@ -8461,7 +8465,7 @@ async def get_eia_gasoline_monthly(
     refresh: bool = Query(False),
 ):
     """Monthly product balance table (gasoline or distillate) — US Total + all 5 PADDs with projections."""
-    api_key = os.environ.get("EIA_API_KEY", "7SzAygceNwO58RBgwVgV7dkk163Bk73xzFF36lq6")
+    api_key = os.environ.get("EIA_API_KEY", "")
     if not api_key:
         raise HTTPException(status_code=500, detail="EIA_API_KEY not set")
     cfg = _gb_product_cfg(product)
@@ -8837,7 +8841,7 @@ async def get_eia_gasoline_stocks(
     import urllib.request
     import json as json_mod
 
-    api_key = os.environ.get("EIA_API_KEY", "7SzAygceNwO58RBgwVgV7dkk163Bk73xzFF36lq6")
+    api_key = os.environ.get("EIA_API_KEY", "")
     if not api_key:
         raise HTTPException(status_code=500, detail="EIA_API_KEY environment variable not set. Please configure your EIA API key.")
 
@@ -12118,8 +12122,8 @@ def _iir_get_token() -> str:
     if _IIR_TOKEN and _IIR_TOKEN_EXPIRY and now < _IIR_TOKEN_EXPIRY:
         return _IIR_TOKEN
 
-    username = os.environ.get("IIR_USERNAME", "svcprd2025")
-    password = os.environ.get("IIR_PASSWORD", "Energy25%21%21")
+    username = os.environ.get("IIR_USERNAME", "")
+    password = os.environ.get("IIR_PASSWORD", "")
 
     conn = http.client.HTTPSConnection("api.industrialinfo.com")
     url = f"/idb/v2.4/token?username={username}&password={password}&tokenLifeTime=7"

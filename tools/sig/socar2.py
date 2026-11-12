@@ -1,0 +1,25 @@
+from q import q, cur, cols
+cols("uvs_Companies")
+q("SELECT * FROM dbo.uvs_Companies WHERE CompanyName LIKE '%socar%' OR CompanyName LIKE '%State Oil Company of Azerbaijan%'", 30)
+q("SELECT COUNT(*) FROM dbo.uvs_Companies", 1)
+print("=== Socar as charterer in voyages")
+q("""SELECT s.Charterer, COUNT(*) n, MIN(s.FirstLoadPortSailingDate) mn, MAX(s.FirstLoadPortSailingDate) mx, SUM(s.QuantityInBarrels)/1e6 mb
+FROM dbo.uvS_VoyagesSummary s WHERE s.Charterer LIKE '%socar%' GROUP BY s.Charterer""", 10)
+print("=== Socar voyages last 90 days")
+q("""SELECT CAST(s.FixtureDate AS date) fixd, s.FixtureStatus fx, CAST(s.FirstLoadPortSailingDate AS date) sail, s.VesselName, s.VesselClass vc, s.FirstLoadPortName lp, s.LastDischargePortName dis, s.CargoType ct, s.CargoSubType grade, s.QuantityInBarrels/1e6 mb, s.Rate, s.RateType, s.Horizon h, s.CommercialOperator op
+FROM dbo.uvS_VoyagesSummary s WHERE s.Charterer LIKE '%socar%' AND s.FirstLoadPortSailingDate>='2026-06-20' ORDER BY sail DESC""", 80)
+print("=== Voyages with any fixture data - fixture date coverage")
+q("""SELECT CAST(FixtureDate AS date) d, COUNT(*) n FROM dbo.uvS_VoyagesSummary WHERE FixtureDate>='2026-09-01' GROUP BY CAST(FixtureDate AS date) ORDER BY d DESC""", 25)
+print("=== Fixture status distribution Sep")
+q("""SELECT FixtureStatus, Horizon, COUNT(*) n FROM dbo.uvS_VoyagesSummary WHERE FirstLoadPortSailingDate>='2026-09-01' GROUP BY FixtureStatus, Horizon ORDER BY n DESC""", 20)
+print("=== Quantity/cargo source values")
+q("""SELECT QuantitySource, CargoTypeSource, COUNT(*) n FROM dbo.uvS_VoyagesSummary WHERE FirstLoadPortSailingDate>='2026-08-01' GROUP BY QuantitySource, CargoTypeSource ORDER BY n DESC""", 20)
+print("=== Tonnage list configurations (Socar-configured?)")
+cols("uvs_TonnageListConfigurations")
+q("SELECT * FROM dbo.uvs_TonnageListConfigurations", 30)
+print("=== Voyage events types")
+cols("uvS_VoyageEvents")
+q("SELECT EventType, COUNT(*) n FROM dbo.uvS_VoyageEvents GROUP BY EventType ORDER BY n DESC", 30)
+print("=== Discharge to Azerbaijan/Georgia/Turkey STAR/ Socar terminals")
+q("""SELECT CAST(s.FirstLoadPortSailingDate AS date) sail, s.VesselName, s.VesselClass vc, s.FirstLoadPortName lp, s.LastDischargePortName dis, s.LastDischargePortCountryName dc, s.CargoSubType grade, s.QuantityInBarrels/1e6 mb, s.Charterer ch, s.FixtureStatus fx, s.Horizon h
+FROM dbo.uvS_VoyagesSummary s WHERE s.FirstLoadPortSailingDate>='2026-08-01' AND (s.LastDischargePortName IN ('Aliaga','Kulevi','Batumi','Supsa','Ceyhan') OR s.FirstLoadPortName IN ('Ceyhan','Supsa','Kulevi','Batumi')) ORDER BY sail DESC""", 60)
