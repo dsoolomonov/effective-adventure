@@ -22,3 +22,4 @@ data/*.csv
 window/seed/
 window/brief/
 app/invite/
+window/data/
