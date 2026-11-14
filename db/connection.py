@@ -156,8 +156,8 @@ def write_df(df, table_name: str, if_exists: str = "append", schema: str = None)
         if_exists=if_exists,
         index=False,
         method="multi",
-        # SQL Server allows at most 2,100 parameters per statement.
-        chunksize=max(1, 2000 // max(1, len(df.columns))),
+        # SQL Server: at most 1,000 VALUES rows and 2,100 parameters per INSERT.
+        chunksize=min(1000, max(1, 2000 // max(1, len(df.columns)))),
     )
 
 
