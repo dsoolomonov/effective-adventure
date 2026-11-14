@@ -69,13 +69,13 @@ def _get_sql_conn():
 
 def _truncate_and_insert(conn, table_name: str, df: pd.DataFrame, columns: list):
     """Truncate table and bulk-insert DataFrame rows."""
+    if df is None or len(df) == 0:
+        # Nothing fetched (e.g. provider outage): keep the previous snapshot.
+        return 0
+
     cursor = conn.cursor()
     cursor.execute(f"DELETE FROM dbo.[{table_name}]")
     deleted = cursor.rowcount
-
-    if df is None or len(df) == 0:
-        conn.commit()
-        return 0
 
     placeholders = ", ".join(["?"] * len(columns))
     col_names = ", ".join([f"[{c}]" for c in columns])
@@ -773,6 +773,7 @@ def sync_all(tables: Optional[list] = None) -> dict:
             logger.info(f"Synced {table_name}: {rows} rows")
         except Exception as e:
             tb = traceback.format_exc()
+            conn.rollback()
             _log_sync(conn, table_name, start_time, 0, "error", str(e))
             results[table_name] = {"status": "error", "error": str(e)[:200]}
             overall_status = "partial"
