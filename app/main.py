@@ -198,7 +198,7 @@ async def auth_login(password: str = Form(...)):
     if password == _APP_PASSWORD:
         token = _make_session_token()
         response = RedirectResponse(url="/", status_code=302)
-        response.set_cookie("coa_session", token, httponly=True, samesite="lax", max_age=86400 * 30)
+        response.set_cookie("coa_session", token, httponly=True, secure=True, samesite="lax", max_age=86400 * 30)
         return response
     err_page = _LOGIN_PAGE.replace("__ERROR__", "Incorrect password").replace('display:none', 'display:block')
     return HTMLResponse(err_page, status_code=200)
@@ -15086,8 +15086,9 @@ async def dated_upload(file: UploadFile = File(...)):
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
     """Serve frontend static files. This must be the last route."""
-    file_path = os.path.join(STATIC_DIR, full_path)
-    if full_path and os.path.isfile(file_path):
+    root = os.path.realpath(STATIC_DIR)
+    file_path = os.path.realpath(os.path.join(root, full_path))
+    if full_path and file_path.startswith(root + os.sep) and os.path.isfile(file_path):
         return FileResponse(file_path)
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.isfile(index_path):
