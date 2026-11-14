@@ -21,5 +21,4 @@ data/*.csv
 .testing/
 window/seed/
 window/brief/
-app/invite/
 window/data/
