@@ -135,7 +135,7 @@ def _verify_session_token(token: str) -> bool:
 class PasswordGateMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path.startswith("/auth/"):
+        if path.startswith("/auth/") or path == "/invite" or path.startswith("/invite/"):
             return await call_next(request)
         # Allow static assets through (no sensitive data)
         if any(path.endswith(ext) for ext in _STATIC_EXTS) or path.startswith("/assets/"):
@@ -162,6 +162,15 @@ class PasswordGateMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(PasswordGateMiddleware)
+
+@app.get("/invite")
+@app.get("/invite/")
+def public_invite():
+    """Public personal page (not part of the platform), served without the password gate."""
+    f = os.path.join(os.path.dirname(__file__), "invite", "index.html")
+    if not os.path.isfile(f): raise HTTPException(404)
+    return FileResponse(f, media_type="text/html")
+
 
 # ------------- Superior Intelligence (The Window), mounted at /window ----------------
 try:
