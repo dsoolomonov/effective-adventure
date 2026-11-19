@@ -47,6 +47,7 @@ import openpyxl
 from app import dated as _dated
 from app import product_stocks_live as _ps_live
 from app import crude_diffs_live as _cd_live
+from app import crude_daily_live as _cdr_live
 from app import cross_moves_live as _xm_live
 from app import ea_live as _ea_live
 import warnings
@@ -14551,6 +14552,16 @@ async def get_crude_diffs(refresh: bool = Query(False)):
         if cached is not None:
             return {**cached, "error": f"Platts refresh failed, showing last pull: {e}"}
         raise HTTPException(status_code=502, detail=f"Platts unavailable: {e}")
+
+
+@app.get("/api/crude_daily")
+async def get_crude_daily(refresh: bool = Query(False)):
+    """Crude Daily Report: live Kpler crude exports/imports, US weekly, Mideast Gulf
+    daily exports, oil on water by sea area and floating storage."""
+    try:
+        return await asyncio.to_thread(_cdr_live.get, refresh)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Kpler unavailable: {e}")
 
 
 @app.get("/api/cross_moves")

@@ -5329,6 +5329,149 @@
     box.appendChild(card("Source", note("Energy Aspects Data Service API (licensed to SOCAR). Forecast series are EA's latest release; dotted lines/small figures are EA's previous release of the same series. The vertical dotted line marks the current month. OilX-sourced inventories are nowcasts. Not licensed (not shown): refinery outages, quant paper balances/options, OilX flows/terminals/TankWatch, detailed refining margins, NGLs, biofuels.")));
   }
 
+  async function renderCrudeDaily(box, refresh) {
+    box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading Crude Daily Report from Kpler… (first pull takes ~15 s)</div>';
+    let d;
+    try {
+      const r = await fetch("/api/crude_daily" + (refresh ? "?refresh=1" : ""));
+      if (!r.ok) throw new Error(await r.text());
+      d = await r.json();
+    } catch (e) {
+      box.innerHTML = `<div style="color:#ef4444;padding:40px;">Failed to load Crude Daily Report: ${e.message}</div>`;
+      return;
+    }
+    box.innerHTML = "";
+    const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const n0 = v => v == null ? "—" : Math.round(v).toLocaleString("en-US");
+    const n1 = v => v == null ? "—" : v.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const mlab = ym => { const [y, m] = ym.split("-"); return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+m - 1] + "-" + y.slice(2); };
+    const dlab = iso => new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" });
+    function chg(v, f) {
+      if (v == null) return '<span style="color:#7e8ba8">—</span>';
+      const r = f === 1 ? Math.round(v * 10) / 10 : Math.round(v);
+      if (r === 0) return `<span style="color:#cbd5e1">0 <span style="color:#eab308">▬</span></span>`;
+      const t = (f === 1 ? n1(Math.abs(r)) : n0(Math.abs(r)));
+      return r > 0 ? `<span style="color:#e8edf8">${t} <span style="color:#22c55e">▲</span></span>` : `<span style="color:#f87171">(${t}) <span style="color:#ef4444">▼</span></span>`;
+    }
+    function spark(vals, w, h) {
+      w = w || 70; h = h || 18;
+      const v = (vals || []).filter(x => x != null);
+      if (v.length < 2) return "";
+      const lo = Math.min(...v), hi = Math.max(...v), sp = hi - lo || 1;
+      const pts = v.map((x, i) => `${(i / (v.length - 1) * (w - 2) + 1).toFixed(1)},${(h - 2 - (x - lo) / sp * (h - 4)).toFixed(1)}`).join(" ");
+      return `<svg width="${w}" height="${h}" style="vertical-align:middle"><polyline points="${pts}" fill="none" stroke="#94a3b8" stroke-width="1.4"/></svg>`;
+    }
+    const TH = 'style="text-align:right;padding:4px 8px;color:#7e8ba8;font-weight:600;font-size:11px;border-bottom:1px solid #334155"';
+    function rowStyle(kind) {
+      if (kind === "total") return "font-weight:800;border-top:2px solid #64748b;background:rgba(148,163,184,0.06)";
+      if (kind === "group") return "font-weight:800;background:rgba(148,163,184,0.10)";
+      return "";
+    }
+    function countryTable(rows, m) {
+      let h = `<table style="width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums"><thead><tr><th style="text-align:left;padding:4px 8px;color:#7e8ba8;font-size:11px;border-bottom:1px solid #334155">kb/d</th><th ${TH}>${esc(mlab(m))}</th><th ${TH}>vs M-1</th><th ${TH}>vs Y-1</th><th ${TH}>6M trend</th></tr></thead><tbody>`;
+      rows.forEach(r => {
+        const lab = r.indent ? `<i style="padding-left:14px;color:#cbd5e1">${esc(r.label)}</i>` : esc(r.label);
+        h += `<tr style="${rowStyle(r.kind)}"><td style="padding:3px 8px;color:#e8edf8">${lab}</td><td style="padding:3px 8px;text-align:right;color:#e8edf8">${n0(r.m)}</td><td style="padding:3px 8px;text-align:right">${chg(r.mm)}</td><td style="padding:3px 8px;text-align:right">${chg(r.yy)}</td><td style="padding:3px 8px;text-align:right">${spark(r.trend)}</td></tr>`;
+      });
+      return h + "</tbody></table>";
+    }
+    const html = s => { const x = el("div"); x.innerHTML = s; return x; };
+    const chartDiv = h => el("div", { style: { width: "100%", height: h + "px" } });
+    const base = (extra) => Object.assign({ paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: C.muted, size: 11 },
+      margin: { l: 44, r: 44, t: 10, b: 40 }, legend: { orientation: "h", y: -0.18, font: { size: 10.5 } }, hovermode: "x unified",
+      xaxis: { gridcolor: "#1e293b", color: C.muted }, yaxis: { gridcolor: "#1e293b", color: C.muted } }, extra || {});
+    const plot = (div, tr, lay) => { try { Plotly.newPlot(div, tr, lay, { responsive: true, displayModeBar: false }); } catch (e) { div.innerHTML = `<div style="color:#ef4444">${e.message}</div>`; } };
+
+    // header
+    const hdr = el("div", { style: { display: "flex", alignItems: "center", gap: "14px", marginBottom: "14px", flexWrap: "wrap" } });
+    hdr.appendChild(el("div", { style: { fontSize: "20px", fontWeight: "800", color: C.amber } }, "🛢️ Crude Daily Report"));
+    const live = !d.stale && !(d.errors || []).length;
+    hdr.appendChild(el("span", { style: { fontSize: "11px", fontWeight: "700", padding: "3px 9px", borderRadius: "10px", background: live ? "rgba(16,185,129,0.15)" : "rgba(234,179,8,0.15)", color: live ? C.green : "#eab308" } }, live ? "● Kpler live" : d.stale ? "○ cached, refreshing" : "◐ partial"));
+    const rb = el("button", { style: { background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: "6px", padding: "6px 12px", fontSize: "12px", cursor: "pointer" } }, "↻ Refresh from Kpler");
+    rb.addEventListener("click", () => renderCrudeDaily(box, true));
+    hdr.appendChild(rb);
+    hdr.appendChild(el("span", { style: { color: C.muted, fontSize: "11px", marginLeft: "auto" } }, `Crude/Co only · kb/d unless stated · pulled ${(d.generated_at || "").replace("T", " ").replace("Z", " UTC")}`));
+    box.appendChild(hdr);
+    (d.errors || []).forEach(e => box.appendChild(el("div", { style: { color: "#f59e0b", fontSize: "12px", marginBottom: "6px" } }, "Section unavailable — " + e)));
+    if ((d.read || []).length) box.appendChild(card("Read", html(`<div style="color:#e8edf8;font-size:13px;line-height:1.65">${d.read.map(x => `<div style="margin-bottom:4px">• ${esc(x)}</div>`).join("")}</div>`)));
+
+    const grid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(560px, 1fr))", gap: "14px", alignItems: "start" } });
+    const L = el("div"), R = el("div");
+    grid.appendChild(L); grid.appendChild(R); box.appendChild(grid);
+    const charts = [];
+
+    // US weekly
+    if (d.us_weekly) {
+      const u = d.us_weekly, w = u.weeks, n = w.length;
+      let h = `<table style="width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums"><thead><tr><th style="text-align:left;padding:4px 8px;color:#7e8ba8;font-size:11px;border-bottom:1px solid #334155">kb/d · EIA week</th><th ${TH}>W (p)<br>${dlab(w[n - 1])}</th><th ${TH}>W-1 (a)<br>${dlab(w[n - 2])}</th><th ${TH}>w/w</th><th ${TH}>6W trend</th></tr></thead><tbody>`;
+      const PC = { "PADD 1": "#64748b", "PADD 2": "#94a3b8", "PADD 3": "#f97316", "PADD 5": "#cbd5e1" };
+      u.rows.forEach(r => {
+        if (r.label === "PADD 2" && !r.s.some(x => x)) return;
+        const sw = PC[r.label] ? `<span style="display:inline-block;width:10px;height:10px;background:${PC[r.label]};margin-right:6px;border-radius:2px"></span>` : "";
+        h += `<tr style="${r.kind === "total" ? "font-weight:800;border-top:1px solid #475569" : ""}"><td style="padding:4px 8px;color:#e8edf8">${sw}${esc(r.label)}</td><td style="padding:4px 8px;text-align:right;color:#e8edf8;font-size:${r.kind === "total" ? "15px" : "12.5px"}">${n0(r.s[n - 1])}</td><td style="padding:4px 8px;text-align:right;color:#cbd5e1">${n0(r.s[n - 2])}</td><td style="padding:4px 8px;text-align:right">${chg(r.s[n - 1] - r.s[n - 2])}</td><td style="padding:4px 8px;text-align:right">${spark(r.s.slice(-6))}</td></tr>`;
+      });
+      h += "</tbody></table>";
+      if (u.us_bound_on_water) h += `<div style="color:#94a3b8;font-size:11.5px;margin-top:8px">US-bound crude on water: <b style="color:#e8edf8">${n1(u.us_bound_on_water.mb)} mb</b>, ${chg(u.us_bound_on_water.wow, 1)} mb w/w</div>`;
+      h += `<div style="color:#64748b;font-size:10.5px;margin-top:4px">Seaborne arrivals/departures by Kpler (excludes Canadian pipeline imports), so not equal to EIA's weekly total. W (p) is the current, provisional week.</div>`;
+      L.appendChild(card("US Weekly", html(h)));
+    }
+
+    // OPEC chart
+    if (d.opec_chart) {
+      const div = chartDiv(260), o = d.opec_chart;
+      L.appendChild(card("OPEC exports · mb/d (incl. KRG)", div));
+      charts.push(() => plot(div, [{ type: "bar", x: o.months.map(mlab), y: o.mbd, text: o.mbd.map(v => v == null ? "" : v.toFixed(2)), textposition: "outside", textangle: -90, cliponaxis: false,
+        marker: { color: o.months.map((m, i) => i === o.months.length - 1 ? "#f97316" : "#64748b") }, hovertemplate: "%{x}: %{y:.2f} mb/d<extra></extra>" }],
+        base({ showlegend: false, margin: { l: 36, r: 10, t: 30, b: 40 }, yaxis: { gridcolor: "#1e293b", color: C.muted, range: [Math.max(0, Math.min(...o.mbd) - 3), Math.max(...o.mbd) + 2.5] } })));
+    }
+    if (d.exports) L.appendChild(card(`Exports — ${mlab(d.month)}`, html(countryTable(d.exports, d.month) + '<div style="color:#64748b;font-size:10.5px;margin-top:6px">Group totals sum only the countries shown. Iraq = Basrah + KRG (Kirkuk ITP via Ceyhan); Kazakhstan = CPC Kazakhstan + KEBCO (inside Russia); Azerbaijan = Azeri BTC via Ceyhan.</div>')));
+
+    // Mideast Gulf
+    if (d.mideast_gulf) {
+      const g = d.mideast_gulf, div = chartDiv(330);
+      R.appendChild(card("Mideast Gulf & Gulf of Oman crude exports · mb/d (ex-Iran)", div));
+      const ymax = Math.max(...g.hormuz.map((v, i) => v + g.goo_loadings[i]), g.prewar_avg || 0) * 1.08;
+      charts.push(() => plot(div, [
+        { type: "bar", name: "Loadings inside the Gulf (Hormuz transits)", x: g.days, y: g.hormuz, marker: { color: "#f87171" } },
+        { type: "bar", name: "Gulf of Oman loadings (Fujairah + Oman)", x: g.days, y: g.goo_loadings, marker: { color: "#22c55e" } },
+        { type: "scatter", mode: "markers", name: "Gulf of Oman net exports", x: g.days, y: g.goo_net, marker: { color: "#3b82f6", size: 5 } },
+        { type: "scatter", mode: "lines", name: "Total, 7-day avg", x: g.days, y: g.ma7, line: { color: "#e8edf8", width: 2.5 } },
+      ], base({ barmode: "stack", yaxis: { gridcolor: "#1e293b", color: C.muted, range: [Math.min(0, ...g.goo_net) * 1.1, ymax] },
+        xaxis: { gridcolor: "#1e293b", color: C.muted, tickformat: "%d %b" },
+        shapes: [
+          { type: "rect", xref: "x", yref: "paper", x0: g.provisional_from, x1: g.days[g.days.length - 1], y0: 0, y1: 1, fillcolor: "rgba(148,163,184,0.10)", line: { width: 0 } },
+          ...(g.prewar_avg ? [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: g.prewar_avg, y1: g.prewar_avg, line: { color: "#94a3b8", dash: "dash", width: 1.5 } }] : [])],
+        annotations: [
+          ...(g.prewar_avg ? [{ xref: "paper", x: 0.01, y: g.prewar_avg, yanchor: "bottom", xanchor: "left", text: `Pre-war (Mar-25–Feb-26) avg ${g.prewar_avg.toFixed(1)}`, showarrow: false, font: { size: 10, color: "#cbd5e1" } }] : []),
+          { xref: "x", yref: "paper", x: g.provisional_from, y: 1, xanchor: "left", yanchor: "top", text: "provisional (last 14 days)", showarrow: false, font: { size: 10, color: "#94a3b8" } }] })));
+      R.lastChild.appendChild(el("div", { style: { color: "#64748b", fontSize: "10.5px", marginTop: "4px" } }, "Kpler crude/condensate only (our licence excludes DPP/CPP). Daily loadings are lumpy by cargo; the last 14 days revise as confirmations land."));
+    }
+
+    // Oil on water
+    if (d.oil_on_water) {
+      const o = d.oil_on_water;
+      const COL = { "Mideast Gulf": "#1e3a5f", "GoO, Arabian, Red": "#3b5b8c", "MED Zone, Balt, Casp": "#94a3b8", "Indian Ocean": "#f472b6", "North Atlantic + Arctic": "#22c55e",
+        "GoM + Caribs": "#f97316", "South Atlantic + WAF": "#dc2626", "Asia Pacific": "#a855f7", "Pacific Americas": "#84cc16", "Others": "#cbd5e1" };
+      let h = `<table style="width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums"><thead><tr><th style="text-align:left;padding:4px 8px;color:#7e8ba8;font-size:11px;border-bottom:1px solid #334155">mb · ${dlab(o.date)}</th><th ${TH}>D</th><th ${TH}>vs D-1</th><th ${TH}>vs W-1</th><th ${TH}>vs M-1</th><th ${TH}>vs Y-1</th></tr></thead><tbody>`;
+      o.table.forEach(r => {
+        const sw = COL[r.label] ? `<span style="display:inline-block;width:10px;height:10px;background:${COL[r.label]};margin-right:6px;border-radius:2px"></span>` : r.kind === "fs" ? '<span style="display:inline-block;width:14px;height:2px;background:#e8edf8;margin-right:6px;vertical-align:middle"></span>' : "";
+        h += `<tr style="${r.kind === "total" ? "font-weight:800;background:rgba(148,163,184,0.10)" : r.kind === "fs" ? "font-weight:700;border-top:1px solid #475569" : ""}"><td style="padding:3px 8px;color:#e8edf8">${sw}${esc(r.label)}</td><td style="padding:3px 8px;text-align:right;color:#e8edf8;font-size:${r.kind === "total" ? "15px" : "12px"}">${n0(r.d)}</td><td style="padding:3px 8px;text-align:right">${chg(r.d1)}</td><td style="padding:3px 8px;text-align:right">${chg(r.w1)}</td><td style="padding:3px 8px;text-align:right">${chg(r.m1)}</td><td style="padding:3px 8px;text-align:right">${chg(r.y1)}</td></tr>`;
+      });
+      h += "</tbody></table>";
+      const wrap = html(h), div = chartDiv(300);
+      wrap.appendChild(div);
+      wrap.appendChild(el("div", { style: { color: "#64748b", fontSize: "10.5px", marginTop: "4px" } }, "Loaded crude/condensate tankers by current sea area (Kpler). Floating storage = loaded and stationary 7+ days, right axis."));
+      R.appendChild(card("World Oil on Water", wrap));
+      const ch = o.chart;
+      const tr = Object.keys(ch.regions).map(n => ({ type: "scatter", mode: "lines", stackgroup: "w", name: n, x: ch.days, y: ch.regions[n], line: { width: 0 }, fillcolor: COL[n], hovertemplate: `${n}: %{y:.0f}<extra></extra>` }));
+      tr.push({ type: "scatter", mode: "lines", name: "Floating storage (rhs)", x: ch.days, y: ch.floating, yaxis: "y2", line: { color: "#e8edf8", width: 1.6 } });
+      charts.push(() => plot(div, tr, base({ showlegend: false, margin: { l: 44, r: 44, t: 6, b: 30 }, xaxis: { gridcolor: "#1e293b", color: C.muted, tickformat: "%b-%y" },
+        yaxis: { gridcolor: "#1e293b", color: C.muted, title: { text: "mb", font: { size: 10 } } }, yaxis2: { overlaying: "y", side: "right", color: C.muted, showgrid: false, title: { text: "floating, mb", font: { size: 10 } } } })));
+    }
+    if (d.imports) R.appendChild(card(`Imports — ${mlab(d.month)}`, html(countryTable(d.imports, d.month) + '<div style="color:#64748b;font-size:10.5px;margin-top:6px">Seaborne crude/condensate imports; group totals sum only the countries shown.</div>')));
+    loadPlotly(() => charts.forEach(f => f()));
+  }
+
   async function renderCDiff(box, refresh) {
     box.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center;">Loading crude differentials from Platts…</div>';
     let blob;
@@ -10652,6 +10795,7 @@
         { id: "pbfoe", label: "Platts Assessment", icon: "⚖️" },
       ]},
       { name: "Flows & Data", items: [
+        { id: "cdr", label: "Crude Daily Report", icon: "🛢️" },
         { id: "signal", label: "Signal", icon: "📡" },
         { id: "kpler", label: "Kpler Flows", icon: "🚢" },
         { id: "ktf", label: "Kpler Refinery Flows", icon: "🏭" },
@@ -10719,6 +10863,7 @@
       if (id === "si" && !panes.si._loaded) { panes.si._loaded = true; renderSI(panes.si); }
       if (id === "ea" && !panes.ea._loaded) { panes.ea._loaded = true; renderEA(panes.ea); }
       if (id === "xmove" && !panes.xmove._loaded) { panes.xmove._loaded = true; renderXMove(panes.xmove); }
+      if (id === "cdr" && !panes.cdr._loaded) { panes.cdr._loaded = true; renderCrudeDaily(panes.cdr); }
       if (id === "cdiff" && !panes.cdiff._loaded) { panes.cdiff._loaded = true; renderCDiff(panes.cdiff); }
       if (id === "bchain" && !panes.bchain._loaded) { panes.bchain._loaded = true; renderBChain(panes.bchain); }
       if (id === "carbs" && !panes.carbs._loaded) { panes.carbs._loaded = true; renderCArbs(panes.carbs); }
