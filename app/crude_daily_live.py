@@ -214,11 +214,12 @@ def _build():
         s, e = date.fromisoformat(PREWAR[0]), today
         a = _flows(fl, "Export", "OriginCountries", "Daily", s, e, from_zones=["Mideast Gulf"])
         a = a.drop(columns=[c for c in ("Iran",) if c in a.columns])
-        b = _flows(fl, "Export", "Total", "Daily", s, e, from_zones=["Gulf of Oman"])
+        b = _flows(fl, "Export", "OriginCountries", "Daily", s, e, from_zones=["Gulf of Oman"])
+        b = b.drop(columns=[c for c in ("Iran",) if c in b.columns])
         c = _flows(fl, "Import", "Total", "Daily", s, e, to_zones=["Gulf of Oman"], intra=True)
         days = sorted(set(a.index) | set(b.index))
         hz = [float(a.loc[d].sum()) if d in a.index else 0.0 for d in days]
-        goo = [float(b.loc[d, "Total"]) if d in b.index else 0.0 for d in days]
+        goo = [float(b.loc[d].sum()) if d in b.index else 0.0 for d in days]
         gin = [float(c.loc[d, "Total"]) if d in c.index else 0.0 for d in days]
         tot = [x + y for x, y in zip(hz, goo)]
         ma = [sum(tot[max(0, i - 6):i + 1]) / len(tot[max(0, i - 6):i + 1]) for i in range(len(tot))]
