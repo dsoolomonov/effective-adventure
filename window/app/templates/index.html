@@ -1,0 +1,55 @@
+<!doctype html><html><head><meta charset="utf-8"><title>The Window</title>
+<style>
+:root{--bg:#0f1419;--panel:#161b22;--line:#30363d;--fg:#e6edf3;--mut:#8b949e;--acc:#1f6feb}
+body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);margin:0;display:grid;grid-template-columns:1fr 340px;grid-template-rows:48px 1fr;height:100vh}
+header{grid-column:1/3;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+header b{font-size:16px}header span{color:var(--mut);font-size:12px}header a{color:var(--mut);font-size:12px;margin-left:12px}
+main{display:flex;flex-direction:column;min-height:0}
+#log{flex:1;overflow:auto;padding:18px 24px}
+.msg{max-width:860px;margin:0 0 16px;white-space:pre-wrap;line-height:1.45;font-size:14px}
+.msg.user{color:#c9d1d9;border-left:3px solid var(--acc);padding-left:10px}
+.msg.assistant{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.usage{color:var(--mut);font-size:11px;margin-top:6px}
+form#ask{display:flex;gap:8px;padding:12px 24px;border-top:1px solid var(--line);background:var(--panel)}
+form#ask textarea{flex:1;min-height:56px;background:#0d1117;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
+form#ask button{background:var(--acc);border:0;color:#fff;border-radius:6px;padding:0 18px;font-weight:600}
+form#ask input[type=file]{color:var(--mut);font-size:12px;max-width:180px}
+aside{border-left:1px solid var(--line);overflow:auto;padding:14px;font-size:12px;background:#10151b}
+aside h3{margin:12px 0 6px;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+aside .k{color:var(--mut)}aside .row{display:flex;justify-content:space-between;border-bottom:1px dotted #21262d;padding:2px 0}
+aside textarea{width:100%;box-sizing:border-box;height:90px;background:#0d1117;color:var(--fg);border:1px solid var(--line);border-radius:6px;font:inherit;padding:6px}
+aside button{background:#238636;border:0;color:#fff;border-radius:6px;padding:6px 10px;font-weight:600;margin-top:6px}
+.pos{border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin:4px 0}
+</style></head>
+<body>
+<header><div><b>The Window</b> <span>desk analyst · {{user}}{% if analyst %} · analyst view{% else %} · desk view{% endif %}</span></div>
+<div><span>tokens: {{tokens.tokens_in}} in / {{tokens.tokens_out}} out / {{tokens.cached}} cached · {{tokens.answers}} answers</span><a href="logout">logout</a></div></header>
+<main>
+ <div id="log">
+ {% for m in history %}<div class="msg {{m.role}}">{{m.content}}</div>{% endfor %}
+ </div>
+ <form id="ask" onsubmit="return send(event)" enctype="multipart/form-data">
+  <textarea name="q" placeholder="ask the window… (paste a run, a curve, a window line, a note; attach screenshots)"></textarea>
+  <input type="file" name="files" multiple>
+  <button>ask</button>
+ </form>
+</main>
+<aside>
+ <h3>upload data</h3>
+ <form onsubmit="return up(event)" enctype="multipart/form-data"><input type="file" name="files" multiple><input name="hint" placeholder="hint (optional)" style="width:100%;margin:6px 0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px"><button>ingest files</button></form>
+ <form onsubmit="return paste(event)"><textarea name="text" placeholder="paste a morning run / sing curve / platts line / note"></textarea><button>ingest text</button></form>
+ <div id="upmsg" class="k"></div>
+ {% for src, d in marks.items() %}
+ <h3>{{src}} · {{d.as_of}}</h3>
+ {% for k, v in d.marks.items() if not k.startswith('cfdroll') %}{% if loop.index <= 28 %}<div class="row"><span class="k">{{k}}</span><span>{{'%.2f'|format(v)}}</span></div>{% endif %}{% endfor %}
+ {% endfor %}
+ {% if analyst %}<h3>open book</h3>{% for p in positions %}<div class="pos"><b>{{p.name}}</b><br><span class="k">{{p.side}} {{p.instrument}} · entry {{p.entry}} · stop {{p.stop}} · target {{p.target}}</span><br>{{p.basis}}</div>{% endfor %}{% endif %}
+ <h3>recent notes</h3>{% for n in notes %}<div class="pos"><b>{{n.date}} {{n.title}}</b><br><span class="k">{{n.text[:220]}}</span></div>{% endfor %}
+</aside>
+<script>
+const log=document.getElementById('log');
+function add(role,text,usage){const d=document.createElement('div');d.className='msg '+role;d.textContent=text;if(usage){const u=document.createElement('div');u.className='usage';u.textContent=`tokens in ${usage.tokens_in} (cached ${usage.cached}) · out ${usage.tokens_out}`;d.appendChild(u)}log.appendChild(d);log.scrollTop=log.scrollHeight}
+async function send(e){e.preventDefault();const f=e.target;const q=f.q.value.trim();if(!q)return false;add('user',q);f.q.value='';const fd=new FormData(f);fd.set('q',q);add('assistant','…');const ph=log.lastChild;try{const r=await fetch('chat',{method:'POST',body:fd});const j=await r.json();ph.remove();add('assistant',j.answer,j.usage)}catch(err){ph.textContent='error: '+err}f.files.value='';return false}
+async function up(e){e.preventDefault();const fd=new FormData(e.target);const r=await fetch('upload',{method:'POST',body:fd});document.getElementById('upmsg').textContent=JSON.stringify(await r.json()).slice(0,600);setTimeout(()=>location.reload(),1200);return false}
+async function paste(e){e.preventDefault();const fd=new FormData(e.target);const r=await fetch('paste',{method:'POST',body:fd});document.getElementById('upmsg').textContent=JSON.stringify(await r.json()).slice(0,600);setTimeout(()=>location.reload(),1200);return false}
+</script></body></html>
