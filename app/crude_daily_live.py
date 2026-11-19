@@ -261,7 +261,7 @@ def _build():
             j = len(v) - 1 - lag
             return round(v[-1] - v[j], 1) if j >= 0 and v[j] is not None and v[-1] is not None else None
         def stat(label, v, kind="row"):
-            return {"label": label, "kind": kind, "d": round(v[-1], 1), "d1": ch(v, 1), "w1": ch(v, 7), "m1": ch(v, 30), "y1": ch(v, 365)}
+            return {"label": label, "kind": kind, "d": None if v[-1] is None else round(v[-1], 1), "d1": ch(v, 1), "w1": ch(v, 7), "m1": ch(v, 30), "y1": ch(v, 365)}
         table = [stat("World", world, "total")] + [stat(n, regions[n]) for n in regions] + [stat("Floating storage", fsv, "fs")]
         cut = next((i for i, x in enumerate(days) if x >= (date(today.year - 1, today.month, 1) - timedelta(days=60)).isoformat()), 0)
         return {"date": days[-1], "table": table, "chart": {"days": days[cut:], "regions": {n: [round(x, 1) for x in v[cut:]] for n, v in regions.items()},
