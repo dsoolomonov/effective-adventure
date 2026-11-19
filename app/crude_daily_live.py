@@ -306,7 +306,7 @@ def _read(o):
     if ow:
         t = {r["label"]: r for r in ow["table"]}
         w, f = t["World"], t["Floating storage"]
-        lines.append(f"Crude on water {w['d']:,.0f} mb ({_fmt(w['w1'])} w/w, {_fmt(w['m1'])} m/m, {_fmt(w['y1'])} y/y); floating storage (7d+) {f['d']:.0f} mb ({_fmt(f['w1'])} w/w).")
+        lines.append(f"Crude on water {w['d']:,.0f} mb ({_fmt(w['w1'])} w/w, {_fmt(w['m1'])} m/m, {_fmt(w['y1'])} y/y); floating storage (7d+) {_fmt(f['d'], 0, False)} mb ({_fmt(f['w1'])} w/w).")
     us = o.get("us_weekly")
     if us and len(us["weeks"]) >= 2:
         r = {x["label"]: x for x in us["rows"]}
@@ -357,6 +357,14 @@ def get(refresh=False):
             threading.Thread(target=_refresh, daemon=True).start()
         return dict(p, stale=True)
     _cache["building"] = True
-    fresh = _refresh()
+    try:
+        fresh = _refresh()
+    except Exception as e:  # noqa: BLE001
+        if p is None:
+            raise
+        return dict(p, stale=True, errors=[f"refresh failed: {str(e)[:200]}"])
     with _lock:
-        return _cache["payload"] or fresh
+        cur = _cache["payload"]
+    if cur is fresh or cur is None:
+        return fresh
+    return dict(cur, stale=True, errors=fresh.get("errors") or ["refresh failed"])
